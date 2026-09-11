@@ -1,0 +1,39 @@
+name: Publish artifacts
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # arm64 covers Raspberry Pi on 64-bit Pi OS, which is a first-class target for a
+      # daemon meant to sit on a home network holding credentials.
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v4
+      - uses: actions/setup-python@v7
+        with:
+          # The floor, deliberately not the newest: releases ship the widest-compatible
+          # wheel and an image built on the oldest supported interpreter.
+          python-version: "3.12"
+      - name: Build distributions and container image
+        run: |
+          make venv
+          make build
+          make container-image REQUIRE_CONTAINER=1 PLATFORMS="$(make -s print-release-platforms)"
+          mkdir -p artifacts
+          tar -czf artifacts/python-mcp-gateway-artifacts.tar.gz -C dist .
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.tar
+            artifacts/*.tar.gz

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Moves in lockstep with requires-python, the classifiers, and the Containerfile.
+        # A leg is the only thing that checks the claim its classifier makes, so dropping
+        # one alone turns a tested statement into an untested one.
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      # Expressed as make targets so CI and a local run are identical by construction.
+      - name: Install dependencies and run validation
+        run: |
+          make venv
+          make lint
+          make docs-check
+          make test
+          make build
+      - name: Upload build artifacts
+        # The floor version only: it produces the widest-compatible wheel, and artifacts
+        # are immutable, so uploading from three legs is three names for one file at best
+        # and a race at worst.
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-mcp-gateway-dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz

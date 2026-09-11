@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-mcp-gateway"
+version = "0.1.0"
+description = "An MCP gateway daemon: one WebSocket MCP server, many stdio backends, one credential store"
+readme = "README.md"
+license = { file = "LICENSE" }
+# The floor, the classifiers below, the CI matrix, and the Containerfile base image move
+# in lockstep. A matrix leg is the only thing that checks the claim a classifier makes,
+# so dropping one alone turns a tested statement into an untested one.
+requires-python = ">=3.12,<3.15"
+classifiers = [
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+
+# Runtime dependencies are exact pins. They are protocol surface, not conveniences:
+# upgrades are deliberate, reviewed, single-purpose commits, never a resolver's choice at
+# install time.
+#
+# `ruamel.yaml` is here because `servers.yaml` is YAML and there is no YAML parser in the
+# stdlib. It is a 118 KiB pure-Python wheel with zero hard dependencies. Take it plain:
+# **never the `libyaml` or `oldlibyaml` extras**, which are the only things that pull
+# `ruamel.yaml.clib`, a C extension that would reintroduce a per-architecture wheel into a
+# release build that targets linux/amd64 *and* linux/arm64. Use `YAML(typ="safe", pure=True)`.
+#
+# A YAML 1.2 safe loader reads JSON, so `--config servers.json` works through the identical
+# code path with no extra branch. That is why there is no `tomllib` alternative here.
+#
+# `websockets` is the client-facing transport. Deliberately not starlette/uvicorn: this
+# process serves one protocol on one port and needs no ASGI stack, and the `mcp` SDK's
+# dependency tree (pydantic, starlette, uvicorn, sse-starlette, httpx2, pyjwt[crypto])
+# would put two Rust-compiled per-arch extensions into a process that proxies raw dicts.
+dependencies = [
+  "ruamel.yaml==0.19.1",
+  "websockets==17.0.1",
+]
+
+[project.optional-dependencies]
+# Dev deps mix pins and floors: pin what produces artifacts or enforces style (a ruff bump
+# rewrites the diff of every file it touches), float what only has to be new enough.
+dev = [
+  "build==1.2.2",
+  "packaging>=24.0",
+  "pytest>=8.4.2",
+  "pytest-asyncio>=1.0.0",
+  "ruff==0.6.9",
+]
+
+[project.scripts]
+mcp-gateway = "mcp_gateway.cli:run"
+mcp-gateway-connect = "mcp_gateway.bridge:run"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["src"]
+# Paired with the subprocess-leak guard in tests/conftest.py: a child process collected
+# without being closed raises in __del__, and unraisable exceptions are invisible by
+# default. This project's whole job is owning subprocesses, so that must be a failure.
+filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "scripts"]

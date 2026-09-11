@@ -223,3 +223,14 @@ __marimo__/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# --- python-mcp-gateway ---------------------------------------------------
+# The consolidated credential store. Every secret for every backend lives in this one
+# file, which is the entire point of the project; it must never be committed.
+gateway.env
+gateway.env.local
+# The committed template, listing the keys with placeholder values.
+!gateway.env.example
+
+logs/
+artifacts/

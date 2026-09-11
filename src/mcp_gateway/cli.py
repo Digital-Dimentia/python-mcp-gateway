@@ -1,0 +1,364 @@
+"""Parse the command line, configure logging, and run the daemon.
+
+The only module that touches `sys.argv` or raises `SystemExit`. Everything below it takes
+its configuration as arguments, which is what lets the whole gateway be driven from a
+test without a process boundary.
+
+## Paths resolve against the config file, not the cwd
+
+`--env` defaults to a sibling of the *resolved* `--config` path rather than to
+`./gateway.env`. A daemon is started by launchd, by a supervisor, or by a shell in some
+arbitrary directory -- launchd in particular starts it in `/` -- and resolving the
+credential file against the caller's cwd would make "one gitignored `gateway.env` at the
+repo root" work in development and silently fail in the one deployment that matters.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import os
+import signal
+import sys
+from pathlib import Path
+
+from mcp_gateway import __version__
+from mcp_gateway.config import ConfigError, GatewayConfig, ServerSpec, load as load_config
+from mcp_gateway.gateway import Gateway
+from mcp_gateway.logging_redaction import install_redaction
+from mcp_gateway.secrets import MissingSecret, SecretError, SecretStore, interpolate
+from mcp_gateway.secrets import load as load_secrets
+from mcp_gateway.transport_ws import (
+    UnauthenticatedBindError,
+    resolve_access_key,
+    unauthenticated_bind_allowed,
+)
+
+logger = logging.getLogger(__name__)
+
+#: argparse's own code for "you asked for something I will not do". Reused for every
+#: startup refusal so a supervisor sees one number for the whole class.
+EXIT_REFUSED = 2
+
+#: Bound before the socket is, and printed in `--list`. 8765 is what the README, the
+#: container examples and the Makefile banner all advertise.
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8765
+
+#: Overrides for the two file paths, for a deployment that cannot pass flags -- a
+#: container ENTRYPOINT, a launchd job whose ProgramArguments are awkward to edit.
+CONFIG_ENV = "MCP_GATEWAY_CONFIG"
+ENV_FILE_ENV = "MCP_GATEWAY_ENV"
+
+DEFAULT_CONFIG_NAME = "servers.yaml"
+DEFAULT_ENV_NAME = "gateway.env"
+
+# One `%(message)s` normally, the logger name prepended under --debug. Two formats rather
+# than one with an empty field, because the common case is read by a human watching a
+# terminal and a bare message is what that wants.
+_LOG_FORMAT = "%(message)s"
+_DEBUG_LOG_FORMAT = "%(name)s: %(message)s"
+
+
+def configure_logging(debug: bool) -> None:
+    """Send logging to **stderr**, at DEBUG when asked.
+
+    stderr and not stdout even though this process's stdout is not a protocol wire: the
+    same `configure_logging` is called by `mcp_gateway.bridge`, where it is, and a format
+    decision that is correct in one entrypoint and corrupting in the other is not a
+    decision worth having twice.
+    """
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        format=_DEBUG_LOG_FORMAT if debug else _LOG_FORMAT,
+        stream=sys.stderr,
+    )
+
+
+def default_config_path(environ: dict[str, str] | None = None) -> Path:
+    """Where `--config` points when it is not given.
+
+    `environ` is a parameter, defaulting to `os.environ`, so a test can exercise the
+    precedence without monkeypatching the process it runs in.
+    """
+    source = os.environ if environ is None else environ
+    configured = source.get(CONFIG_ENV)
+    if configured:
+        return Path(configured)
+    return Path.cwd() / DEFAULT_CONFIG_NAME
+
+
+def default_env_path(config_path: Path, environ: dict[str, str] | None = None) -> Path:
+    """Where `--env` points when it is not given: beside the resolved config file.
+
+    See the module docstring. The explicit `MCP_GATEWAY_ENV` still wins, for the
+    deployment that keeps its credentials somewhere else entirely -- a tmpfs, a mounted
+    secret -- while the config stays in the checkout.
+    """
+    source = os.environ if environ is None else environ
+    configured = source.get(ENV_FILE_ENV)
+    if configured:
+        return Path(configured)
+    return config_path.resolve().parent / DEFAULT_ENV_NAME
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The command line. Split out so a test can assert defaults without invoking `run`."""
+    parser = argparse.ArgumentParser(
+        prog="mcp-gateway",
+        description=(
+            "An MCP gateway daemon. Serves MCP over WebSocket to any number of clients "
+            "and fans out to the stdio MCP servers named in servers.yaml, injecting each "
+            "one's credentials from gateway.env."
+        ),
+    )
+    parser.add_argument("--version", action="version", version=f"mcp-gateway {__version__}")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            f"Path to the server catalogue (default: ${CONFIG_ENV}, else "
+            f"./{DEFAULT_CONFIG_NAME}). YAML or JSON -- a YAML 1.2 safe loader reads both."
+        ),
+    )
+    parser.add_argument(
+        "--env",
+        type=Path,
+        default=None,
+        help=(
+            f"Path to the credential store (default: ${ENV_FILE_ENV}, else "
+            f"{DEFAULT_ENV_NAME} beside the resolved --config)."
+        ),
+    )
+    parser.add_argument(
+        "--host",
+        default=DEFAULT_HOST,
+        help=(
+            f"Interface to bind (default: {DEFAULT_HOST}). Binding anything but loopback "
+            "without an access key is refused; see MCP_GATEWAY_WS_KEY."
+        ),
+    )
+    parser.add_argument(
+        "--port", type=int, default=DEFAULT_PORT, help=f"Port to bind (default: {DEFAULT_PORT})."
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Validate the config and credential store, report every problem found, and "
+            "exit 0 or 2. Binds no port and spawns no backend."
+        ),
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        dest="list_plan",
+        help=(
+            "Print the resolved spawn plan to stderr and exit: each backend's command, "
+            "args, cwd, and the NAMES of the environment variables it will receive. "
+            "Values are never printed."
+        ),
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Log at DEBUG, including every MCP message in both directions.",
+    )
+    return parser
+
+
+def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    """The config and credential paths this invocation will use."""
+    config_path = args.config if args.config is not None else default_config_path()
+    env_path = args.env if args.env is not None else default_env_path(config_path)
+    return config_path, env_path
+
+
+def _resolve_missing(config: GatewayConfig, store: SecretStore) -> dict[str, list[MissingSecret]]:
+    """Every unresolvable `${VAR}`, per enabled server.
+
+    Collects rather than raising, so one `--check` run reports every problem instead of the
+    first. Disabled servers are skipped entirely: parking a backend is how an operator
+    defers dealing with its credential, and reporting it would defeat that.
+    """
+    problems: dict[str, list[MissingSecret]] = {}
+    for name, spec in config.enabled.items():
+        missing: list[MissingSecret] = []
+        for key, template in spec.env.items():
+            interpolate(template, store, where=f"servers.{name}.env.{key}", missing=missing)
+        if spec.cwd is not None:
+            interpolate(spec.cwd, store, where=f"servers.{name}.cwd", missing=missing)
+        if missing:
+            problems[name] = missing
+    return problems
+
+
+def _describe(spec: ServerSpec) -> str:
+    """One backend's resolved spawn plan, as a human reads it.
+
+    Env **key names only**, never values -- this is printed by `--list`, which exists
+    precisely so an operator can check the plan without opening the credential store.
+    """
+    lines = [f"  {spec.name}:"]
+    lines.append(f"    command: {spec.command} {' '.join(spec.args)}".rstrip())
+    if spec.cwd:
+        lines.append(f"    cwd: {spec.cwd}")
+    lines.append(f"    env_mode: {spec.env_mode}")
+    if spec.env:
+        lines.append(f"    env keys: {', '.join(spec.env_keys)}")
+    if spec.env_passthrough:
+        lines.append(f"    env_passthrough: {', '.join(spec.env_passthrough)}")
+    flags = [f"timeout={spec.timeout:g}s", f"startup_timeout={spec.startup_timeout:g}s"]
+    if spec.required:
+        flags.append("required")
+    lines.append(f"    {', '.join(flags)}")
+    return "\n".join(lines)
+
+
+def check(config_path: Path, env_path: Path, *, list_plan: bool = False) -> int:
+    """Validate both files without binding a port or spawning anything.
+
+    Returns the process exit code. Everything goes to **stderr**, including the plan: the
+    two files this reports on are the ones an operator pipes around, and a report on stdout
+    invites `mcp-gateway --list > servers.yaml`.
+    """
+    try:
+        config = load_config(config_path)
+    except ConfigError as refusal:
+        print(str(refusal), file=sys.stderr)
+        return EXIT_REFUSED
+    try:
+        store = load_secrets(env_path)
+    except SecretError as refusal:
+        print(str(refusal), file=sys.stderr)
+        return EXIT_REFUSED
+
+    # Install redaction before anything below can echo a value by accident. The two loads
+    # above never log one -- `secrets.load` logs paths and modes only, asserted by test.
+    install_redaction(store)
+
+    print(f"config: {config_path}", file=sys.stderr)
+    print(f"secrets: {env_path} ({len(store.keys())} key(s))", file=sys.stderr)
+
+    enabled = config.enabled
+    disabled = [n for n, s in config.servers.items() if not s.enabled]
+    print(f"{len(enabled)} enabled server(s), {len(disabled)} disabled", file=sys.stderr)
+
+    if list_plan:
+        for spec in enabled.values():
+            print(_describe(spec), file=sys.stderr)
+
+    problems = _resolve_missing(config, store)
+    fatal = False
+    for name, missing in problems.items():
+        required = config.servers[name].required
+        for problem in missing:
+            print(
+                f"{'ERROR' if required else 'WARN '} {name}: {problem}",
+                file=sys.stderr,
+            )
+        if required:
+            fatal = True
+
+    if not problems:
+        print("all enabled servers have their credentials", file=sys.stderr)
+    elif not fatal:
+        print(
+            f"{len(problems)} server(s) would be skipped at startup; the rest would serve",
+            file=sys.stderr,
+        )
+    return EXIT_REFUSED if fatal else 0
+
+
+def _install_signal_handlers(gateway: Gateway) -> None:
+    """SIGHUP reloads; SIGTERM and SIGINT shut down cleanly.
+
+    SIGHUP is the **primary operator interface** for a daemon, not an afterthought: someone
+    rotating a credential may have no client attached to call `gateway__reload_config`. The
+    template declines SIGHUP for its stdio transport, reasonably -- there the process is the
+    client's child and restarting it is trivial. This one is long-lived and shared.
+    """
+    loop = asyncio.get_running_loop()
+
+    def _reload() -> None:
+        logger.info("SIGHUP: reloading configuration")
+        loop.create_task(gateway.reload())
+
+    if hasattr(signal, "SIGHUP"):  # not on Windows
+        loop.add_signal_handler(signal.SIGHUP, _reload)
+
+    stop = asyncio.Event()
+    for name in ("SIGTERM", "SIGINT"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            loop.add_signal_handler(sig, stop.set)
+    gateway.shutdown_requested = stop
+
+
+async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) -> None:
+    """Load, start backends, bind, and serve until told to stop."""
+    config = load_config(config_path)
+    store = load_secrets(env_path)
+    # The access key goes in even when it came from the environment rather than the store:
+    # `websockets` logs the request line, query string and all, at DEBUG.
+    access_key = resolve_access_key(store)
+    install_redaction(store, extra=[access_key] if access_key else [])
+
+    gateway = Gateway(
+        config,
+        store,
+        config_path=config_path,
+        env_path=env_path,
+        host=args.host,
+        port=args.port,
+    )
+    _install_signal_handlers(gateway)
+
+    await gateway.start(
+        access_key=access_key,
+        allow_unauthenticated=unauthenticated_bind_allowed(),
+    )
+    # `finally` and not a context manager: the one thing that must happen on every exit
+    # path is that the backend subprocesses are reaped, and a daemon exits by signal far
+    # more often than by falling off the end of a block.
+    try:
+        serving = asyncio.create_task(gateway.serve_forever())
+        stopping = asyncio.create_task(gateway.shutdown_requested.wait())
+        await asyncio.wait([serving, stopping], return_when=asyncio.FIRST_COMPLETED)
+        for task in (serving, stopping):
+            task.cancel()
+    finally:
+        logger.info("shutting down; stopping backends")
+        await gateway.stop()
+
+
+def run() -> None:
+    """Console-script entrypoint.
+
+    `KeyboardInterrupt` is swallowed rather than allowed to print a traceback: Ctrl+C is
+    how a foreground daemon is meant to be stopped, and a stack trace says otherwise.
+
+    The two startup refusals become `SystemExit(2)` -- argparse's own code for "you asked
+    for something I will not do" -- because both are configuration the operator must fix,
+    and neither ever reaches a client.
+    """
+    parser = build_parser()
+    args = parser.parse_args()
+    configure_logging(args.debug)
+    config_path, env_path = resolve_paths(args)
+
+    if args.check or args.list_plan:
+        raise SystemExit(check(config_path, env_path, list_plan=args.list_plan))
+
+    try:
+        asyncio.run(_serve(args, config_path, env_path))
+    except (ConfigError, SecretError) as refusal:
+        logger.error("%s", refusal)
+        raise SystemExit(EXIT_REFUSED) from None
+    except UnauthenticatedBindError as refusal:
+        logger.error("%s", refusal)
+        raise SystemExit(EXIT_REFUSED) from None
+    except KeyboardInterrupt:
+        pass

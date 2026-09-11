@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Run mcp-gateway as a persistent background daemon under launchd.
+
+  Install:
+    cp scripts/com.dbuschman7.mcp-gateway.plist ~/Library/LaunchAgents/
+    $EDITOR ~/Library/LaunchAgents/com.dbuschman7.mcp-gateway.plist   # fix the paths below
+    mkdir -p ~/Library/Logs
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dbuschman7.mcp-gateway.plist
+
+  Reload the config after editing servers.yaml or gateway.env:
+    launchctl kill SIGHUP gui/$(id -u)/com.dbuschman7.mcp-gateway
+
+  Stop:
+    launchctl bootout gui/$(id -u)/com.dbuschman7.mcp-gateway
+
+  WHY LAUNCHD RATHER THAN SELF-DAEMONIZING. The process runs in the foreground and logs to
+  stderr; launchd owns restart, log redirection and the run-at-load decision. A daemon that
+  forks, writes a PID file and rotates its own logs is reimplementing — less well — what
+  the platform already does correctly, and it is the part that breaks silently.
+
+  WHY THE gui DOMAIN. The daemon spawns the commands named in servers.yaml, which routinely
+  means `npx`, which needs a real PATH and a writable HOME. A LaunchDaemon in the system
+  domain has neither, and the failure presents as every backend failing to start for reasons
+  that look nothing like the cause.
+
+  THE ACCESS KEY IS NOT HERE. It belongs in gateway.env as WS_ACCESS_KEY, beside the
+  credentials it protects, where it is already gitignored, mode-checked and redacted from
+  the logs. A plist in ~/Library/LaunchAgents is world-readable, and `launchctl print`
+  shows EnvironmentVariables to anyone who asks — so putting it here would publish it
+  exactly the way a ws-key command-line flag would.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dbuschman7.mcp-gateway</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Absolute path: launchd starts the job in / with a minimal PATH, so a bare
+             `mcp-gateway` would not resolve. -->
+        <string>/Users/CHANGEME/dev/other/python-mcp-gateway/.venv/bin/mcp-gateway</string>
+        <string>--config</string>
+        <!-- gateway.env is found beside this file, not beside the working directory,
+             which is why the daemon resolves it that way. See src/mcp_gateway/cli.md. -->
+        <string>/Users/CHANGEME/dev/other/python-mcp-gateway/servers.yaml</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8765</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Restart on a crash, but not after a clean exit: `launchctl bootout` and a
+             deliberate SIGTERM should stop the daemon, not start an argument with it. -->
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Everything the daemon says goes to stderr, including the startup banner. stdout is
+         empty for the daemon (it is the wire only in mcp-gateway-connect), so the two files
+         are separate to make that obvious if it ever stops being true. -->
+    <key>StandardErrorPath</key>
+    <string>/Users/CHANGEME/Library/Logs/mcp-gateway.log</string>
+    <key>StandardOutPath</key>
+    <string>/Users/CHANGEME/Library/Logs/mcp-gateway.out.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/CHANGEME/dev/other/python-mcp-gateway</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- launchd's PATH is /usr/bin:/bin:/usr/sbin:/sbin, which has no node and no
+             homebrew. A backend named `npx` will not resolve without this. Curated env mode
+             forwards PATH to each child and nothing else from here. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

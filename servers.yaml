@@ -1,0 +1,67 @@
+# The gateway's backend catalogue. COMMITTED — it must never contain a secret value.
+#
+# Credentials are referenced as ${NAME} and resolved from gateway.env, which sits beside
+# this file and is gitignored. Run `make check` to validate both without starting anything,
+# and `mcp-gateway --list` to print the resolved spawn plan (env KEY NAMES only, never
+# values).
+#
+# YAML 1.2 is a superset of JSON, so `--config servers.json` works through the identical
+# code path — including a file pasted straight out of a Claude Desktop config.
+
+version: 1
+
+defaults:
+  # Per-request seconds, and the budget for spawn + initialize + first listing.
+  timeout: 30.0
+  startup_timeout: 20.0
+  # `curated` (the default) builds each child's environment from nothing: a small allowlist
+  # of process-shaping variables, plus that server's own env_passthrough and env. It is the
+  # whole point of the gateway — see src/mcp_gateway/backend.md.
+  env_mode: curated
+
+servers:
+  # Every entry below is an example. Delete what you do not use.
+
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/you/src"]
+    description: "Read and write files under ~/src"
+    # No credential: nothing to reference.
+
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+    description: "GitHub issues and pull requests"
+    enabled: false
+
+  slack:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-slack"]
+    env:
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN}"
+      SLACK_TEAM_ID: "${SLACK_TEAM_ID}"
+    description: "Post and read Slack messages"
+    enabled: false
+
+  postgres:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-postgres"]
+    env:
+      # A connection string is a credential. It belongs here as a reference, never inline,
+      # and never in `command` or `args` — argv is world-readable through `ps`, which the
+      # config loader refuses outright.
+      DATABASE_URL: "${POSTGRES_URL}"
+    description: "Query the analytics database"
+    enabled: false
+    # `required: true` would make a missing POSTGRES_URL fatal instead of skipping this one
+    # server. Use it where silent degradation is unacceptable.
+
+  # A backend behind a corporate TLS-intercepting proxy needs the proxy variables from this
+  # process's own environment. Name them; they are not inherited by default.
+  #
+  # behind-proxy:
+  #   command: npx
+  #   args: ["-y", "some-server"]
+  #   env_passthrough: ["HTTPS_PROXY", "NODE_EXTRA_CA_CERTS"]
