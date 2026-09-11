@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP Gateway</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128268;</text></svg>">
+</head>
+<body>
+
+<header class="bar">
+  <h1>MCP Gateway</h1>
+  <div class="bar-status">
+    <span class="pill" id="pill-mcp" data-state="closed" title="MCP socket">/mcp</span>
+    <span class="pill" id="pill-admin" data-state="closed" title="Admin socket">/admin</span>
+    <span class="bar-meta" id="bar-meta"></span>
+  </div>
+  <div class="bar-actions">
+    <button type="button" id="btn-reload" class="ghost" title="Re-read servers.yaml and gateway.env">Reload config</button>
+    <button type="button" id="btn-refresh" class="ghost" title="Refetch every listing">Refresh</button>
+  </div>
+</header>
+
+<!-- Shown until both sockets are up, or when the key is wrong. -->
+<section id="gate" class="gate" hidden>
+  <form id="gate-form">
+    <h2>Access key required</h2>
+    <p id="gate-message">This gateway is protected by an access key.</p>
+    <label>Key <input type="password" id="gate-key" autocomplete="off" spellcheck="false"></label>
+    <button type="submit">Connect</button>
+  </form>
+</section>
+
+<main class="columns">
+
+  <!-- ── Left: backends and their config ─────────────────────────────── -->
+  <section class="col col-left" aria-label="Backends">
+    <div class="col-head">
+      <h2>Backends</h2>
+      <button type="button" id="btn-add-server" class="ghost" title="Add a server to servers.yaml">+ Add</button>
+    </div>
+    <ul class="backends" id="backends"></ul>
+
+    <div class="col-foot">
+      <details id="status-block">
+        <summary>Gateway</summary>
+        <dl class="kv" id="status-kv"></dl>
+      </details>
+      <details id="log-block">
+        <summary>Log</summary>
+        <div class="log-controls">
+          <label>Level
+            <select id="log-level">
+              <option value="DEBUG">debug</option>
+              <option value="INFO" selected>info</option>
+              <option value="WARNING">warning</option>
+              <option value="ERROR">error</option>
+            </select>
+          </label>
+          <button type="button" id="btn-log-clear" class="ghost">Clear</button>
+        </div>
+        <ol class="log" id="log"></ol>
+      </details>
+    </div>
+  </section>
+
+  <!-- ── Middle: the selected backend's primitives ───────────────────── -->
+  <section class="col col-mid" aria-label="Primitives">
+    <div class="col-head">
+      <h2 id="mid-title">Primitives</h2>
+      <input type="search" id="filter" placeholder="Filter…" spellcheck="false">
+    </div>
+    <nav class="tabs" id="tabs">
+      <button type="button" data-kind="tools" class="on">Tools <span class="count" data-count="tools">0</span></button>
+      <button type="button" data-kind="prompts">Prompts <span class="count" data-count="prompts">0</span></button>
+      <button type="button" data-kind="resources">Resources <span class="count" data-count="resources">0</span></button>
+      <button type="button" data-kind="templates">Templates <span class="count" data-count="templates">0</span></button>
+    </nav>
+    <ul class="primitives" id="primitives"></ul>
+    <div class="detail" id="detail"></div>
+  </section>
+
+  <!-- ── Right: what came back ───────────────────────────────────────── -->
+  <section class="col col-right" aria-label="Results">
+    <div class="col-head">
+      <h2>Results</h2>
+      <button type="button" id="btn-clear-results" class="ghost">Clear</button>
+    </div>
+    <div class="results" id="results">
+      <p class="empty">Invoke a tool, get a prompt, or read a resource.</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- The server editor, opened from the left column. -->
+<dialog id="server-dialog">
+  <form method="dialog" id="server-form"></form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

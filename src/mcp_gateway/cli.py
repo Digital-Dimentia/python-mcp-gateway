@@ -27,7 +27,7 @@ from mcp_gateway import __version__
 from mcp_gateway.config import ConfigError, GatewayConfig, ServerSpec, load as load_config
 from mcp_gateway.gateway import Gateway
 from mcp_gateway.logging_redaction import install_redaction
-from mcp_gateway.secrets import MissingSecret, SecretError, SecretStore, interpolate
+from mcp_gateway.secrets import MissingSecret, SecretError, SecretStore, missing_for
 from mcp_gateway.secrets import load as load_secrets
 from mcp_gateway.transport_ws import (
     UnauthenticatedBindError,
@@ -179,20 +179,11 @@ def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
 def _resolve_missing(config: GatewayConfig, store: SecretStore) -> dict[str, list[MissingSecret]]:
     """Every unresolvable `${VAR}`, per enabled server.
 
-    Collects rather than raising, so one `--check` run reports every problem instead of the
-    first. Disabled servers are skipped entirely: parking a backend is how an operator
-    defers dealing with its credential, and reporting it would defeat that.
+    The implementation is `secrets.missing_for`, shared with `admin.secrets.missing` so the
+    UI and `--check` cannot disagree about what "missing" means. Kept as a name here because
+    that is what `check()` reads as.
     """
-    problems: dict[str, list[MissingSecret]] = {}
-    for name, spec in config.enabled.items():
-        missing: list[MissingSecret] = []
-        for key, template in spec.env.items():
-            interpolate(template, store, where=f"servers.{name}.env.{key}", missing=missing)
-        if spec.cwd is not None:
-            interpolate(spec.cwd, store, where=f"servers.{name}.cwd", missing=missing)
-        if missing:
-            problems[name] = missing
-    return problems
+    return missing_for(config, store)
 
 
 def _describe(spec: ServerSpec) -> str:
@@ -362,3 +353,15 @@ def run() -> None:
         raise SystemExit(EXIT_REFUSED) from None
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == "__main__":
+    # `python -m mcp_gateway.cli`, which is what `scripts/start-gateway.sh` -- and therefore
+    # `make run`, `make run-dev` and the launchd plist -- invokes.
+    #
+    # Without this guard the module is imported as `__main__`, defines everything, and
+    # exits 0 without binding anything. The banner still prints, because the Makefile prints
+    # it, so the failure looks exactly like a daemon that started and is quietly serving.
+    # The console script (`mcp-gateway`) calls `run()` through its entry point and was never
+    # affected, which is why this survived: every test and every hand-run used that path.
+    run()

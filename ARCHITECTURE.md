@@ -3,13 +3,13 @@
 The gateway is a long-lived daemon. It serves **MCP over WebSocket** to any number of
 clients, and fans out to N backend MCP servers, each a **stdio subprocess** whose lifecycle
 it owns. Every credential lives in one gitignored file, and each backend receives only its
-own.
+own. It also serves its own admin UI, as static files, on the same port.
 
 ```mermaid
 flowchart TB
     desktop["Claude Desktop / Claude Code"]
     bridge["mcp-gateway-connect"]
-    ui["admin UI (future)"]
+    ui["admin UI (browser)"]
     daemon["mcp-gateway daemon"]
     github["github (npx)"]
     slack["slack (npx)"]
@@ -19,7 +19,9 @@ flowchart TB
 
     desktop -->|stdio| bridge
     bridge -->|"ws /mcp"| daemon
+    daemon -->|"http /ui"| ui
     ui -->|"ws /admin"| daemon
+    ui -->|"ws /mcp"| daemon
     daemon -->|stdio| github
     daemon -->|stdio| slack
     daemon -->|stdio| fs
@@ -32,9 +34,10 @@ flowchart TB
 | Module | Owns |
 |---|---|
 | [`cli.py`](src/mcp_gateway/cli.md) | argparse, logging, signals, path resolution. The only module that touches `sys.argv` |
-| [`transport_ws.py`](src/mcp_gateway/transport_ws.md) | the WS server: bind, path routing, access key, keepalive |
+| [`transport_ws.py`](src/mcp_gateway/transport_ws.md) | the WS server: bind, path routing, access key, origin, keepalive |
 | [`session.py`](src/mcp_gateway/session.md) | one `/mcp` connection's state and method table |
 | [`admin_channel.py`](src/mcp_gateway/admin_channel.md) | one `/admin` connection: a plain JSON-RPC table for the UI |
+| [`webui.py`](src/mcp_gateway/webui.md) | the admin UI's static assets, on `/ui` |
 | [`bridge.py`](src/mcp_gateway/bridge.md) | `mcp-gateway-connect` — stdin↔WS pump |
 | [`gateway.py`](src/mcp_gateway/gateway.md) | the composition root; everything shared |
 | [`supervisor.py`](src/mcp_gateway/supervisor.md) | the shared backend pool, and reload |
@@ -45,6 +48,7 @@ flowchart TB
 | [`admin.py`](src/mcp_gateway/admin.md) | the `gateway__*` meta-tools, shared with `/admin` |
 | [`notifications.py`](src/mcp_gateway/notifications.md) | backend→client relay, and its debounce |
 | [`config.py`](src/mcp_gateway/config.md) | `servers.yaml` → specs. No secrets |
+| [`config_writer.py`](src/mcp_gateway/config_writer.md) | the other direction: the only module that writes `servers.yaml` |
 | [`secrets.py`](src/mcp_gateway/secrets.md) | `gateway.env` → values. The only module that holds one |
 | [`logging_redaction.py`](src/mcp_gateway/logging_redaction.md) | scrubs known values from every log record |
 | [`naming.py`](src/mcp_gateway/naming.md) | the `__` separator and the `mcpgw://` scheme |
@@ -125,7 +129,43 @@ drop in-flight work on the other eleven. See [`supervisor.md`](src/mcp_gateway/s
 | `command`/`args` | interpolation refused — argv is world-readable through `ps` |
 | Logging | every known value scrubbed at the **root** logger, so a backend's own stderr is covered too |
 | Bind | non-loopback with no key is refused; `is_loopback` fails closed |
-| Admin | no method returns a credential value; secret *writing* is not implemented anywhere |
+| Admin | no method returns a credential value; secret *writing* is not implemented anywhere. Config writing is on `/admin` only, where the model cannot reach it |
+| Origin | a socket whose `Origin` header names anywhere but this server is refused: WS has no same-origin policy, and a browser is now a client |
+| UI | static files only, and a CSP that forbids loading anything the page did not ship |
+
+## The UI
+
+`/ui` serves six static files -- HTML, CSS and three ES modules -- from the same port as the
+two sockets. No build step and no dependency; `webui.py` answers the GET.
+
+```mermaid
+flowchart LR
+    page["the page"]
+    left["left column: backends and config"]
+    mid["middle: tools, prompts, resources"]
+    right["right: what came back"]
+    adminpath["ws /admin"]
+    mcppath["ws /mcp"]
+
+    page --> left
+    page --> mid
+    page --> right
+    left --> adminpath
+    mid --> mcppath
+    right --> mcppath
+```
+
+**The middle and right columns speak MCP, not `admin.*`.** A UI that asked `/admin` for a
+tool listing would be showing its own rendering of the catalogue; the value of a test bench
+is that what you exercise in it is byte-identical to what the model gets. `/admin` answers
+what is *configured* -- and, since the UI landed, writes it.
+
+The form in the middle column is generated from each tool's own `inputSchema`, following the
+contract in python-acp's `docs/tool-schema-contract.md`: a schema using `if`/`then`/`else`,
+`dependentSchemas`, `allOf` or a discriminated `oneOf` steps aside to a raw JSON box with a
+reason rather than rendering half a conditional schema as though it were the whole thing.
+`examples/zoo_server.py` publishes one tool per construct, which is what that code is
+answerable to. See [`webui.md`](src/mcp_gateway/webui.md).
 
 ## Notes
 

@@ -78,6 +78,10 @@ DEBUG_FLAG := $(if $(strip $(DEBUG)),--debug,)
 # hand them every credential in gateway.env by way of the backends that hold them.
 NO_KEY ?=
 
+## `run-dev`'s own default for NO_KEY. Separate so `make run-dev DEV_NO_KEY=` can ask for
+## a key without the recursive invocation overriding whatever was passed on the command line.
+DEV_NO_KEY ?= 1
+
 # Opt-in escape hatch for a TLS-intercepting proxy whose CA pip does not trust. Empty by
 # default, so nothing is exported and no verification is relaxed on a normal machine.
 PIP_TRUSTED_HOST ?=
@@ -91,7 +95,7 @@ OFFLINE ?=
 VENV_FLAGS := $(if $(strip $(OFFLINE)),--offline,)
 
 .PHONY: venv sync install lint docs-check test check build wheel sdist container-image \
-        print-release-platforms package run connect clean clean-outputs clean-venv distclean
+        print-release-platforms package run run-dev connect clean clean-outputs clean-venv distclean
 
 venv: $(VENV_STAMP)
 
@@ -191,11 +195,13 @@ run:
 			'import os, urllib.parse; print(urllib.parse.quote(os.environ["MCPGW_RAW_KEY"], safe=""))'); \
 		printf 'MCP endpoint:   ws://$(HOST):$(PORT)/mcp?key=%s\n' "$$enc" >&2; \
 		printf 'Admin endpoint: ws://$(HOST):$(PORT)/admin?key=%s\n' "$$enc" >&2; \
+		printf 'Admin UI:       http://$(HOST):$(PORT)/ui/?key=%s\n' "$$enc" >&2; \
 		printf '\nAttach a client:\n' >&2; \
 		printf '  claude mcp add gateway -- mcp-gateway-connect --url ws://$(HOST):$(PORT)/mcp?key=%s\n' "$$enc" >&2; \
 	else \
 		printf 'MCP endpoint:   ws://$(HOST):$(PORT)/mcp   (no key; loopback clients only)\n' >&2; \
 		printf 'Admin endpoint: ws://$(HOST):$(PORT)/admin\n' >&2; \
+		printf 'Admin UI:       http://$(HOST):$(PORT)/ui/\n' >&2; \
 		printf '\nAttach a client:\n' >&2; \
 		printf '  claude mcp add gateway -- mcp-gateway-connect --url ws://$(HOST):$(PORT)/mcp\n' >&2; \
 	fi; \
@@ -203,6 +209,18 @@ run:
 	printf 'Press Ctrl+C to stop. kill -HUP to reload config.\n\n' >&2; \
 	export MCP_GATEWAY_WS_KEY="$$key"; \
 	exec $(START) --host $(HOST) --port $(PORT) --config $(CONFIG) $(DEBUG_FLAG) $(RUN_LOG_FLAG)
+
+## Start the daemon against servers.dev.yaml: the schema zoo and nothing else.
+##
+## For looking at the admin UI without configuring a real integration first. No access key
+## by default -- the zoo has no credentials, the bind is loopback, and a key in the URL is
+## one more thing between you and the page you are trying to look at. `make run-dev
+## DEV_NO_KEY=` generates one anyway.
+##
+## A recursive $(MAKE) rather than a copy of the banner: two copies of that is how one of
+## them ends up printing a URL that quietly does not work.
+run-dev:
+	@$(MAKE) run CONFIG=servers.dev.yaml NO_KEY=$(DEV_NO_KEY)
 
 ## Run the stdio<->WS bridge in the foreground, for reproducing a client's handshake by
 ## hand. **Nothing is written to stdout**: that is the protocol wire here, and one stray

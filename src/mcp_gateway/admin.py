@@ -5,7 +5,7 @@ One implementation, two surfaces:
 - **`gateway__*` MCP tools on `/mcp`**, so the model can diagnose its own missing tools --
   "GitHub is not configured" is an answer a model can give a human, where a silent absence
   is not.
-- **`admin.*` JSON-RPC methods on `/admin`**, so the future UI never has to speak MCP to
+- **`admin.*` JSON-RPC methods on `/admin`**, so the admin UI never has to speak MCP to
   ask which backends are up.
 
 They are always present, even with zero live backends. That is why `protocol.py` advertises
@@ -13,11 +13,15 @@ They are always present, even with zero live backends. That is why `protocol.py`
 
 ## What is deliberately not here
 
-There is **no `gateway__set_secret`, and no `admin.secrets.set` in v1.** Writing a
-credential from a tool call means a model can be talked into writing one, and the blast
-radius of this particular process is every credential on the machine. When the UI epic adds
-secret writing it goes on `/admin` only -- a surface the model cannot reach -- never on
-`/mcp`.
+There is **no `gateway__set_secret`, and no `admin.secrets.set`.** Writing a credential from
+a tool call means a model can be talked into writing one, and the blast radius of this
+particular process is every credential on the machine. The admin UI did not change that: it
+added `admin.config.*` and `admin.backend.*` on `/admin`, a surface the model cannot reach,
+and nothing anywhere that writes a value.
+
+What the UI got instead is `admin.secrets.missing` -- the *names* an enabled server needs
+and the store does not have. Naming the key is what makes "you add it to gateway.env
+yourself" a workable answer rather than a dead end.
 
 `admin.secrets.keys` returns key *names*. `gateway__list_backends` reports `env_keys`, also
 names. `tests/test_admin_tools.py` asserts that no known secret value appears anywhere in
@@ -33,6 +37,7 @@ from typing import Any
 
 from mcp_gateway import errors, naming
 from mcp_gateway.backend import Backend
+from mcp_gateway.secrets import missing_for
 
 logger = logging.getLogger(__name__)
 
@@ -256,3 +261,21 @@ class Admin:
     async def secrets_keys(self, _params: dict) -> dict[str, Any]:
         """Key **names** only. There is no method that returns a value, deliberately."""
         return {"keys": self.gateway.store.keys(), "source": str(self.gateway.env_path)}
+
+    async def secrets_missing(self, _params: dict) -> dict[str, Any]:
+        """Which `${VAR}` references each enabled server needs and the store does not have.
+
+        Names, again -- and the reason this method exists at all. The UI has to be able to
+        tell someone *why* a backend is down, and "GITHUB_TOKEN is not in gateway.env" is
+        that answer. Being able to name the key is what makes not being able to write it
+        an acceptable limitation rather than a dead end: the person adds the line by hand,
+        in a file only they can read, and presses reload.
+        """
+        problems = missing_for(self.gateway.config, self.gateway.store)
+        return {
+            "source": str(self.gateway.env_path),
+            "servers": {
+                name: sorted({problem.key for problem in found})
+                for name, found in problems.items()
+            },
+        }

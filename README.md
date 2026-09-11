@@ -13,13 +13,13 @@ Adding an integration is one entry in `servers.yaml` and one line in `gateway.en
 client config never changes again.
 
 ```
-Claude Desktop / Claude Code
-   │ stdio
-   ▼
-mcp-gateway-connect ─────────┐
-   │ ws://127.0.0.1:8765/mcp │
-   ▼                         │   admin UI ──► /admin
-mcp-gateway daemon ◄─────────┘
+Claude Desktop / Claude Code        your browser
+   │ stdio                             │ http://127.0.0.1:8765/ui
+   ▼                                   ▼
+mcp-gateway-connect ─────────┐    admin UI ──► /admin  and  /mcp
+   │ ws://127.0.0.1:8765/mcp │         │
+   ▼                         │         │
+mcp-gateway daemon ◄─────────┴─────────┘
    │ stdio     │ stdio     │ stdio
    ▼           ▼           ▼
  github      slack      filesystem
@@ -102,6 +102,47 @@ The gateway also exposes four tools of its own, so a model can explain itself:
 A call to a backend that is down comes back as readable content, not a protocol error — so
 the model can tell you "GitHub is not configured" instead of failing the turn.
 
+## The UI
+
+The daemon serves its own admin and test console at **`http://127.0.0.1:8765/ui`**. `make
+run` prints the URL, with the access key attached when there is one.
+
+```
+┌ Backends ────────┬ Tools · Prompts · Resources ─┬ Results ─────────┐
+│ ● github         │ create_issue                 │ what came back,  │
+│ ● filesystem     │   title    [            ]    │ rendered, with   │
+│ ○ slack          │   body     [            ]    │ the raw payload  │
+│   SLACK_BOT_TOKEN│   labels   [+ Add item ]     │ one click away   │
+│   missing        │            [ Call tool ]     │                  │
+└──────────────────┴──────────────────────────────┴──────────────────┘
+```
+
+Three columns: what is configured and running, what the selected backend publishes, and what
+came back from invoking it.
+
+- **The forms are generated from each tool's own `inputSchema`** — typed inputs, enum
+  dropdowns, required markers, bounds and array editors. A schema using `if`/`then`/`else`,
+  `allOf`, `dependentSchemas` or a discriminated `oneOf` gets a raw JSON box and a reason
+  instead: a form that is confidently wrong is worse than the text box it should have fallen
+  back to.
+- **The middle and right columns speak MCP**, through a real handshake on `/mcp`. What you
+  exercise in the UI is byte-identical to what the model gets.
+- **Editing `servers.yaml` happens on `/admin`**, which the model cannot reach. Comments in
+  the file survive the edit, an invalid edit writes nothing at all, and a `.bak` is left
+  beside it.
+- **Nothing in the UI can read or write a credential.** When a backend is missing one, the UI
+  names the key — `SLACK_BOT_TOKEN`, say — and you add the line to `gateway.env` yourself.
+
+To try it without configuring a real integration first:
+
+```bash
+make run-dev        # starts examples/zoo_server.py, then open the URL it prints
+```
+
+That is a local MCP server whose only purpose is to be rendered: thirteen tools covering
+every JSON Schema construct a form can meet, four prompts, seven resources and two URI
+templates.
+
 ## Rotating a credential
 
 ```bash
@@ -125,7 +166,11 @@ daemon carries on as it was.
 - Every known secret value is scrubbed from every log record, at the root logger — so a
   backend that prints its own token to stderr is covered too.
 - Binding anything but loopback without an access key is refused.
-- No admin method returns a credential value, and nothing anywhere can write one.
+- A WebSocket whose `Origin` header names anywhere but this server is refused. WebSocket has
+  no same-origin policy, so any page you visit could otherwise open a socket to
+  `127.0.0.1:8765`; non-browser clients send no `Origin` and are unaffected.
+- No admin method returns a credential value, and nothing anywhere can write one. The UI
+  edits `servers.yaml`, never `gateway.env`.
 
 ## Running it in the background
 
@@ -147,6 +192,7 @@ launchd owns restart and log rotation; the daemon does not daemonize itself.
 | `make lint` / `docs-check` / `test` / `build` | the CI gate, in that order |
 | `make check` | validate `servers.yaml` + `gateway.env`, bind nothing |
 | `make run` | start the daemon |
+| `make run-dev` | start it against `servers.dev.yaml`: the schema zoo, for the UI |
 | `make connect` | run the bridge in the foreground |
 | `make container-image` / `package` | build and export the container image |
 | `make clean` | build outputs and caches — **leaves the venv alone** |

@@ -6,12 +6,21 @@ included, because the reasoning is correct and was learned the hard way. What is
 lifted is everything above the frame -- no ACP SDK, no `run_agent`, no `Transport`
 conformance. A decoded message goes to `Session.handle`, which is our own method table.
 
-## Two paths on one port
+## Two paths and a page on one port
 
 `/mcp` speaks MCP to any number of clients. `/admin` speaks a separate JSON-RPC method
-table to the future UI. The split is not cosmetic: admin verbs must not appear in the
-model's tool list, and a UI should not have to speak MCP to ask which backends are up.
-Anything else gets a 404 during the handshake, before a connection exists.
+table to the UI. The split is not cosmetic: admin verbs must not appear in the model's tool
+list, and a UI should not have to speak MCP to ask which backends are up. `/ui` is not a
+socket at all -- it is the UI's own static assets, answered by `webui.py` from the same
+`process_request` hook, so the page is same-origin with the two sockets it opens. Anything
+else gets a 404 during the handshake, before a connection exists.
+
+## Origin
+
+A request carrying an `Origin` header must name this server, or it is refused. Only
+browsers send one, so nothing that speaks to this daemon today is affected -- and a browser
+is now a first-class client, which is what turns "any web page can open a socket to
+127.0.0.1" from a note into a hole. See `origin_permitted`.
 
 ## One connection, one reader, one task per request
 
@@ -42,7 +51,7 @@ from urllib.parse import parse_qs, urlsplit
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.http11 import Request, Response
 
-from mcp_gateway import errors, jsonrpc
+from mcp_gateway import errors, jsonrpc, webui
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +76,13 @@ ACCESS_KEY_SECRET_NAME = "WS_ACCESS_KEY"
 #: Escape hatch for `refuse_unauthenticated_bind`. `1`, `true` or `yes` binds a
 #: non-loopback interface with no key anyway.
 ALLOW_UNAUTHENTICATED_ENV = "MCP_GATEWAY_WS_ALLOW_UNAUTHENTICATED"
+
+#: Extra browser origins allowed to open a socket, comma-separated. `*` disables the check.
+#:
+#: The default set is this server's own address, which is what the shipped UI is served
+#: from. This exists for the person running the UI from a Vite dev server on another port,
+#: and for nothing else.
+ALLOWED_ORIGINS_ENV = "MCP_GATEWAY_WS_ALLOWED_ORIGINS"
 
 #: Query parameter carrying the key: `ws://host:8765/mcp?key=<secret>`.
 #:
@@ -183,6 +199,48 @@ def refuse_unauthenticated_bind(host: str | None, key: str | None, allowed: bool
     )
 
 
+def configured_origins(environ: dict[str, str] | None = None) -> frozenset[str]:
+    """The extra origins from the environment. Empty when unset."""
+    source = os.environ if environ is None else environ
+    raw = source.get(ALLOWED_ORIGINS_ENV, "")
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+def own_origins(host: str | None, port: int) -> frozenset[str]:
+    """The origins a browser would report for a page this server itself served.
+
+    All three loopback spellings, because a user who binds `127.0.0.1` and then types
+    `localhost:8765` has done nothing wrong and must not be met with a 403 they cannot
+    diagnose. `https` is included against the day `wss://` lands (`python-mcp-gateway-4rw`);
+    an origin nothing can currently serve costs nothing to accept.
+    """
+    hosts = {host} if host else set()
+    if not host or is_loopback(host):
+        hosts |= {"127.0.0.1", "localhost", "[::1]"}
+    return frozenset(f"{scheme}://{h}:{port}" for h in hosts if h for scheme in ("http", "https"))
+
+
+def origin_permitted(origin: str | None, allowed: frozenset[str]) -> bool:
+    """Whether a connection carrying `origin` may proceed.
+
+    **No `Origin` header means yes.** Only browsers send one, and every non-browser client
+    this gateway has -- the bridge, Claude Desktop, the tests -- sends none. Refusing an
+    absent header would break all of them to defend against something that cannot happen
+    without one.
+
+    A *present* header that does not match is refused, and that is the whole point.
+    WebSocket has no same-origin policy: any page on the internet can open a socket to
+    `127.0.0.1:8765`, and this daemon spawns the commands in its config and holds every
+    credential on the machine. Before there was a UI the exposure was theoretical; a
+    browser-facing surface is exactly the thing that makes it real.
+    """
+    if origin is None:
+        return True
+    if "*" in allowed:
+        return True
+    return origin in allowed
+
+
 def _offered_keys(request: Request) -> list[str]:
     """Every key the request presents, from the query string and the Authorization header."""
     offered = list(parse_qs(urlsplit(request.path).query).get(ACCESS_KEY_QUERY_PARAM, []))
@@ -192,20 +250,42 @@ def _offered_keys(request: Request) -> list[str]:
     return offered
 
 
-def _access_check(expected: str | None) -> Any:
-    """A `process_request` hook: 404 an unknown path, 401 a client without the key.
+def _access_check(expected: str | None, origins: Callable[[], frozenset[str]]) -> Any:
+    """A `process_request` hook: serve the UI, 404 an unknown path, 401 a client without the key.
 
-    Both happen during the opening handshake, so a rejected client never reaches
+    All of it happens during the opening handshake, so a rejected client never reaches
     `initialize` and never becomes a connection at all.
+
+    `origins` is a callable rather than a set because the allowed set names the bound port,
+    and with `--port 0` that is not known until after `serve()` has been handed this hook.
     """
     expected_bytes = expected.encode("utf-8") if expected else None
 
     def process_request(connection: ServerConnection, request: Request) -> Response | None:
         path = urlsplit(request.path).path or "/"
+        # Before the key check: the UI's own assets carry no key, because a browser cannot
+        # put one on a navigation. See `webui.py` for why that is safe and not a shortcut.
+        if webui.is_ui_path(path):
+            # The whole target, not the split path: the redirect `/ui` -> `/ui/` has to
+            # carry the query string, which is where the access key is.
+            return webui.response(request.path)
         if path not in (MCP_PATH, ADMIN_PATH):
             logger.warning("Rejected WebSocket connection to unknown path %r", path)
             return connection.respond(
-                HTTPStatus.NOT_FOUND, f"No such endpoint. Try {MCP_PATH} or {ADMIN_PATH}.\n"
+                HTTPStatus.NOT_FOUND,
+                f"No such endpoint. Try {MCP_PATH}, {ADMIN_PATH} or {webui.UI_PATH}.\n",
+            )
+        origin = request.headers.get("Origin")
+        if not origin_permitted(origin, origins()):
+            logger.warning(
+                "Rejected WebSocket connection from %s to %s: origin %r is not allowed",
+                connection.remote_address,
+                path,
+                origin,
+            )
+            return connection.respond(
+                HTTPStatus.FORBIDDEN,
+                f"Origin not allowed. Set {ALLOWED_ORIGINS_ENV} to permit it.\n",
             )
         if expected_bytes is None:
             return None
@@ -298,6 +378,15 @@ class GatewayServer:
         self._server: Server | None = None
         self._links: set[ClientLink] = set()
 
+    def _allowed_origins(self) -> frozenset[str]:
+        """Origins a browser may open a socket from. Recomputed per request, not per bind.
+
+        Per request because `self.port` is only real once the socket exists -- `--port 0`
+        is how every test binds -- and because the environment override should take effect
+        on a reload rather than only on a restart.
+        """
+        return own_origins(self._host, self.port) | configured_origins()
+
     @property
     def port(self) -> int:
         """The bound port, which is not `self._port` when that was 0.
@@ -361,9 +450,10 @@ class GatewayServer:
             max_size=MAX_MESSAGE_BYTES,
             ping_interval=PING_INTERVAL_SECONDS,
             ping_timeout=PING_TIMEOUT_SECONDS,
-            process_request=_access_check(self._access_key),
+            process_request=_access_check(self._access_key, self._allowed_origins),
         )
         logger.info("listening on ws://%s:%s%s", self._host, self.port, MCP_PATH)
+        logger.info("admin UI at %s", webui.url(self._host, self.port))
 
     async def stop(self) -> None:
         if self._server is None:

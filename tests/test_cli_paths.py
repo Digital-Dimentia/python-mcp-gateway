@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 from mcp_gateway import cli
@@ -122,3 +124,28 @@ def test_the_parser_advertises_the_defaults_the_makefile_banner_quotes() -> None
     assert (args.host, args.port) == (cli.DEFAULT_HOST, cli.DEFAULT_PORT)
     assert args.config is None and args.env is None
     assert not args.check and not args.list_plan and not args.debug
+
+
+def test_the_module_is_runnable_as_a_script(tmp_path) -> None:
+    """`python -m mcp_gateway.cli` must actually run, because that is how the daemon starts.
+
+    `scripts/start-gateway.sh` -- and therefore `make run`, `make run-dev` and the launchd
+    plist -- invokes the module, not the console script. Without an `if __name__` guard the
+    module imports, defines everything, and exits 0 without binding anything, which looks
+    exactly like a daemon that started: the Makefile prints the banner either way. Nothing
+    caught it, because every test and every hand-run used the `mcp-gateway` entry point.
+
+    `--check` rather than a real bind: it exercises the same `run()` and exits.
+    """
+    config_path, env_path = _write(
+        tmp_path, servers="servers:\n  alpha:\n    command: /usr/bin/true\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "mcp_gateway.cli", "--check",
+         "--config", str(config_path), "--env", str(env_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    # Proof it got as far as `check()` rather than falling off the end of an import.
+    assert "1 enabled server(s)" in result.stdout + result.stderr

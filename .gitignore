@@ -234,3 +234,7 @@ gateway.env.local
 
 logs/
 artifacts/
+
+# Left beside servers.yaml by config_writer.py before every admin UI edit. Useful locally,
+# never worth committing.
+*.yaml.bak

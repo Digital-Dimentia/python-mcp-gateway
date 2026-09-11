@@ -8,16 +8,24 @@ one port is what buys both.
 The implementations are shared with the `gateway__*` meta-tools -- `admin.py` holds them
 once -- so the two surfaces cannot drift into disagreeing about what "running" means.
 
-## Read-only in v1
+## Reading
 
-`admin.status`, `admin.backends`, `admin.health`, `admin.config.get`, `admin.secrets.keys`,
-`admin.logs.tail`, plus `admin.reload` and `admin.backend.restart`, which ship because they
-are the same code the meta-tools already expose to the model -- withholding them from the UI
-while the model can call them would be theatre.
+`admin.status`, `admin.backends`, `admin.health`, `admin.config.get`,
+`admin.secrets.keys`, `admin.secrets.missing` and `admin.logs.tail`, plus `admin.reload` and
+`admin.backend.restart`, which ship because they are the same code the meta-tools already
+expose to the model -- withholding them from the UI while the model can call them would be
+theatre.
 
-The mutating verbs the UI epic needs -- `admin.config.set`, `admin.secrets.set`,
-`admin.backend.add`/`remove` -- are **not implemented**. When they land they go here and only
-here: a surface the model cannot reach. See `admin.md` for that decision and its reasoning.
+## Writing
+
+`admin.config.set`, `admin.backend.add`, `admin.backend.update` and `admin.backend.remove`
+edit `servers.yaml` through `config_writer.py`, and each reloads by default, because an edit
+you have to remember to apply is an edit that silently did nothing.
+
+They are here **and only here**: a surface the model cannot reach. `/mcp` gained nothing.
+The line that has not moved is credentials -- there is no `admin.secrets.set`, on this path
+or any other, and `admin.secrets.missing` exists precisely so the UI can *name* a key it
+needs without ever being able to ask for or supply its value. See `admin.md`.
 
 ## No handshake
 
@@ -32,7 +40,7 @@ import asyncio
 import logging
 from typing import Any
 
-from mcp_gateway import errors, jsonrpc
+from mcp_gateway import config_writer, errors, jsonrpc
 from mcp_gateway.transport_ws import ClientLink
 
 logger = logging.getLogger(__name__)
@@ -105,6 +113,11 @@ class AdminConnection:
             "admin.health": gateway.admin.health,
             "admin.config.get": self._config_get,
             "admin.secrets.keys": gateway.admin.secrets_keys,
+            "admin.secrets.missing": gateway.admin.secrets_missing,
+            "admin.config.set": self._config_set,
+            "admin.backend.add": self._backend_add,
+            "admin.backend.update": self._backend_update,
+            "admin.backend.remove": self._backend_remove,
             "admin.reload": self._reload,
             "admin.backend.restart": self._restart,
             "admin.logs.tail": self._logs_tail,
@@ -160,6 +173,69 @@ class AdminConnection:
                 for name, spec in config.servers.items()
             },
         }
+
+    # --- writing ------------------------------------------------------------------------
+    #
+    # Four verbs, one shape: edit the file through `config_writer`, then reload unless told
+    # not to. `reload` defaults to True because an edit you have to remember to apply is an
+    # edit that silently did nothing -- and `Gateway.reload` only restarts the backends whose
+    # *resolved* launch actually changed, so applying an edit to one server does not disturb
+    # the other eleven.
+
+    async def _apply(self, warnings: list[str], params: dict) -> dict[str, Any]:
+        """Finish a write: reload if asked, and report the warnings either way."""
+        payload: dict[str, Any] = {"written": True, "warnings": warnings}
+        if params.get("reload", True):
+            payload["reload"] = await self._reload({})
+        return payload
+
+    @staticmethod
+    def _name(params: dict, method: str) -> str:
+        name = params.get("name")
+        if not isinstance(name, str) or not name:
+            raise errors.InvalidParams(f"{method} requires a 'name'")
+        return name
+
+    @staticmethod
+    def _mapping(params: dict, key: str, method: str) -> dict[str, Any]:
+        value = params.get(key)
+        if not isinstance(value, dict):
+            raise errors.InvalidParams(f"{method} requires a {key!r} mapping")
+        return value
+
+    async def _config_set(self, params: dict) -> dict[str, Any]:
+        """Replace the whole `servers` mapping. `version` and `defaults` are left alone."""
+        servers = self._mapping(params, "servers", "admin.config.set")
+        warnings = self._write(config_writer.set_servers, servers)
+        return await self._apply(warnings, params)
+
+    async def _backend_add(self, params: dict) -> dict[str, Any]:
+        name = self._name(params, "admin.backend.add")
+        spec = self._mapping(params, "spec", "admin.backend.add")
+        warnings = self._write(config_writer.add_server, name, spec)
+        return await self._apply(warnings, params)
+
+    async def _backend_update(self, params: dict) -> dict[str, Any]:
+        name = self._name(params, "admin.backend.update")
+        changes = self._mapping(params, "changes", "admin.backend.update")
+        warnings = self._write(config_writer.update_server, name, changes)
+        return await self._apply(warnings, params)
+
+    async def _backend_remove(self, params: dict) -> dict[str, Any]:
+        name = self._name(params, "admin.backend.remove")
+        warnings = self._write(config_writer.remove_server, name)
+        return await self._apply(warnings, params)
+
+    def _write(self, operation, *args) -> list[str]:
+        """Run one writer operation against the daemon's own config path.
+
+        The path comes from the gateway rather than from the request. A method that took a
+        path would let whoever reaches `/admin` write YAML anywhere this process can write,
+        which is a materially different capability from editing the catalogue it was started
+        with -- and not one anybody asked for.
+        """
+        warnings, _text = operation(self.gateway.config_path, *args)
+        return warnings
 
     async def _reload(self, params: dict) -> dict[str, Any]:
         """The same code `gateway__reload_config` calls, unwrapped from its tool envelope."""

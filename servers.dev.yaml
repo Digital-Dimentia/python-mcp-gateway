@@ -1,0 +1,39 @@
+# A development catalogue: one backend, no credentials, nothing that touches the network.
+#
+# This is what `make run-dev` starts. Its whole job is to give the admin UI something worth
+# rendering — every JSON Schema construct a form can meet, including the four it is meant to
+# decline — without asking you to configure a real integration first.
+#
+#   make run-dev        then open the URL it prints
+#
+# See examples/zoo_server.py for what each tool is for, and src/mcp_gateway/webui.md for
+# what the UI does with them.
+
+version: 1
+
+defaults:
+  # Generous, because this is a test bench and a breakpoint in a backend should not look
+  # like a hung gateway.
+  timeout: 60.0
+  startup_timeout: 20.0
+  env_mode: curated
+
+servers:
+  zoo:
+    command: python3
+    args: ["examples/zoo_server.py"]
+    description: "The schema zoo: 13 tools, 4 prompts, 7 resources, 2 templates"
+    env:
+      # A literal, and legitimately so — this is a feature flag, not a credential. The
+      # config writer warns about literals here (see config_writer.md rule 3) precisely
+      # because it cannot tell the difference, and a warning you can read beats a refusal
+      # you have to work around.
+      #
+      # It has to be named at all because `env_mode: curated` builds this child's
+      # environment from nothing: a backend inherits no variable this file does not list.
+      MOCK_MCP_SCHEMA_ZOO: "1"
+    env_passthrough:
+      # `command: python3` is resolved against PATH, and a curated environment has only the
+      # allowlist's. This is here so a pyenv or Homebrew interpreter is found the same way
+      # your shell finds it.
+      - "PATH"

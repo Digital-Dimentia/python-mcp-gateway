@@ -33,6 +33,11 @@ import re
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - `config` does not import this module, so this is
+    # a one-way type-only edge rather than a cycle.
+    from mcp_gateway.config import GatewayConfig
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +265,30 @@ def interpolate(
         out.append(value)
     out.append(template[index:])
     return "".join(out)
+
+
+def missing_for(config: "GatewayConfig", store: SecretStore) -> dict[str, list[MissingSecret]]:
+    """Every unresolvable `${VAR}`, per enabled server.
+
+    Collects rather than raising, so one pass reports every problem instead of the first.
+    Disabled servers are skipped entirely: parking a backend is how an operator defers
+    dealing with its credential, and reporting it anyway would defeat that.
+
+    Lives here rather than in `cli.py` because two callers need it -- `--check` before the
+    daemon starts, and `admin.secrets.missing` while it is running, so the UI can name the
+    key to add to `gateway.env` without ever asking for its value. Two copies of this loop
+    is exactly how one of them ends up forgetting `cwd`.
+    """
+    problems: dict[str, list[MissingSecret]] = {}
+    for name, spec in config.enabled.items():
+        missing: list[MissingSecret] = []
+        for key, template in spec.env.items():
+            interpolate(template, store, where=f"servers.{name}.env.{key}", missing=missing)
+        if spec.cwd is not None:
+            interpolate(spec.cwd, store, where=f"servers.{name}.cwd", missing=missing)
+        if missing:
+            problems[name] = missing
+    return problems
 
 
 def expand_path(value: str, store: SecretStore, *, where: str) -> str:

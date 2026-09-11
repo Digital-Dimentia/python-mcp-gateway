@@ -120,14 +120,31 @@ async def test_no_admin_method_returns_a_secret_value(tmp_path) -> None:
         await harness.close()
 
 
-async def test_the_mutating_verbs_are_not_implemented(tmp_path) -> None:
-    """They land in the UI epic, on this path only -- never where the model can reach."""
+async def test_no_verb_anywhere_writes_a_credential(tmp_path) -> None:
+    """The line that did not move when config writing landed.
+
+    `admin.config.*` and `admin.backend.*` now edit servers.yaml on this path. There is
+    still no method on any path that writes a value into gateway.env, and this is the test
+    that says so -- see admin.md.
+    """
     harness = await daemon(tmp_path, servers=SERVERS, env=ENV)
     try:
         client = await admin(harness)
-        for method in ("admin.config.set", "admin.secrets.set", "admin.backend.add"):
+        for method in ("admin.secrets.set", "admin.secrets.get", "admin.env.set"):
             response = await client.request(method, {})
             assert response["error"]["code"] == errors.METHOD_NOT_FOUND, method
+    finally:
+        await harness.close()
+
+
+async def test_the_config_verbs_reject_a_request_without_a_target(tmp_path) -> None:
+    """Present, and still refusing a call that names nothing to write."""
+    harness = await daemon(tmp_path, servers=SERVERS, env=ENV)
+    try:
+        client = await admin(harness)
+        for method in ("admin.config.set", "admin.backend.add", "admin.backend.remove"):
+            response = await client.request(method, {})
+            assert response["error"]["code"] == errors.INVALID_PARAMS, method
     finally:
         await harness.close()
 
