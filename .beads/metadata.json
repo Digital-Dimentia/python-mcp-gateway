@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "python_mcp_gateway",
+  "project_id": "43f6df1c-2751-45eb-af4f-d1413c95dc73"
+}
