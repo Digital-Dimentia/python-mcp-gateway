@@ -2,7 +2,7 @@
 
 Forwards one call to the backend that owns it, and translates what comes back.
 
-Three methods: `tools/call`, `prompts/get`, `resources/read`.
+Four methods: `tools/call`, `prompts/get`, `resources/read`, `completion/complete`.
 
 ## A dead backend answers differently per method, deliberately
 
@@ -35,6 +35,37 @@ telling those two apart is the entire value of the distinction.
 | `tools/call` | result, `isError: true` | `-32602` |
 | `prompts/get` | `-32603` | `-32602` |
 | `resources/read` | `-32002` | `-32002` |
+| `completion/complete` | `-32603` | `-32602` (prompt) / `-32002` (resource) |
+
+## Completion is a hint, and a hint has its own error budget
+
+`completion/complete` is asked while somebody is still typing, so the standard by which it
+is judged is different: it must never turn a half-filled form into a failed call.
+
+**The `ref` is the routing key**, and the only thing rewritten. A `ref/prompt` carries a
+namespaced name and a `ref/resource` a `mcpgw://` URI — resolved by the same
+`find_prompt`/`find_resource` that `prompts/get` and `resources/read` use, and answered the
+same way when they miss: `-32602` for a name, `-32002` for a URI. A `ref` of a type we do
+not know is `-32602` rather than a guess, because there is no way to tell which backend it
+meant. A known-but-down backend is `-32603`, the `prompts/get` rule, since a completion
+result has no `isError` to carry the sentence instead.
+
+**A backend that never declared `completions` gets an empty result, not an error.**
+`{"values": [], "total": 0, "hasMore": false}` — which is what a completions-capable server
+returns for an argument it cannot suggest for. A `-32601` would be the gateway denying a
+method it advertises; a `-32602` would claim something was wrong with the params. Nothing
+reaches the backend in this case, so nothing is stamped on it either.
+
+**`context` is stripped for a backend that negotiated `2024-11-05`.** The member postdates
+that revision, and sending it is a field the server never agreed to read: ignored by a
+lenient one, refused by a strict one. The request is perfectly well-formed without it — a
+cascade simply degrades into an unfiltered list, which beats a hint that fails the call. The
+decision is here rather than in `mcp_stdio.py` because this is where the backend, and so its
+negotiated version, is known.
+
+**Nothing in the answer is rewritten.** `values` are *argument values* in the backend's own
+vocabulary — an animal id, a country name — never names or URIs in the gateway's address
+space. Rewriting one would corrupt the exact string the client is about to send back.
 
 ## Results are forwarded verbatim
 

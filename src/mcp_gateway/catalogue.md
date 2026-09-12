@@ -54,3 +54,11 @@ rewriting the cached one in place.
 
 They are different facts. A health report that conflated them would say "this backend has no
 tools" about one that has simply never been asked.
+
+## The finders serve completions too
+
+`find_prompt` and `find_resource` resolve a `completion/complete` `ref` as readily as they
+resolve a `prompts/get` name or a `resources/read` URI, and that is the whole of what this
+module had to do for the method: a ref *is* a name or a URI, in the same address space, and
+a second resolver for it would be a second thing to keep in step. See
+[`router.md`](router.md).

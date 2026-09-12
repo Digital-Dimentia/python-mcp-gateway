@@ -42,6 +42,7 @@ PROMPTS_GET = "prompts/get"
 RESOURCES_LIST = "resources/list"
 RESOURCES_TEMPLATES_LIST = "resources/templates/list"
 RESOURCES_READ = "resources/read"
+COMPLETION_COMPLETE = "completion/complete"
 CANCELLED = "notifications/cancelled"
 PROGRESS = "notifications/progress"
 MESSAGE = "notifications/message"
@@ -79,6 +80,11 @@ CAPABILITY_MANIFEST: tuple[Capability, ...] = (
     Capability("tools", "listChanged", "catalogue.tools / router.call_tool; admin tools always exist"),
     Capability("prompts", "listChanged", "catalogue.prompts / router.get_prompt; empty list when none"),
     Capability("resources", "listChanged", "catalogue.resources / router.read_resource"),
+    Capability(
+        "completions",
+        None,
+        "router.complete; empty values when the backend declares no completions",
+    ),
 )
 
 
@@ -100,6 +106,16 @@ def advertised_capabilities() -> dict[str, dict[str, bool]]:
     `prompts/list` with no prompt-capable backend returns `{"prompts": []}`, which is
     exactly what a real server with no prompts returns and a case every client already
     handles. Nobody is ever stranded on a `-32601`.
+
+    `completions` is the one key where "we can always answer" costs something, and the cost
+    is worth naming. A backend that never declared `completions` cannot be asked, so the
+    gateway answers `{"values": []}` on its behalf -- which is exactly what a
+    completions-capable server returns for an argument it has no suggestions for, and
+    therefore conflates two facts a client might have liked to tell apart. It is not a
+    distinction the spec exposes anywhere else either: a real server's empty list says
+    nothing about whether it *could* have suggested something. So nothing is lost that a
+    client could have used, and the alternative -- a `-32601` for a method we advertise --
+    would be a lie about our own method table.
 
     `subscribe` is `False` and is the one thing here that is a live claim: nothing
     implements `resources/subscribe` yet, so saying otherwise would strand a caller.

@@ -61,6 +61,7 @@ class Session:
             protocol.RESOURCES_LIST: self._resources_list,
             protocol.RESOURCES_TEMPLATES_LIST: self._resources_templates_list,
             protocol.RESOURCES_READ: self._resources_read,
+            protocol.COMPLETION_COMPLETE: self._complete,
         }
 
     # --- the transport's interface ------------------------------------------------------
@@ -186,3 +187,6 @@ class Session:
 
     async def _resources_read(self, params: dict) -> dict[str, Any]:
         return await self.gateway.read_resource(self, params)
+
+    async def _complete(self, params: dict) -> dict[str, Any]:
+        return await self.gateway.complete(self, params)

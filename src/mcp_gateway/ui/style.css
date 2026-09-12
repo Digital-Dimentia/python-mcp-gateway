@@ -561,6 +561,26 @@ a.button { text-decoration: none; display: inline-block; }
 .vocab-template { color: var(--muted); font-size: 0.7rem; font-family: var(--mono); overflow-wrap: anywhere; }
 .vocab-error { color: var(--danger); font-size: 0.73rem; }
 
+/* A vocabulary that another one narrowed. Indented and marked down its left edge, because
+ * the relationship is the thing worth showing: these values exist because of the pick
+ * above, and a flat stack of groups would say only that there are three of them. */
+.vocab-child {
+  margin-left: 0.75rem;
+  border-left: 2px solid var(--accent-soft);
+}
+/* What this group was narrowed *by*. Without it, a countries group is just a shorter list
+ * than the one above it. */
+.vocab-context {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+/* Waiting on a pick above, which is not the same as broken -- so dimmed rather than wearing
+ * `--danger`, and still drawn, because being able to see what the next pick fills is the
+ * only thing that says the cascade is there at all. */
+.vocab-pending { opacity: 0.62; border-style: dashed; }
+
 /* one | many. A segmented pair rather than a checkbox labelled "multiple": the two words
  * name what happens, and one of them is always lit. */
 .vocab-modes { display: flex; margin-left: auto; flex: none; }

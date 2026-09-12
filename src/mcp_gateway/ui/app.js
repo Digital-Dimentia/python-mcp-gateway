@@ -886,6 +886,23 @@ const vocabularies = new Map();
 //: one server -- may both name their variable `id`.
 const picks = new Map();
 
+//: Pick keys this column created by following a `narrows`, rather than by pairing a listing
+//: with a template. Held apart from the rest because they are the ones that can go *away*:
+//: change the continent and the countries picked under the old one no longer name anything.
+const chainPicks = new Set();
+
+//: The keys the last resolve produced. A pick belonging to `chainPicks` and missing from
+//: here is a pick on an abandoned branch, which must not go on multiplying the fan-out.
+let liveKeys = new Set();
+
+//: How deep a chain of `narrows` is followed. A server whose listings point at each other in
+//: a circle is not a case to handle gracefully, but it is one that must not spin the column.
+const MAX_CHAIN_DEPTH = 4;
+
+//: Set while `refreshVariables` is walking, because a pick in a narrowing group now calls it
+//: and the walk it would re-enter is already going to see that pick.
+let refreshing = false;
+
 //: Input types that parse what they are given, and so cannot be shown a `[a, b]` set: the
 //: browser drops the text and leaves the field empty, without saying so.
 const PARSED_INPUTS = new Set([
@@ -940,25 +957,178 @@ function vocabularyPairs() {
     if (!variable) continue;
     pairs.push({ variable, listing: prefix, template: spelling, uri: listing.uri });
   }
-  return pairs;
+  // One listing is one vocabulary, and therefore one group. Two templates can share a
+  // fixed prefix -- `zoo://continents/{continent}/countries` and the longer one under it
+  // both cut back to `zoo://continents` -- and both `vocabularies` and `picks` are keyed by
+  // the listing's URI, so a second group on the same key would alias the first one's cache
+  // and its picks. Keep the simplest pairing: fewest variables, then shortest, then
+  // alphabetical, so the answer does not depend on listing order.
+  //
+  // Nothing is lost by dropping the others. A template that takes a value this listing does
+  // not publish is not this listing's template; it is reached through the body of the one
+  // that does, which is what `narrows` is for.
+  const simpler = (a, b) => (
+    templateVariables(a.template).length - templateVariables(b.template).length
+    || a.template.length - b.template.length
+    || a.template.localeCompare(b.template)
+  );
+  const simplest = new Map();
+  for (const pair of pairs) {
+    const held = simplest.get(pair.uri);
+    if (!held || simpler(pair, held) < 0) simplest.set(pair.uri, pair);
+  }
+  return [...simplest.values()];
 }
 
-/** Read whatever has not been read yet, then draw. */
+/**
+ * A backend's own URI in the gateway's address space.
+ *
+ * Mirrors `naming.encode_resource_uri` (`naming.py`), and only that far: the gateway
+ * percent-encodes the backend's URI into one path segment, and `decode_resource_uri`
+ * unquotes it, so all that has to agree is the round trip -- not which characters each side
+ * chose to escape.
+ *
+ * What it is for is the cascade. A listing reached through another listing's `narrows` is a
+ * URI the *server* produced and no listing publishes, so there is no entry to read its
+ * gateway spelling off. Minting one is safe because `resources/read` resolves a URI rather
+ * than looking it up: `Catalogue.find_resource` decodes the namespace and hands the rest to
+ * the backend, exactly as it would for a template the client expanded itself.
+ */
+function gatewayUri(local) {
+  return `${RESOURCE_SCHEME}://${state.selected}/${encodeURIComponent(local)}`;
+}
+
+/**
+ * Every group to draw, roots first and each child directly after its parent.
+ *
+ * A vocabulary whose body carries `narrows` does not publish its values: it publishes the
+ * *template* of the listing that does, and which listing that is depends on what you picked
+ * here. So this walks. A root comes from the pairing above; each deeper group is the parent
+ * body's `narrows`, expanded with everything the chain has bound so far.
+ *
+ * The rule that makes the walk safe is the one the column already had: a listing is only
+ * ever read at a URI something handed us. A root is named by a template's fixed prefix, and
+ * a child by its parent's own body — so the column still never goes looking through a live
+ * backend's resource space for something that might be a vocabulary.
+ *
+ * A child whose parent has no single pick is emitted `pending`: it is drawn, so you can see
+ * that picking a continent is what will fill it, and it is neither read nor given a pick.
+ */
+/**
+ * The variable one group's values fill.
+ *
+ * Read off the body once there is one, because the body is the only thing that knows: a
+ * listing names the template its values are spent on, and the variable is the first of that
+ * template's the chain has not already bound. `zoo://continents/africa/countries` is spent
+ * on a template naming `continent` *and* `country`, and the first of those is already
+ * decided — it is in the URI — so this group is the `country` one.
+ *
+ * Falls back to the pairing's guess, which is all there is before the body arrives.
+ */
+function variableFor(group, read) {
+  const bound = group.context || {};
+  const spends = read?.narrows || read?.readOne;
+  const named = spends && templateVariables(spends).find((name) => !(name in bound));
+  return named || group.variable || null;
+}
+
+/**
+ * Every group to draw, roots first and each child directly after its parent.
+ *
+ * A vocabulary whose body carries `narrows` does not publish its values: it publishes the
+ * *template* of the listing that does, and which listing that is depends on what you picked
+ * here. So this walks. A root comes from the pairing above; each deeper group is the parent
+ * body's `narrows`, expanded with everything the chain has bound so far.
+ *
+ * The rule that makes the walk safe is the one the column already had: a listing is only
+ * ever read at a URI something handed us. A root is named by a template's fixed prefix, and
+ * a child by its parent's own body — so the column still never goes looking through a live
+ * backend's resource space for something that might be a vocabulary.
+ *
+ * A child whose parent has no single pick is emitted `pending`: it is drawn, so you can see
+ * that picking a continent is what will fill it, and it is neither read nor given a pick.
+ */
+function vocabularyGroups() {
+  const groups = [];
+  const queue = vocabularyPairs().map((pair) => ({ ...pair, context: {}, depth: 0 }));
+
+  while (queue.length) {
+    const group = queue.shift();
+    const read = group.pending ? null : vocabularies.get(group.uri);
+    // Settled here rather than in the renderer, because the *next* link expands against it:
+    // a group that thought it was still `continent` would write the country into the
+    // continent's segment and read a URI nobody published.
+    group.variable = variableFor(group, read);
+    groups.push(group);
+    if (group.pending || group.depth >= MAX_CHAIN_DEPTH || !read?.narrows) continue;
+
+    // One pick, not several: a `narrows` buys one listing, and two continents' countries
+    // merged would be a vocabulary the server never published. See `vocabularyGroup`.
+    const pick = picks.get(group.uri);
+    const chosen = pick && pick.values.size === 1 ? [...pick.values][0] : null;
+    const child = { template: read.narrows, depth: group.depth + 1, parent: group.uri };
+    if (chosen === null) {
+      queue.push({ ...child, pending: 'pick', from: group.variable, context: group.context });
+      continue;
+    }
+
+    const context = { ...group.context, [group.variable]: chosen };
+    const unbound = templateVariables(read.narrows).filter((name) => !(name in context));
+    if (unbound.length) {
+      // Expanding now would leave a segment empty, which is a different URI from the one
+      // meant — so the chain stops here rather than reading something nobody asked for.
+      queue.push({ ...child, pending: 'unbound', from: unbound.join(', '), context });
+      continue;
+    }
+    const listing = expandTemplate(read.narrows, context);
+    queue.push({ ...child, listing, uri: gatewayUri(listing), context, variable: null });
+  }
+
+  // Every chain key that survived, and the burial of those that did not: a country picked
+  // under Africa is not a country once the continent is Asia, and leaving it in `picks`
+  // would keep it in the fan-out's count with nothing on screen to explain the number.
+  liveKeys = new Set(groups.filter((g) => !g.pending).map((g) => g.uri));
+  for (const key of [...chainPicks]) {
+    if (liveKeys.has(key)) continue;
+    chainPicks.delete(key);
+    picks.delete(key);
+  }
+  for (const group of groups) if (group.depth > 0 && group.uri) chainPicks.add(group.uri);
+  return groups;
+}
+
+/**
+ * Read whatever has not been read yet, then draw.
+ *
+ * A loop rather than one pass, because the cascade is only discoverable one layer at a
+ * time: which listing sits under `africa` is a fact in the body of `zoo://continents`, so
+ * that body has to be in hand before the child is even a URI. Each turn resolves what is
+ * now knowable and reads it; the walk ends when a turn finds nothing new, which is at most
+ * once per level.
+ */
 async function refreshVariables() {
   renderVariables();
-  if (state.mcp?.state !== 'ready') return;
-  const pairs = vocabularyPairs();
-  const unread = pairs.filter((pair) => !vocabularies.has(pair.uri));
-  if (!unread.length) return;
-  await Promise.all(unread.map(async (pair) => {
-    vocabularies.set(pair.uri, { loading: true });
-    try {
-      const result = await state.mcp.request('resources/read', { uri: pair.uri });
-      vocabularies.set(pair.uri, readVocabulary(result));
-    } catch (err) {
-      vocabularies.set(pair.uri, { values: [], error: err.message || String(err) });
+  if (state.mcp?.state !== 'ready' || refreshing) return;
+  refreshing = true;
+  try {
+    for (let level = 0; level <= MAX_CHAIN_DEPTH; level += 1) {
+      const unread = vocabularyGroups()
+        .filter((group) => !group.pending && !vocabularies.has(group.uri));
+      if (!unread.length) break;
+      for (const group of unread) vocabularies.set(group.uri, { loading: true });
+      renderVariables();
+      await Promise.all(unread.map(async (group) => {
+        try {
+          const result = await state.mcp.request('resources/read', { uri: group.uri });
+          vocabularies.set(group.uri, readVocabulary(result));
+        } catch (err) {
+          vocabularies.set(group.uri, { values: [], error: err.message || String(err) });
+        }
+      }));
     }
-  }));
+  } finally {
+    refreshing = false;
+  }
   renderVariables();
 }
 
@@ -986,13 +1156,15 @@ function readVocabulary(result) {
 
 function valuesFrom(body) {
   // 1. A JSON Schema enum fragment — what `zoo://animals` publishes, and the one shape that
-  //    carries labels *and* names its own template. `readOne` is not a Schema keyword; it is
-  //    the listing saying where one of its values is spent.
+  //    carries labels *and* names its own template. Neither `readOne` nor `narrows` is a
+  //    Schema keyword; they are the listing saying where one of its values is spent, and
+  //    they differ in what it buys: `readOne` a member, `narrows` another listing.
   if (body && typeof body === 'object' && Array.isArray(body.enum)) {
     const names = Array.isArray(body.enumNames) ? body.enumNames : [];
     return {
       values: body.enum.map((value, i) => choice(value, names[i])),
       readOne: typeof body.readOne === 'string' ? body.readOne : null,
+      narrows: typeof body.narrows === 'string' ? body.narrows : null,
     };
   }
 
@@ -1031,8 +1203,8 @@ function renderVariables() {
     host.append(el('p', { class: 'empty', text: 'Select a server in the header.' }));
     return;
   }
-  const pairs = vocabularyPairs();
-  if (!pairs.length) {
+  const groups = vocabularyGroups();
+  if (!groups.length) {
     host.append(el('p', {
       class: 'empty',
       text: `${state.selected} publishes no listing that pairs with a template, so there are `
@@ -1041,25 +1213,52 @@ function renderVariables() {
     return;
   }
 
-  for (const pair of pairs) host.append(vocabularyGroup(pair));
+  for (const group of groups) host.append(vocabularyGroup(group));
   updateSendLabel();
 }
 
 function vocabularyGroup(pair) {
   const read = vocabularies.get(pair.uri) || { loading: true };
   // A listing that names its own template overrides the pairing found by prefix: the
-  // server knows where its values are spent better than the URIs do.
-  const spends = read.readOne || pair.template;
-  const variable = (read.readOne && templateVariables(read.readOne)[0]) || pair.variable;
-  const pick = pickFor(pair.uri, variable);
+  // server knows where its values are spent better than the URIs do. A `narrows` says the
+  // same thing about a listing rather than a member, and the group is named for the
+  // variable the chain has not bound yet either way.
+  const spends = read.narrows || read.readOne || pair.template;
+  const bound = pair.context || {};
+  // Settled by `vocabularyGroups`, which had to know it before this group's own child could
+  // be expanded. Reading it off the body again here would be a second answer to one question.
+  const variable = pair.variable;
+  const depth = pair.depth || 0;
 
-  const group = el('div', { class: 'vocab' }, [
+  const group = el('div', { class: depth ? 'vocab vocab-child' : 'vocab' }, [
     el('div', { class: 'vocab-head' }, [
-      el('span', { class: 'vocab-name', text: variable }),
-      el('span', { class: 'vocab-from', text: pair.listing }),
+      el('span', { class: 'vocab-name', text: variable || '…' }),
+      el('span', { class: 'vocab-from', text: pair.listing || pair.template }),
     ]),
-    el('p', { class: 'vocab-template', text: `spent on ${spends}` }),
+    el('p', { class: 'vocab-template', text: `${read.narrows ? 'narrows' : 'spent on'} ${spends}` }),
   ]);
+  // Why this group holds these values and not others. Without it a countries group under a
+  // continents group is just a shorter list than the one you saw a moment ago.
+  const context = Object.entries(bound);
+  if (context.length) {
+    group.append(el('p', {
+      class: 'vocab-context',
+      text: context.map(([name, value]) => `${name} = ${value}`).join(' · '),
+    }));
+  }
+
+  // Drawn, but neither read nor given a pick: the group is here to say that picking above
+  // is what fills it, which is a different thing from a listing that came back empty.
+  if (pair.pending) {
+    group.classList.add('vocab-pending');
+    group.append(el('p', {
+      class: 'note',
+      text: pair.pending === 'pick'
+        ? `Pick one ${pair.from} above to narrow this.`
+        : `This listing needs ${pair.from}, which nothing above it publishes.`,
+    }));
+    return group;
+  }
 
   if (read.loading) {
     group.append(el('p', { class: 'note', text: 'Reading…' }));
@@ -1067,6 +1266,7 @@ function vocabularyGroup(pair) {
   }
   if (read.error) {
     group.append(el('p', { class: 'vocab-error', text: read.error }));
+    if (pair.listing) group.append(el('p', { class: 'vocab-from', text: pair.listing }));
     return group;
   }
   if (!read.values.length) {
@@ -1074,18 +1274,32 @@ function vocabularyGroup(pair) {
     return group;
   }
 
+  const pick = pickFor(pair.uri, variable);
+
   // One or many, and the switch is the whole feature: one value fills the field, several
   // fill it in turn and send the form once per value.
-  const modes = el('div', { class: 'vocab-modes', role: 'group' }, [
-    modeButton(pick, false, 'one'),
-    modeButton(pick, true, 'many'),
-  ]);
-  group.querySelector('.vocab-head').append(modes);
+  //
+  // Except where a value buys another *listing*. `many` means "send the open form once per
+  // value", and reading a listing sends no form; merging two continents' countries would
+  // invent a vocabulary the server never published, with nothing on the chip to say which
+  // continent each country came from. So a narrowing group picks one, and the ambiguity
+  // never arises rather than being papered over.
+  if (read.narrows) {
+    pick.multi = false;
+  } else {
+    const modes = el('div', { class: 'vocab-modes', role: 'group' }, [
+      modeButton(pick, false, 'one'),
+      modeButton(pick, true, 'many'),
+    ]);
+    group.querySelector('.vocab-head').append(modes);
+  }
 
   // Radios in `one`, boxes in `many`, and the same chip around either: the switch changes
   // what picking means, and the control under your cursor says which it currently is.
   const values = el('div', { class: 'vocab-values' });
-  for (const item of read.values) values.append(valueChoice(pick, pair.uri, variable, item));
+  for (const item of read.values) {
+    values.append(valueChoice(pick, pair.uri, variable, item, !!read.narrows));
+  }
   group.append(values);
 
   const count = el('span', { class: 'vocab-count' });
@@ -1093,13 +1307,17 @@ function vocabularyGroup(pair) {
   clear.addEventListener('click', () => {
     pick.values.clear();
     fillPick(pick, { quiet: true });
-    renderVariables();
+    // Clearing a narrowing group unmakes what it narrowed: the groups below go back to
+    // pending, and their picks go with them. That is the resolver's job, not a re-render's.
+    if (read.narrows) refreshVariables();
+    else renderVariables();
   });
   group.append(el('div', { class: 'vocab-foot' }, [count, clear]));
 
   const say = () => {
     const n = pick.values.size;
     if (!n) count.textContent = 'Nothing picked.';
+    else if (read.narrows) count.textContent = `Narrowed to ${[...pick.values][0]}.`;
     else if (!pick.multi) count.textContent = `${[...pick.values][0]} is in the field.`;
     else count.textContent = `${n} picked — the form is sent ${n} time${n === 1 ? '' : 's'}.`;
     clear.disabled = !n;
@@ -1152,7 +1370,7 @@ function modeButton(pick, multi, label) {
  * picking looks like picking either way, and the shape of the control is what says whether
  * this vocabulary spends one value or several.
  */
-function valueChoice(pick, group, variable, item) {
+function valueChoice(pick, group, variable, item, narrows) {
   const chosen = pick.values.has(item.value);
   const box = el('input', {
     type: pick.multi ? 'checkbox' : 'radio',
@@ -1163,9 +1381,11 @@ function valueChoice(pick, group, variable, item) {
   });
   const wrap = el('label', {
     class: `vocab-value${chosen ? ' on' : ''}`,
-    title: pick.multi
-      ? `Send the form once with ${item.value}`
-      : `Put ${item.value} in ${variable}`,
+    title: narrows
+      ? `Narrow what follows to ${item.value}`
+      : (pick.multi
+        ? `Send the form once with ${item.value}`
+        : `Put ${item.value} in ${variable}`),
   }, [
     box,
     el('span', { text: item.label || item.value }),
@@ -1190,6 +1410,10 @@ function valueChoice(pick, group, variable, item) {
     if (pick.multi) fillPick(pick);
     else if (box.checked) fillField(variable, item.value);
     updateSendLabel();
+    // What this value bought is another listing, and which one depends on the value — so
+    // the group below has to be resolved again and read. The read is keyed by the expanded
+    // URI, so coming back to a continent you already opened costs nothing.
+    if (narrows) refreshVariables();
   });
   return wrap;
 }
@@ -1230,9 +1454,22 @@ function fillPick(pick, { quiet = false } = {}) {
   markFanned(control, !oneOnly && values.length > 1);
 }
 
+/**
+ * The picks that are still on screen, as `[key, pick]`.
+ *
+ * A pick this column made by following a `narrows` stops meaning anything the moment its
+ * branch is abandoned — pick Asia and the countries picked under Africa name nothing. The
+ * resolver deletes those, but it only runs when the column draws, and the fan-out reads
+ * `picks` directly: without this filter a stale leaf would go on multiplying the send
+ * button's count with nothing on screen to explain the number.
+ */
+function livePicks() {
+  return [...picks.entries()].filter(([key]) => !chainPicks.has(key) || liveKeys.has(key));
+}
+
 /** Write every `many` pick into the open form. The form is new, or the values moved. */
 function applyPicks() {
-  for (const pick of picks.values()) {
+  for (const [, pick] of livePicks()) {
     if (pick.multi && pick.values.size) fillPick(pick, { quiet: true });
   }
   updateSendLabel();
@@ -1277,7 +1514,7 @@ function markFanned(control, fanned) {
 /** The picks that name a field in the open form, as `[{variable, control, values}]`. */
 function boundPicks() {
   const bound = [];
-  for (const pick of picks.values()) {
+  for (const [, pick] of livePicks()) {
     if (!pick.multi || !pick.values.size) continue;
     const control = controlFor(pick.variable, { strict: true });
     if (control) bound.push({ variable: pick.variable, control, values: [...pick.values] });
@@ -1409,6 +1646,102 @@ $('btn-vars-refresh').addEventListener('click', () => {
   refreshVariables();
 });
 
+// ── Suggestions for one argument ───────────────────────────────────────────────
+//
+// `completion/complete` is the protocol's own answer to the question the variables column
+// answers by hand: what may go in this box? The two are worth having side by side. The
+// column is how a *person* browses a vocabulary — every value visible, several pickable,
+// the fan-out counted on the button. This is how a box gets filled while you are typing in
+// it, which is the thing a model does and a person does more often.
+//
+// It is a `<datalist>` rather than a `<select>` on purpose. `putValue` refuses a value that
+// is not among a select's options, so a constraining control here would break the column's
+// own fill — and the `[a, b]` a fan-out writes into a field is not a value any server would
+// ever suggest. A datalist offers without constraining, which is what a *suggestion* is.
+
+//: How long after a keystroke the suggestion is asked for. Long enough that typing a word
+//: is one request rather than five, short enough not to arrive after you have stopped.
+const COMPLETE_DEBOUNCE_MS = 180;
+
+//: Every completion request in order, so a slow answer cannot overwrite a newer one. A
+//: WebSocket has no `AbortController`, so the sequence number is the whole mechanism.
+let completionSeq = 0;
+
+//: Ids for the datalists, counted apart from the requests: sharing one counter would let
+//: opening a form cancel a request that was already in flight for a different field.
+let completionLists = 0;
+
+function completionsEnabled() {
+  return !!(state.mcp?.capabilities || {}).completions;
+}
+
+/**
+ * Offer server-suggested values in `input`, for the argument `name` of `ref`.
+ *
+ * `siblings()` is what makes this a cascade rather than a list: it returns the arguments of
+ * the same form that are already filled in, and the server is free to narrow by them — the
+ * countries of the continent above, rather than every country there is.
+ *
+ * Nothing here can fail loudly. A gateway that does not know the method, a backend that is
+ * down, a request that times out: all of them clear the list and say so in the tooltip. A
+ * suggestion that broke the form it was helping with would be worse than no suggestion.
+ */
+function attachCompletions(input, { ref, name, siblings }) {
+  // Called after the input is in its field, because a `<datalist>` has to be *somewhere* in
+  // the document for the browser to find it by id, and an input that is not yet in one has
+  // nowhere to put it.
+  if (!completionsEnabled() || !input.parentElement) return;
+  const list = el('datalist', { id: `completions-${(completionLists += 1)}` });
+  input.setAttribute('list', list.id);
+  input.setAttribute('autocomplete', 'off');
+  input.parentElement.append(list);
+
+  let timer = null;
+  const ask = async () => {
+    const value = input.value;
+    // A field holding a fan-out holds `[a, b]`, which is not a prefix of anything.
+    if (value.startsWith('[')) return;
+    const seq = (completionSeq += 1);
+    try {
+      const result = await state.mcp.request('completion/complete', {
+        ref,
+        argument: { name, value },
+        context: { arguments: siblings() },
+      });
+      if (seq !== completionSeq) return;      // a later keystroke already asked
+      const values = result?.completion?.values || [];
+      list.replaceChildren(...values.map((v) => el('option', { value: String(v) })));
+      const more = result?.completion?.hasMore;
+      input.title = more ? `${values.length} of ${result.completion.total} suggestions` : '';
+    } catch (err) {
+      if (seq !== completionSeq) return;
+      list.replaceChildren();
+      input.title = `No suggestions: ${err.message || err}`;
+    }
+  };
+  const soon = () => {
+    clearTimeout(timer);
+    timer = setTimeout(ask, COMPLETE_DEBOUNCE_MS);
+  };
+  // On focus as well as on input, because the useful moment is the one before anything has
+  // been typed: an empty box is where a person most wants to be told what goes in it.
+  input.addEventListener('focus', soon);
+  input.addEventListener('input', soon);
+}
+
+/** Everything filled in beside `name`, as `context.arguments` wants it. */
+function siblingValues(values, name) {
+  const out = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (key === name || value === '' || value === undefined || value === null) continue;
+    // A field holding a fan-out is holding several values; none of them is *the* one that
+    // narrows this, so it says nothing here rather than the wrong thing.
+    if (typeof value === 'string' && value.startsWith('[')) continue;
+    out[key] = String(value);
+  }
+  return out;
+}
+
 // ── The detail panel: a form, and the button that sends it ─────────────────────
 
 function openItem(kind, entry) {
@@ -1510,6 +1843,16 @@ function renderToolDetail(detail, entry) {
 function renderPromptDetail(detail, entry) {
   const form = buildPromptForm(entry.arguments, { onChange: () => {} });
   detail.append(form.element);
+  // The namespaced name, which the gateway splits: a prompt ref is routed exactly the way
+  // `prompts/get` is. `collect()` already drops the empty fields, so what is left is what
+  // has actually been decided — the cascade's context, without having to say so.
+  for (const { name, input } of form.fields || []) {
+    attachCompletions(input, {
+      ref: { type: 'ref/prompt', name: entry.name },
+      name,
+      siblings: () => siblingValues(form.collect(), name),
+    });
+  }
   const send = el('button', { type: 'button', class: 'primary', text: 'Get prompt' });
   detail.append(el('div', { class: 'detail-actions' }, [send]));
   registerSend(send, 'Get prompt');
@@ -1557,6 +1900,15 @@ function renderResourceDetail(detail, entry, isTemplate) {
         el('label', { class: 'field-label' }, [el('span', { class: 'field-name', text: name })]),
         input,
       ]));
+      // The gateway's own unexpanded spelling: `ref/resource` names the *template*, which
+      // is exactly what `router.complete` decodes back into the backend's. Every other
+      // field of this same template is the context, which is what makes `{continent}`
+      // narrow `{country}` rather than the two being filled in independently.
+      attachCompletions(input, {
+        ref: { type: 'ref/resource', uri: entry.uriTemplate },
+        name,
+        siblings: () => siblingValues(valuesNow(), name),
+      });
     }
     if (!names.length) wrap.append(el('p', { class: 'note', text: 'This template names no variables.' }));
     detail.append(wrap, el('p', { class: 'note' }, [el('span', { text: 'Expands to ' }), resolved]));

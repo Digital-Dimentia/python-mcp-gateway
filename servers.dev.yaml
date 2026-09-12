@@ -22,7 +22,7 @@ servers:
   zoo:
     command: python3
     args: ["examples/zoo_server.py"]
-    description: "The schema zoo: 13 tools, 5 prompts, 7 resources, 2 templates"
+    description: "The schema zoo: 13 tools, 5 prompts, 8 resources, 4 templates"
     env:
       # A literal, and legitimately so — this is a feature flag, not a credential. The
       # config writer warns about literals here (see config_writer.md rule 3) precisely

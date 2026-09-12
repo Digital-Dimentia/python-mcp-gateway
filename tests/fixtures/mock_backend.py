@@ -24,6 +24,9 @@ mechanism it is testing.
 | `MOCK_ISERROR_ON_CALL` | Answer that tool with a successful result carrying `isError: true` |
 | `MOCK_STALL_ON_CALL` | Never answer that tool; record the cancellation for `cancel-report` |
 | `MOCK_CAPABILITIES` | Comma-separated subset of `tools,prompts,resources` (default: all) |
+| `MOCK_COMPLETIONS` | Declare `completions` and answer `completion/complete`; the values echo the ref, the argument, and one `ctx:<k>=<v>` per `context.arguments` entry received |
+| `MOCK_COMPLETIONS_ERROR` | Declare `completions` and answer `completion/complete` with `-32601` |
+| `MOCK_COMPLETIONS_MANY` | Answer with 120 values plus `total`/`hasMore`, past the spec's 100 cap |
 | `MOCK_RESOURCES` | Comma-separated concrete resource URIs |
 | `MOCK_TEMPLATES` | Comma-separated `uriTemplate` values |
 | `MOCK_PROMPTS` | Comma-separated prompt names |
@@ -67,6 +70,9 @@ def _csv(name: str, default: str = "") -> list[str]:
 NAME = _env("MOCK_NAME", "mock")
 TOOLS = _csv("MOCK_TOOLS", "echo")
 CAPABILITIES = _csv("MOCK_CAPABILITIES", "tools,prompts,resources")
+COMPLETIONS = _flag("MOCK_COMPLETIONS")
+COMPLETIONS_ERROR = _flag("MOCK_COMPLETIONS_ERROR")
+COMPLETIONS_MANY = _flag("MOCK_COMPLETIONS_MANY")
 RESOURCES = _csv("MOCK_RESOURCES")
 TEMPLATES = _csv("MOCK_TEMPLATES")
 PROMPTS = _csv("MOCK_PROMPTS", "greet")
@@ -177,6 +183,10 @@ def capabilities() -> dict:
         block["prompts"] = {"listChanged": True}
     if "resources" in CAPABILITIES:
         block["resources"] = {"listChanged": True}
+    if "completions" in CAPABILITIES:
+        # No options to set, which is the commonest capability shape there is -- and the
+        # one a gateway reading `bool(block)` rather than presence gets wrong.
+        block["completions"] = {}
     return block
 
 
@@ -304,6 +314,35 @@ def handle_resources_read(request_id, params: dict) -> None:
     result(request_id, {"contents": [{"uri": uri, "mimeType": "text/plain", "text": f"{NAME}:{uri}"}]})
 
 
+def handle_completion_complete(request_id, params: dict) -> None:
+    """Echo the request back as values, which is what makes forwarding observable.
+
+    A completion result carries only strings, so the only way for a test to see what
+    actually reached this process is to answer *with* it. The `ctx:` values are the point:
+    they appear only when a `context.arguments` really arrived, so both forwarding it and
+    stripping it for a `2024-11-05` backend are visible from the far end without anybody
+    spying on the wire.
+    """
+    if COMPLETIONS_ERROR:
+        error(request_id, -32601, f"{NAME} does not implement completions after all")
+        return
+    ref = params.get("ref") or {}
+    argument = params.get("argument") or {}
+    if COMPLETIONS_MANY:
+        values = [f"{NAME}-{n:03d}" for n in range(120)]
+        # The spec caps `values` at 100 and says what the rest were with `total`/`hasMore`.
+        result(request_id, {"completion": {"values": values[:100], "total": len(values), "hasMore": True}})
+        return
+    context = (params.get("context") or {}).get("arguments") or {}
+    values = [
+        f"ref:{ref.get('type')}",
+        f"named:{ref.get('name') or ref.get('uri')}",
+        f"arg:{argument.get('name')}={argument.get('value')}",
+        *[f"ctx:{key}={value}" for key, value in sorted(context.items())],
+    ]
+    result(request_id, {"completion": {"values": values, "total": len(values), "hasMore": False}})
+
+
 HANDLERS = {
     "initialize": handle_initialize,
     "ping": lambda request_id, _params: result(request_id, {}),
@@ -315,6 +354,10 @@ HANDLERS = {
     "resources/templates/list": handle_resources_templates_list,
     "resources/read": handle_resources_read,
 }
+
+if COMPLETIONS or COMPLETIONS_ERROR or COMPLETIONS_MANY:
+    HANDLERS["completion/complete"] = handle_completion_complete
+    CAPABILITIES.append("completions")
 
 
 def handle(message: dict) -> None:

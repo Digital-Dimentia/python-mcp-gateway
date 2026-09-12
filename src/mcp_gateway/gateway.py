@@ -342,6 +342,30 @@ class Gateway:
             raise errors.InvalidParams("resources/read requires a 'uri'")
         return await self.router.read_resource(session, uri)
 
+    async def complete(self, session: Session, params: dict) -> dict[str, Any]:
+        """`completion/complete`: what values one argument might take.
+
+        An empty `value` is not an error but the commonest case there is -- a client asks
+        the moment the box is focused, before anything has been typed -- so it defaults
+        rather than being required.
+
+        `context` is forwarded whole rather than reduced to its `arguments`, so a member a
+        later revision adds survives a gateway that predates it.
+        """
+        ref = params.get("ref")
+        argument = params.get("argument")
+        if not isinstance(ref, dict) or not isinstance(argument, dict):
+            raise errors.InvalidParams(
+                "completion/complete requires a 'ref' and an 'argument'"
+            )
+        if not isinstance(argument.get("name"), str) or not argument["name"]:
+            raise errors.InvalidParams("completion/complete requires an argument 'name'")
+        argument = dict(argument, value=argument.get("value") or "")
+        context = params.get("context")
+        return await self.router.complete(
+            session, ref, argument, context if isinstance(context, dict) else None
+        )
+
     async def backend_notification(self, name: str, method: str, params: dict) -> None:
         """A backend said something unprompted. See `notifications.md` for the whole table."""
         kind = self.notifier.kind_of(method)

@@ -590,6 +590,33 @@ class MCPStdioClient:
         """
         return await self.request("resources/read", {"uri": uri})
 
+    async def complete(
+        self,
+        ref: dict[str, Any],
+        argument: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Ask for the values one argument might take: `completion/complete`.
+
+        `ref` names what is being filled in — a prompt by name, or a resource template by
+        its `uriTemplate`, in **this backend's own spelling**. Unwrapping the gateway's
+        namespace is the caller's job, because the caller is the one that resolved which
+        backend this is.
+
+        `context` is **omitted rather than sent as null** when there is none. Presence is
+        meaningful in MCP, and a `null` where a server expects an object is the kind of
+        thing a strict validator refuses and a permissive one ignores — a difference that
+        shows up as one server's inexplicable `-32602`.
+
+        Whether `context` may be sent at all is likewise the caller's call: it does not
+        exist before `2025-03-26`, and this method does not know what was negotiated. See
+        `router.py`.
+        """
+        params: dict[str, Any] = {"ref": ref, "argument": argument}
+        if context is not None:
+            params["context"] = context
+        return await self.request("completion/complete", params)
+
     async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
         async with self._write_lock:

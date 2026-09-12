@@ -700,6 +700,10 @@ export function buildPromptForm(promptArguments, { onChange = () => {} } = {}) {
   return {
     element: wrap,
     mode: 'form',
+    // The controls themselves, so a caller can hang something off each one without going
+    // back through the DOM for them. `app.js` attaches completion suggestions here; this
+    // module stays as ignorant of MCP requests as it was.
+    fields: inputs.map(({ name, input }) => ({ name, input })),
     collect: () => {
       const out = {};
       // Prompt arguments are strings on the wire — `prompts/get` declares

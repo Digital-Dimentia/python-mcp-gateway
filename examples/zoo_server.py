@@ -8,7 +8,7 @@ backend.
 
 With `MOCK_MCP_SCHEMA_ZOO=1` -- which `servers.dev.yaml` sets, because `env_mode: curated`
 means this child inherits nothing the file does not name -- it publishes thirteen tools,
-five prompts, seven resources and two URI templates. One per construct rather than one
+five prompts, eight resources and four URI templates. One per construct rather than one
 kitchen sink, so a renderer that gets one wrong fails visibly on that one:
 
     zoo-types      every JSON type bare, plus an untyped and a union-typed property
@@ -28,6 +28,20 @@ kitchen sink, so a renderer that gets one wrong fails visibly on that one:
 Every tool echoes its arguments back as JSON, which is the round trip worth having: the
 types that came out the far end are visible rather than assumed, so `--count 3` arriving
 as `3` rather than `"3"` is a thing you can see.
+
+`zoo://continents` is the head of a **cascade**: a vocabulary whose second parameter is
+decided by its first. Reading it gives the continents and a `narrows` naming
+`zoo://continents/{continent}/countries`; reading *that* gives the countries of one
+continent and a `narrows` naming `.../{country}/animals`; reading that gives the animals of
+one country and a `readOne` naming the flat `zoo://animals/{id}` the zoo already had. Three
+listings and one detail read, where the only thing a client must know is how to read a body
+and expand a template -- every deeper URI is one this server handed over, so there is
+nothing to guess at. `narrows` is not a JSON Schema keyword any more than `readOne` is: it
+is the listing saying that one of its values buys another listing rather than a member.
+
+A country under a continent it is not in -- what a client picking from two listings *out of
+step* sends -- is answered `-32002`, not with an empty listing that would read as a country
+with no animals.
 
 `zoo://ticks` is the one resource that is not a constant -- each read appends a
 minute-stamped line and keeps the last ten -- so reading it twice proves the second read
@@ -100,6 +114,14 @@ _omit_protocol_version = os.environ.get("MOCK_MCP_OMIT_PROTOCOL_VERSION") == "1"
 # refusing to reply.
 _capabilities = os.environ.get("MOCK_MCP_CAPABILITIES", "tools,prompts,resources")
 _capabilities = {name.strip() for name in _capabilities.split(",") if name.strip()}
+
+# `completions` rides on the schema-zoo flag rather than on the default above, and the
+# reason is the data: the only thing worth completing here is the cascade, which that flag
+# is what publishes. Declaring it unconditionally would promise suggestions over an empty
+# vocabulary, and the default string is a thing other tests assert on. Naming it explicitly
+# in MOCK_MCP_CAPABILITIES still works.
+if _schema_zoo:
+    _capabilities.add("completions")
 
 
 # Cancellation knobs. A stalled request is read and then never answered, so the
@@ -553,12 +575,28 @@ ZOO_PROMPTS = [
     },
     {
         "name": "zoo-prompt-animal",
-        "description": "A brief filled from one animal; `id` comes from zoo://animals",
+        "description": "A brief filled from one animal; continent and country narrow the id",
         # The prompt end of the pair `zoo://animals` and `zoo://animals/{id}` already make:
         # one listing, spent three ways. The argument is named `id` on purpose -- that is
         # the name the template gives the same value, and a client that offers the listing
         # as a picker can fill this form from it without being told how.
+        #
+        # `continent` and `country` are the **cascade in a form**: optional, and each one
+        # narrows what the next may be. They are not decoration -- an `id` that contradicts
+        # them is refused rather than quietly expanded -- which is what makes a client
+        # completing them in order the easy path rather than a nicety. `completion/complete`
+        # is where the narrowing is published; see `zoo_completion`.
         "arguments": [
+            {
+                "name": "continent",
+                "description": "Optional. Narrows the countries, and through them the ids",
+                "required": False,
+            },
+            {
+                "name": "country",
+                "description": "Optional. Narrows the ids to the animals of that country",
+                "required": False,
+            },
             {
                 "name": "id",
                 "description": "An animal id, from the zoo://animals listing",
@@ -567,6 +605,14 @@ ZOO_PROMPTS = [
         ],
     },
 ]
+
+#: The URI templates this zoo publishes for its own vocabularies, named once so the
+#: listings that point at them, the entries that publish them and the reader that answers
+#: them cannot drift apart. `zoo://animals/{id}` reads one animal; the other two expand to
+#: a *listing*, which is what a vocabulary looks like when one parameter decides another.
+ZOO_COUNTRIES_TEMPLATE = "zoo://continents/{continent}/countries"
+ZOO_COUNTRY_ANIMALS_TEMPLATE = "zoo://continents/{continent}/countries/{country}/animals"
+ZOO_ANIMAL_TEMPLATE = "zoo://animals/{id}"
 
 ZOO_RESOURCES = [
     {
@@ -605,6 +651,14 @@ ZOO_RESOURCES = [
         "description": "The known animals, as an enum -- the vocabulary the template takes",
         "mimeType": "application/json",
     },
+    {
+        # The head of the cascade, and the only one of its three listings that is a
+        # *resource*: the other two are templates, because they take a parameter.
+        "uri": "zoo://continents",
+        "name": "zoo-continents",
+        "description": "The continents, as an enum -- the head of the cascade",
+        "mimeType": "application/json",
+    },
 ]
 
 ZOO_TEMPLATES = [
@@ -620,9 +674,25 @@ ZOO_TEMPLATES = [
         # The pair worth having: `zoo://animals` publishes the vocabulary and this reads
         # one member of it. That is the shape a real templated resource has -- a listing
         # small enough to send whole, and a detail read that would not be.
-        "uriTemplate": "zoo://animals/{id}",
+        "uriTemplate": ZOO_ANIMAL_TEMPLATE,
         "name": "zoo-animal-template",
         "description": "Details for one animal; `id` comes from zoo://animals",
+        "mimeType": "application/json",
+    },
+    {
+        # The cascade's middle two. Both are templates that expand to a *listing* rather
+        # than to a member, which is the shape a vocabulary has when one of its parameters
+        # is determined by another: there is no single `zoo://countries` to publish,
+        # because which countries there are depends on the continent.
+        "uriTemplate": ZOO_COUNTRIES_TEMPLATE,
+        "name": "zoo-countries-template",
+        "description": "A listing, not a detail: the countries of one continent, as an enum",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": ZOO_COUNTRY_ANIMALS_TEMPLATE,
+        "name": "zoo-country-animals-template",
+        "description": "A listing, not a detail: the animals of one country, as an enum",
         "mimeType": "application/json",
     },
 ]
@@ -686,6 +756,7 @@ ZOO_ANIMALS = {
         "diet": "carnivore",
         "conservationStatus": "Critically Endangered",
         "fact": "Neotenic: it keeps its larval gills for life and never leaves the water.",
+        "countries": ["mexico"],
     },
     "capybara": {
         "name": "Capybara",
@@ -694,6 +765,7 @@ ZOO_ANIMALS = {
         "diet": "herbivore",
         "conservationStatus": "Least Concern",
         "fact": "The largest living rodent, and a competent underwater swimmer.",
+        "countries": ["brazil"],
     },
     "okapi": {
         "name": "Okapi",
@@ -702,6 +774,7 @@ ZOO_ANIMALS = {
         "diet": "herbivore",
         "conservationStatus": "Endangered",
         "fact": "The giraffe's only living relative, striped like a zebra it is unrelated to.",
+        "countries": ["congo"],
     },
     "pangolin": {
         "name": "Pangolin",
@@ -710,6 +783,7 @@ ZOO_ANIMALS = {
         "diet": "insectivore",
         "conservationStatus": "Critically Endangered",
         "fact": "The only mammal covered in keratin scales, and the most trafficked one.",
+        "countries": ["china"],
     },
     "quokka": {
         "name": "Quokka",
@@ -718,6 +792,7 @@ ZOO_ANIMALS = {
         "diet": "herbivore",
         "conservationStatus": "Vulnerable",
         "fact": "A macropod the size of a house cat; it climbs trees, which macropods rarely do.",
+        "countries": ["australia"],
     },
     "red-panda": {
         "name": "Red Panda",
@@ -728,7 +803,55 @@ ZOO_ANIMALS = {
         # A hyphen in the id on purpose: a client that builds the detail URI by string
         # substitution is fine, and one that assumes an identifier is a bare word is not.
         "fact": "Its own family, Ailuridae -- not a bear, and not closely related to one.",
+        "countries": ["china", "nepal"],
     },
+    "meerkat": {
+        "name": "Meerkat",
+        "scientificName": "Suricata suricatta",
+        "habitat": "The Kalahari, and the scrub of southern Africa",
+        "diet": "insectivore",
+        "conservationStatus": "Least Concern",
+        "fact": "A mob posts a sentry, who calls a different alarm for a hawk than for a snake.",
+        "countries": ["south-africa"],
+    },
+    "kakapo": {
+        "name": "Kakapo",
+        "scientificName": "Strigops habroptilus",
+        "habitat": "Predator-free offshore islands of New Zealand",
+        "diet": "herbivore",
+        "conservationStatus": "Critically Endangered",
+        "fact": "A flightless nocturnal parrot; every living one has a name and a transmitter.",
+        "countries": ["new-zealand"],
+    },
+}
+
+
+# Where the animals are, as the two vocabularies that narrow each other. A record names its
+# *countries* and nothing else: a continent is a property of a country, so deriving it here
+# is what makes it impossible for the two to disagree -- an animal cannot be filed under a
+# continent its country is not in.
+#
+# Four continents, two countries each, and every country with at least one animal, so no
+# branch of the cascade dead-ends in an empty listing. `south-africa` and `new-zealand`
+# carry the hyphen lesson `red-panda` teaches for an id into a URI *path segment*, which is
+# a different thing to get wrong, and `red-panda` itself now sits under two countries: a
+# client that assumes one parent per child, or that de-duplicates by value, is caught by it.
+ZOO_CONTINENTS = {
+    "africa": "Africa",
+    "americas": "The Americas",
+    "asia": "Asia",
+    "oceania": "Oceania",
+}
+
+ZOO_COUNTRIES = {
+    "australia": {"name": "Australia", "continent": "oceania"},
+    "brazil": {"name": "Brazil", "continent": "americas"},
+    "china": {"name": "China", "continent": "asia"},
+    "congo": {"name": "DR Congo", "continent": "africa"},
+    "mexico": {"name": "Mexico", "continent": "americas"},
+    "nepal": {"name": "Nepal", "continent": "asia"},
+    "new-zealand": {"name": "New Zealand", "continent": "oceania"},
+    "south-africa": {"name": "South Africa", "continent": "africa"},
 }
 
 
@@ -757,6 +880,17 @@ class ZooUnknownAnimal(Exception):
     """
 
 
+class ZooMismatchedAnimal(Exception):
+    """`zoo-prompt-animal` with a `continent` or `country` the animal is not in.
+
+    `-32602` like `ZooUnknownAnimal`, and for the same reason: every value was well-formed
+    and a member of its own vocabulary, and what is wrong is the *combination*. A client
+    that completed each argument against the ones above it cannot send this; one that filled
+    the form and then changed a field higher up can, which is precisely the mistake a
+    cascade exists to catch.
+    """
+
+
 class ZooResourceNotFound(Exception):
     """`zoo://animals/<unknown>`: a URI shaped correctly for a resource that is not here.
 
@@ -778,7 +912,160 @@ def zoo_animals_enum():
         "description": "The animals this zoo knows about.",
         # Naming the template in the body is what makes the listing usable on its own: a
         # client that reads this knows both the ids and where to spend one of them.
-        "readOne": "zoo://animals/{id}",
+        "readOne": ZOO_ANIMAL_TEMPLATE,
+    }
+
+
+# The cascade: three listings where `zoo://animals` is one, each in the same enum-fragment
+# shape, and each naming what one of its values buys.
+#
+# `readOne` says "spend one of my values here and you get a *member*". `narrows` is its
+# sibling and says "spend one of my values here and you get another *listing*" -- which is
+# the whole cascade, written where a client can read it rather than inferred from the URIs.
+# The distinction matters because it is what keeps a client from having to guess: a listing
+# reached through `narrows` is a URI this server handed over, never one a client assembled
+# on a hunch, so there is nothing here to fish for.
+def zoo_continents_enum():
+    """The head of the cascade. Its values narrow the countries."""
+    return {
+        "type": "string",
+        "enum": sorted(ZOO_CONTINENTS),
+        "enumNames": [ZOO_CONTINENTS[key] for key in sorted(ZOO_CONTINENTS)],
+        "description": "The continents this zoo's animals come from.",
+        "narrows": ZOO_COUNTRIES_TEMPLATE,
+    }
+
+
+def zoo_countries_enum(continent):
+    """The countries of one continent. Its values narrow the animals."""
+    keys = sorted(key for key, row in ZOO_COUNTRIES.items() if row["continent"] == continent)
+    return {
+        "type": "string",
+        "enum": keys,
+        "enumNames": [ZOO_COUNTRIES[key]["name"] for key in keys],
+        "description": "The countries of %s." % ZOO_CONTINENTS[continent],
+        "narrows": ZOO_COUNTRY_ANIMALS_TEMPLATE,
+    }
+
+
+def zoo_country_animals_enum(country):
+    """The animals of one country -- the cascade's leaf, and the same ids `zoo://animals`
+    publishes flat. `readOne`, not `narrows`: one of these buys an animal, not a listing.
+    """
+    keys = sorted(key for key, row in ZOO_ANIMALS.items() if country in row["countries"])
+    return {
+        "type": "string",
+        "enum": keys,
+        "enumNames": [ZOO_ANIMALS[key]["name"] for key in keys],
+        "description": "The animals of %s." % ZOO_COUNTRIES[country]["name"],
+        "readOne": ZOO_ANIMAL_TEMPLATE,
+    }
+
+
+def zoo_animal_record(animal_id):
+    """One animal as it reads at the end of the cascade.
+
+    The stored record names countries; the body adds the continents they are in, so a read
+    arrived at through continent -> country -> animal shows both halves of the path that
+    led to it rather than only the half that happened to be stored.
+    """
+    animal = ZOO_ANIMALS[animal_id]
+    continents = sorted({ZOO_COUNTRIES[key]["continent"] for key in animal["countries"]})
+    return dict(animal, id=animal_id, continents=continents)
+
+
+#: The spec's cap on one completion result. Everything past it is reported rather than sent.
+ZOO_COMPLETION_MAX = 100
+
+#: A vocabulary deliberately larger than that cap, so `hasMore` is a path a client actually
+#: meets rather than a branch nobody reaches. It belongs to `zoo://echo/{word}`, which is
+#: the one template here whose argument is genuinely open.
+ZOO_ECHO_WORDS = sorted("%s%02d" % (stem, n) for stem in ("alpha", "beta", "gamma") for n in range(50))
+
+
+def zoo_completion_values(variable, context):
+    """The values one variable may take, given what is already filled in.
+
+    Keyed on the **variable's name** rather than on the template it appeared in, because the
+    same name means the same thing everywhere in this server: `zoo-prompt-animal`'s `id` and
+    `zoo://animals/{id}`'s `id` are one vocabulary, and a client filling either should be
+    offered it. That is the same claim the `id` argument was named for in the first place.
+
+    `context` is what makes this a cascade rather than three lists: a `country` asked for
+    without a continent is every country, and with one is that continent's. A filter is only
+    applied when there is something to filter by, so a client that sends no context -- or a
+    revision too old to have any -- gets the unnarrowed list instead of an empty one.
+    """
+    continent = context.get("continent")
+    country = context.get("country")
+
+    if variable == "continent":
+        return [(key, ZOO_CONTINENTS[key]) for key in sorted(ZOO_CONTINENTS)]
+    if variable == "country":
+        keys = sorted(
+            key
+            for key, row in ZOO_COUNTRIES.items()
+            if continent is None or row["continent"] == continent
+        )
+        return [(key, ZOO_COUNTRIES[key]["name"]) for key in keys]
+    if variable in ("id", "animal"):
+        keys = sorted(
+            key
+            for key, row in ZOO_ANIMALS.items()
+            if (country is None or country in row["countries"])
+            and (
+                continent is None
+                or any(ZOO_COUNTRIES[c]["continent"] == continent for c in row["countries"])
+            )
+        )
+        return [(key, ZOO_ANIMALS[key]["name"]) for key in keys]
+    if variable == "word":
+        return [(word, word) for word in ZOO_ECHO_WORDS]
+    return None
+
+
+def zoo_completion(ref, argument, context):
+    """One `completion/complete`, or None when this fixture completes nothing for that ref.
+
+    A resource ref has to *name the variable it is asking about* -- the template must
+    actually contain it -- so `zoo://echo/{word}` is never asked to suggest an animal id
+    just because the argument happened to be called `id`. A prompt ref is checked against
+    the prompts this server publishes for the same reason.
+    """
+    kind = ref.get("type")
+    name = argument.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+
+    if kind == "ref/prompt":
+        if ref.get("name") not in [prompt["name"] for prompt in ZOO_PROMPTS]:
+            return None
+    elif kind == "ref/resource":
+        uri = ref.get("uri")
+        if not isinstance(uri, str) or ("{%s}" % name) not in uri:
+            return None
+    else:
+        return None
+
+    # `context` is the envelope; `context.arguments` is the map of what is already filled
+    # in. Reading the envelope itself would look like a cascade that simply never narrows.
+    resolved = (context or {}).get("arguments") if isinstance(context, dict) else None
+    pairs = zoo_completion_values(name, resolved if isinstance(resolved, dict) else {})
+    if pairs is None:
+        return None
+
+    # Prefix on the id *or* the label, so typing "Red" finds `red-panda` and typing "red"
+    # finds it too. Case-insensitive because a person typing into a box is not spelling an
+    # identifier, they are naming a thing.
+    typed = str(argument.get("value") or "").lower()
+    matches = [
+        key for key, label in pairs
+        if not typed or key.lower().startswith(typed) or str(label).lower().startswith(typed)
+    ]
+    return {
+        "values": matches[:ZOO_COMPLETION_MAX],
+        "total": len(matches),
+        "hasMore": len(matches) > ZOO_COMPLETION_MAX,
     }
 
 
@@ -825,6 +1112,18 @@ def zoo_prompt_result(name, arguments):
         animal = ZOO_ANIMALS.get(key)
         if animal is None:
             raise ZooUnknownAnimal(key)
+        # The two optional arguments are checked rather than ignored. A form filled top to
+        # bottom cannot produce a contradiction -- each value was completed against the one
+        # above it -- so the only way to arrive here is to have changed one and not the
+        # others, which is exactly the case worth naming out loud.
+        country = arguments.get("country") or None
+        continent = arguments.get("continent") or None
+        if country is not None and country not in animal["countries"]:
+            raise ZooMismatchedAnimal(key, "country", country)
+        if continent is not None and continent not in [
+            ZOO_COUNTRIES[c]["continent"] for c in animal["countries"]
+        ]:
+            raise ZooMismatchedAnimal(key, "continent", continent)
         return {
             "description": "An exhibit label brief for the %s" % animal["name"],
             "messages": [
@@ -935,6 +1234,44 @@ def zoo_resource_contents(uri):
                 "text": json.dumps(zoo_animals_enum(), indent=2, sort_keys=True),
             }
         ]
+    if uri == "zoo://continents":
+        return [
+            {
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": json.dumps(zoo_continents_enum(), indent=2, sort_keys=True),
+            }
+        ]
+    if uri.startswith("zoo://continents/"):
+        # The expansions of the cascade's two listing templates. Both were handed to the
+        # client by the listing above it, so a URI that does not fit one of the two shapes
+        # is a client that assembled one itself -- answered `-32002` rather than guessed at.
+        #
+        # The case worth having is the last one: a country that exists, under a continent
+        # it is not in. That is what a client picking from two listings *out of step* sends,
+        # and answering it with an empty listing would look like a country with no animals.
+        # A miss says so.
+        parts = uri[len("zoo://continents/"):].split("/")
+        if len(parts) == 2 and parts[1] == "countries":
+            if parts[0] not in ZOO_CONTINENTS:
+                raise ZooResourceNotFound(uri)
+            body = zoo_countries_enum(parts[0])
+        elif len(parts) == 4 and parts[1] == "countries" and parts[3] == "animals":
+            continent, country = parts[0], parts[2]
+            if country not in ZOO_COUNTRIES:
+                raise ZooResourceNotFound(uri)
+            if ZOO_COUNTRIES[country]["continent"] != continent:
+                raise ZooResourceNotFound(uri)
+            body = zoo_country_animals_enum(country)
+        else:
+            raise ZooResourceNotFound(uri)
+        return [
+            {
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": json.dumps(body, indent=2, sort_keys=True),
+            }
+        ]
     if uri.startswith("zoo://animals/"):
         # The expansion of `zoo://animals/{id}`. The client did the expanding -- all this
         # sees is a concrete URI, and an id that is not in the vocabulary is a miss rather
@@ -946,9 +1283,7 @@ def zoo_resource_contents(uri):
             {
                 "uri": uri,
                 "mimeType": "application/json",
-                "text": json.dumps(
-                    dict(ZOO_ANIMALS[animal_id], id=animal_id), indent=2, sort_keys=True
-                ),
+                "text": json.dumps(zoo_animal_record(animal_id), indent=2, sort_keys=True),
             }
         ]
     if uri.startswith("zoo://echo/"):
@@ -1408,6 +1743,24 @@ while True:
                 }
             )
             continue
+        except ZooMismatchedAnimal as clash:
+            key, field, value = clash.args
+            write(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32602,
+                        "message": "%s is not in %s %s" % (key, field, value),
+                        "data": {
+                            "id": key,
+                            field: value,
+                            "countries": ZOO_ANIMALS[key]["countries"],
+                        },
+                    },
+                }
+            )
+            continue
         if zoo_prompt is not None:
             write({"jsonrpc": "2.0", "id": req_id, "result": zoo_prompt})
         elif params.get("name") == "greeting":
@@ -1498,6 +1851,35 @@ while True:
                     "error": {"code": -32000, "message": "Unknown resource"},
                 }
             )
+    elif method == "completion/complete" and _schema_zoo:
+        params = req.get("params", {})
+        ref = params.get("ref")
+        argument = params.get("argument")
+        if not isinstance(ref, dict) or not isinstance(argument, dict):
+            write(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32602,
+                        "message": "completion/complete needs a ref and an argument",
+                        "data": {"ref": ref, "argument": argument},
+                    },
+                }
+            )
+            continue
+        completion = zoo_completion(ref, argument, params.get("context"))
+        # A ref this server completes nothing for is answered empty rather than refused: an
+        # empty list is what a completions-capable server says about an argument it has no
+        # suggestions for, and a client asking on every keystroke must not be able to
+        # provoke an error by focusing the wrong box.
+        write(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"completion": completion or {"values": [], "hasMore": False}},
+            }
+        )
     else:
         write(
             {

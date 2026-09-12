@@ -221,6 +221,12 @@ protocol version out of the result and dropping the rest.
 | `logging` | `logging/setLevel`, and `notifications/message` coming back |
 | `completions` | `completion/complete` |
 
+`complete()` is the wrapper, beside `read_resource()`. It omits `context` rather than
+sending it as `null` — presence is meaningful in MCP, and a `null` where an object is
+expected is the sort of thing a strict validator refuses and a lenient one ignores. Whether
+`context` may be sent at all is the *caller's* decision, because it postdates `2024-11-05`
+and this module does not know what was negotiated; `router.py` makes that call.
+
 `supports(capability)` is what reads it, and two of its rules are load-bearing:
 
 - **Presence, not truthiness.** MCP capability values are option blocks, and

@@ -140,10 +140,17 @@ make run-dev        # starts examples/zoo_server.py, then open the URL it prints
 ```
 
 That is a local MCP server whose only purpose is to be rendered: thirteen tools covering
-every JSON Schema construct a form can meet, five prompts, seven resources and two URI
+every JSON Schema construct a form can meet, five prompts, eight resources and four URI
 templates. One of those prompts, `zoo-prompt-animal`, takes an `id` from the `zoo://animals`
 listing and expands to a brief filled with that animal — which is what the UI's Variables
 column is for.
+
+It also publishes a **cascade**, for the case where one parameter decides what the next may
+be: `zoo://continents` narrows to the countries of one continent, which narrow to the animals
+of one country, which read through the same `zoo://animals/{id}`. The zoo answers that both
+ways — as chained listing resources the Variables column walks, and as `completion/complete`
+with `context.arguments`, which the gateway forwards and the UI offers as suggestions in the
+field you are typing in.
 
 ## Rotating a credential
 

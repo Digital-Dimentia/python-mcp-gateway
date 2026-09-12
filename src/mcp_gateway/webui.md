@@ -141,6 +141,15 @@ those vocabularies, one group per variable, every value something you can spend.
 names nothing, so it contributes no group. The comparison is on the backend's own spelling,
 after the gateway's `mcpgw://<server>/<percent-encoded>` wrapper is unwound.
 
+**One listing is one group.** Two templates can share a fixed prefix —
+`zoo://continents/{continent}/countries` and the longer one beneath it both cut back to
+`zoo://continents` — and both the body cache and the picks are keyed by the listing's URI, so
+a second group on that key would alias the first one's values and its picks. The simplest
+pairing wins: fewest variables, then shortest, then alphabetical, so the answer does not
+depend on the order the templates were listed in. Nothing is lost by dropping the others; a
+template taking a value this listing does not publish is not this listing's template, and is
+reached through the body of the one that is.
+
 That rule is also what keeps this column from reading a server's resources at large.
 `resources/read` is a call to a live backend — `zoo://ticks` in the fixture exists precisely
 to prove a read can move state — so **a resource that pairs with no template is never
@@ -150,16 +159,67 @@ fetched.** What is fetched is cached until the listings change or Reread is pres
 splitting prose on newlines would turn every text resource into a list of garbage. Three
 shapes are understood:
 
-| Body | Values | Labels |
-|---|---|---|
-| A JSON Schema enum fragment | `enum` | `enumNames` |
-| An array of scalars, or of records | the scalar, or `id`/`value`/`uri`/`name` | `title`/`name` |
-| An object keyed by identifier | the keys | each record's `name`/`title` |
+| Body | Values | Labels | May also name |
+|---|---|---|---|
+| A JSON Schema enum fragment | `enum` | `enumNames` | `readOne`, `narrows` |
+| An array of scalars, or of records | the scalar, or `id`/`value`/`uri`/`name` | `title`/`name` | |
+| An object keyed by identifier | the keys | each record's `name`/`title` | |
 
 The first is what `zoo://animals` publishes, and the only one that carries labels *and*
 names its own template: `readOne` is not a JSON Schema keyword, it is the listing saying
 where one of its values is spent. When it is present it wins over the pairing found by
 prefix — the server knows where its values go better than the URIs do.
+
+## A vocabulary that narrows another
+
+Some parameters are not independent. Which countries there are depends on the continent, so
+there is no single `zoo://countries` to publish — and a listing that took a parameter would
+be a *template*, which the pairing rule above finds nothing to pair.
+
+So a listing names its own child, in the body, beside `readOne`:
+
+| key | one of my values buys | example |
+|---|---|---|
+| `readOne` | a member | `zoo://animals/{id}` |
+| `narrows` | another listing | `zoo://continents/{continent}/countries` |
+
+That keeps the column's one invariant intact all the way down. A root is read because a
+template's fixed prefix named it; every deeper listing is read at a URI **the server itself
+produced**, expanded from the parent's `narrows` with everything the chain has bound. The
+column still never goes looking through a live backend's resource space for something that
+might be a vocabulary. The gateway spelling for that URI is minted rather than looked up —
+`resources/read` resolves a URI rather than checking it against a listing, exactly as it does
+for a template the client expanded itself.
+
+**A group's variable comes from the body, not from the pairing.**
+`zoo://continents/africa/countries` is spent on a template naming `continent` *and*
+`country`, and the first of those is already decided — it is in the URI that was read — so
+that group is the `country` one. The variable is settled while resolving rather than while
+drawing, because the *next* link expands against it: a group that still thought it was
+`continent` would write the country into the continent's segment and read a URI nobody
+published.
+
+**A narrowing group picks one.** No `one | many` switch on it. `many` means "send the open
+form once per value" and reading a listing sends no form; merging two continents' countries
+would invent a vocabulary the server never published, with nothing on the chip to say which
+continent each country came from. Forcing `one` removes the ambiguous state rather than
+papering over it. The leaf keeps `one | many`, which is where the fan-out belongs anyway.
+
+**A group waiting on a pick is drawn, not hidden.** Dimmed, with a line saying which pick
+above fills it — because being able to see that the cascade is there is the difference
+between a column with one group in it and a column that has more to give. A pending group is
+never read and is never given a pick of its own.
+
+**Changing a pick buries what it decided.** The child's cache key is the *expanded* URI, so
+switching Africa to Asia is a miss that fetches and switching back is a hit; and the
+countries picked under Africa are deleted rather than left in `picks`, where they would go on
+multiplying the send button's `×n` with nothing on screen to explain the number. Bodies are
+kept, picks are not: the first is a cache, the second is a claim about what you meant.
+
+**A URI the server never handed over is a miss, not an empty list.** The zoo answers
+`-32002` for a country under a continent it is not in — which is exactly what a client
+picking from two listings out of step would send — because an empty listing would read as a
+country with no animals.
 
 **A template is how a vocabulary is found, not where it can be spent.** `zoo://animals`
 pairs with `zoo://animals/{id}`, and that pairing is what makes it a vocabulary at all — but
@@ -213,6 +273,42 @@ Binding for a fan-out is stricter than for a click: it needs a field that actual
 the variable's name. Filling the field you were last typing in is a helpful guess for one
 value; sending a form twenty-four times into it because a box is ticked in another column is
 not.
+
+## Suggestions in the box itself
+
+`completion/complete` is the protocol's own answer to the question the variables column
+answers by hand: what may go in this field? Both are here, because they are for different
+moments. The column is how a **person browses** a vocabulary — every value visible, several
+pickable, the fan-out counted on the send button. A suggestion is how a field gets filled
+**while you are typing in it**, which is what a model does and what a person does more often.
+
+It attaches to a template's variables and a prompt's arguments, and to nothing else: MCP
+defines a ref for a prompt and for a resource template, and none for a tool argument. A tool
+form therefore gets no suggestions, which looks like an oversight and is not one.
+
+**A `<datalist>`, not a `<select>`.** A select constrains, and this column already refuses to
+write a value that is not among a select's options — so a constraining control here would
+break the variables column's own fill. It would also be unable to hold the `[a, b]` a
+fan-out writes. A datalist offers without constraining, which is what a suggestion is.
+
+**The other fields of the same form are the context.** That is the cascade: `continent`,
+already filled in, is sent as `context.arguments` when `country` asks, and the server
+answers with that continent's countries. A field holding a fan-out contributes nothing —
+several values is not *the* value that narrows anything.
+
+**It asks on focus as well as on input**, because the useful moment is the one before
+anything has been typed, and debounces so a typed word is one request rather than five.
+Answers are sequenced, since a WebSocket has no `AbortController` and a slow reply must not
+overwrite a newer one.
+
+**Nothing here can fail loudly.** A gateway that does not know the method, a backend that is
+down, a request that times out: each clears the list and says so in the field's tooltip. A
+suggestion that broke the form it was helping with would be worse than no suggestion. The
+whole affordance is gated on the `completions` capability in the `initialize` result, the
+same way the prompt and resource listings are.
+
+A pick in the variables column arrives as a real `input` event, so picking a continent there
+re-narrows the `country` suggestions with no extra wiring.
 
 ## Why the same port
 

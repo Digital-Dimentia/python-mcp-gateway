@@ -14,6 +14,15 @@ version, so a shared object would have the second client silently answered with 
 one's gates. Two clients on one daemon can legitimately negotiate different revisions, and
 [`test_ws_lifecycle.py`](../../tests/test_ws_lifecycle.py) asserts exactly that.
 
+## The method table
+
+`initialize`, `ping`, the three listings, `tools/call`, `prompts/get`,
+`resources/templates/list`, `resources/read`, and `completion/complete`. It is closed:
+anything else is `-32601` before a backend is consulted, which is what makes the advertised
+capability block a promise rather than a guess. `completion/complete` resolves its `ref` the
+way `prompts/get` and `resources/read` resolve their name and URI; see
+[`router.md`](router.md).
+
 ## What may be called before `initialize`
 
 `initialize` and `ping`, and nothing else.

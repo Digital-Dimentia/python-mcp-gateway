@@ -33,8 +33,8 @@ did not require would break working backends for no protection.
 
 ## The capabilities are advertised unconditionally
 
-`tools`, `prompts` and `resources`, always, with `listChanged` on each — not the live union
-of what the backends currently offer.
+`tools`, `prompts` and `resources` with `listChanged` on each, and `completions`: always,
+not the live union of what the backends currently offer.
 
 This looks like a violation of the rule that you must never declare what nothing answers,
 so the reasoning is worth stating plainly:
@@ -51,6 +51,15 @@ so the reasoning is worth stating plainly:
   `prompts/list` with no prompt-capable backend returns `{"prompts": []}` — exactly what a
   real server with no prompts returns, and a case every client already handles. Nobody is
   ever stranded on a `-32601`.
+
+`completions` is where "we can always answer" costs something, and the cost is worth
+naming. A backend that never declared `completions` cannot be asked, so the gateway answers
+`{"values": []}` on its behalf — which is exactly what a completions-capable server returns
+for an argument it has no suggestions for, and therefore conflates two facts a client might
+have liked to tell apart. But the spec exposes that distinction nowhere else either: a real
+server's empty list says nothing about whether it *could* have suggested something. So
+nothing is lost that a client could have used, and the alternative — `-32601` for a method
+we advertise — would be a lie about our own method table. See [`router.md`](router.md).
 
 `subscribe: false` is the one live claim in the block, and it is negative: nothing
 implements `resources/subscribe` yet, so saying otherwise would strand a caller.

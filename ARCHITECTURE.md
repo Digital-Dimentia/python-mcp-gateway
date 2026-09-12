@@ -111,9 +111,9 @@ server name may not contain `__`. That one coupling is what keeps a call correct
 **A dead backend answers differently per method.** `tools/call` returns a *successful* result
 carrying `isError: true`, because MCP's contract is that tool-level failure is a successful
 result — so the model can read "GitHub is not configured" and tell the human, instead of the
-turn dying on a protocol error it cannot act on. `prompts/get` and `resources/read` have no
-such escape hatch and answer `-32603` and `-32002`. See
-[`router.md`](src/mcp_gateway/router.md).
+turn dying on a protocol error it cannot act on. `prompts/get`, `resources/read` and
+`completion/complete` have no such escape hatch and answer `-32603`, `-32002` and `-32603`.
+See [`router.md`](src/mcp_gateway/router.md).
 
 **Reload diffs on *resolved* spawn identity.** Comparing the `${VAR}` templates would make
 rotating a token look like no change at all — and reloading after a rotation is the main

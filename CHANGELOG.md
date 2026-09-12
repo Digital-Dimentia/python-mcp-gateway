@@ -40,8 +40,29 @@ MCP handshake, so what you exercise in it is byte-identical to what the model ge
   store does not have.
 - **`examples/zoo_server.py`** and **`servers.dev.yaml`**: a local MCP server whose only
   purpose is to be rendered — thirteen tools, one per JSON Schema construct including the
-  four a form must decline, four prompts, seven resources and two URI templates. Vendored
+  four a form must decline, five prompts, eight resources and four URI templates. Vendored
   from python-acp (Apache-2.0, same author). `make run-dev` starts the gateway against it.
+- **`completion/complete`, forwarded**: the MCP method that suggests what one argument may
+  be, routed to the backend its `ref` names — a namespaced prompt name or a `mcpgw://` URI,
+  resolved by the same finders `prompts/get` and `resources/read` use. `context.arguments`
+  rides along, and is stripped for a backend that negotiated `2024-11-05`, where the member
+  does not exist. A backend that declared no `completions` is answered with an empty list
+  rather than an error: a completion is a hint, and a hint must never fail the form it was
+  helping with. The capability is advertised unconditionally, for the reason the other three
+  are — see `src/mcp_gateway/protocol.md`.
+- **A cascade in the zoo, and in the UI's Variables column**: `zoo://continents` narrows to
+  the countries of one continent, which narrow to the animals of one country, which read
+  through the same `zoo://animals/{id}`. A listing names its child in its own body with
+  `narrows`, the sibling of `readOne` — so every URI the column reads is one the server
+  handed it, and "a resource that pairs with no template is never fetched" still holds all
+  the way down. Picking a continent fills the group below it; changing one buries what it
+  decided, picks and all. The same data answers `completion/complete`, so a template's two
+  variables and `zoo-prompt-animal`'s three arguments cascade the spec's way too — offered
+  in the field as you type, as a `<datalist>` that suggests without constraining.
+- **Two templates sharing one listing no longer alias each other** in the Variables column.
+  Both `zoo://animals/{id}` and a longer template over the same prefix cut back to one URI,
+  and the cache and the picks are keyed by it; the simplest pairing now wins and the rest are
+  reached through `narrows`.
 
 ### Security
 

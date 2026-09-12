@@ -115,6 +115,83 @@ class Router:
                 exc.backend = backend.name
                 raise
 
+    async def complete(
+        self,
+        session: Any,
+        ref: dict[str, Any],
+        argument: dict[str, Any],
+        context: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Argument completion, routed by what the `ref` names.
+
+        The `ref` is the routing key and the only thing rewritten: a `ref/prompt` carries a
+        namespaced name and a `ref/resource` a `mcpgw://` URI, both of which are resolved
+        the same way `prompts/get` and `resources/read` resolve theirs. What comes back is
+        forwarded untouched -- `values` are *argument values* in the backend's own
+        vocabulary, an animal id or a country name, never names or URIs in the gateway's
+        address space. Rewriting one would corrupt the exact string the client is about to
+        send back as an argument.
+        """
+        kind = ref.get("type")
+        if kind == "ref/prompt":
+            name = ref.get("name")
+            if not isinstance(name, str) or not name:
+                raise errors.InvalidParams("a ref/prompt needs a 'name'", {"ref": ref})
+            found = self.catalogue.find_prompt(name)
+            if found is None:
+                raise self._unknown("prompt", name)
+            backend, local = found
+            backend_ref = dict(ref, name=local)
+        elif kind == "ref/resource":
+            uri = ref.get("uri")
+            if not isinstance(uri, str) or not uri:
+                raise errors.InvalidParams("a ref/resource needs a 'uri'", {"ref": ref})
+            found = self.catalogue.find_resource(uri)
+            if found is None:
+                raise errors.ResourceNotFound(
+                    f"no resource at {uri!r}",
+                    {"uri": uri, "knownBackends": [b.name for b in self.catalogue.supervisor.all]},
+                )
+            backend, local = found
+            backend_ref = dict(ref, uri=local)
+        else:
+            # A revision naming a ref type we do not know is not something to guess at: there
+            # is no way to tell which backend it means, so there is nowhere to send it.
+            raise errors.InvalidParams(f"unknown completion ref type {kind!r}", {"ref": ref})
+
+        if not backend.running:
+            # No `isError` on a completion result, so this has to be a protocol error -- the
+            # `prompts/get` rule.
+            raise errors.GatewayError(
+                _unavailable(backend),
+                data={"backend": backend.name, "gatewayStatus": backend.status.value},
+            )
+
+        if not backend.client.supports("completions"):
+            # Nothing reached the backend, so nothing is stamped on it. An empty list is what
+            # a completions-capable server returns for an argument it cannot suggest for, and
+            # it is the only answer that does not misrepresent somebody: see `protocol.py`.
+            logger.debug("backend %r declares no completions; answering empty", backend.name)
+            return {"completion": {"values": [], "total": 0, "hasMore": False}}
+
+        if context is not None and backend.client.protocol_version == "2024-11-05":
+            # `context` postdates that revision. Sending it anyway is a member the server
+            # never agreed to read: ignored by a lenient one, refused by a strict one, and
+            # the request is perfectly well-formed without it -- a cascade simply degrades
+            # into an unfiltered list, which is better than a hint that fails the call.
+            logger.debug(
+                "backend %r negotiated 2024-11-05; dropping completion context", backend.name
+            )
+            context = None
+
+        backend.last_call_at = time.time()
+        with backend.serving(session):
+            try:
+                return await backend.client.complete(backend_ref, argument, context)
+            except MCPProtocolError as exc:
+                exc.backend = backend.name
+                raise
+
     async def read_resource(self, session: Any, public_uri: str) -> dict[str, Any]:
         found = self.catalogue.find_resource(public_uri)
         if found is None:
