@@ -13,6 +13,22 @@ table wrong is how a daemon becomes noisy or stale — and neither symptom point
 | `notifications/resources/updated` | drop, with a debug line |
 | anything else | drop, with a debug line |
 
+## The gateway announces its own catalogue changes too
+
+Not everything that changes a listing starts at a backend. Three things here do:
+
+| Gateway does | Clients hear |
+|---|---|
+| a reload that adds, removes or restarts backends | one `list_changed` per kind, after the whole sweep |
+| `admin.backend.restart` / `gateway__restart_backend` | one `list_changed` per kind |
+| a backend's own `list_changed` | that kind, relayed |
+
+The restart row was missing until it was noticed from the outside: the catalogue was
+invalidated and nobody was told, so an operator who edited a backend and restarted it
+watched an open UI go on listing what that backend used to publish, with no way to know it
+was looking at the past. All three kinds, because a restarted backend may have changed any
+of them, and the debounce below means saying three things costs no more than saying one.
+
 ## Why `list_changed` is debounced
 
 A reload that restarts eight backends produces eight notifications within a few

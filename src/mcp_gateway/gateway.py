@@ -375,6 +375,18 @@ class Gateway:
         # Whatever it published before is not what it publishes now, whether or not the
         # restart succeeded.
         self.catalogue.invalidate(name)
+
+        # ...and a client holding the old listing has no way to find that out. A restart is
+        # a catalogue change exactly as a reload is, and the two arrive here by different
+        # doors only because one of them re-reads a file first: an operator who restarts a
+        # backend after editing it watches an open UI go on showing what that backend used
+        # to publish. One per kind, debounced by the notifier like every other announcement.
+        for method in (
+            protocol.TOOLS_LIST_CHANGED,
+            protocol.PROMPTS_LIST_CHANGED,
+            protocol.RESOURCES_LIST_CHANGED,
+        ):
+            await self.notifier.list_changed(method)
         return restarted
 
     async def reload(self, *, dry_run: bool = False) -> dict[str, Any]:

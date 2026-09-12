@@ -127,6 +127,28 @@ async def test_it_invalidates_the_cache_it_is_about(tmp_path) -> None:
         await harness.close()
 
 
+async def test_a_restart_announces_the_catalogue_changed(tmp_path) -> None:
+    """The reason the UI went on showing a backend's old prompts after a restart.
+
+    A restart invalidates that backend's cache, but a client holding the old listing has no
+    way to find that out; `reload` has always said so and this path did not. All three
+    kinds, because a restarted backend may have changed any of them.
+    """
+    harness = await daemon(tmp_path, servers="servers:\n" + entry("a"))
+    try:
+        client = await harness.connect()
+        await client.call("tools/list")
+        assert not of_kind(client, "notifications/tools/list_changed")
+
+        await harness.gateway.restart_backend("a")
+        for kind in ("tools", "prompts", "resources"):
+            assert await wait_for(
+                lambda kind=kind: of_kind(client, f"notifications/{kind}/list_changed")
+            ), f"no {kind}/list_changed after a restart"
+    finally:
+        await harness.close()
+
+
 async def test_a_backends_log_message_is_not_re_emitted(tmp_path) -> None:
     """`logging` is not advertised, and MCP forbids using a capability the peer did not
     declare. The content still reaches the daemon's own log."""
