@@ -17,8 +17,13 @@ def test_every_manifest_row_names_what_answers_it() -> None:
         assert capability.answered_by, capability.key
 
 
-def test_subscribe_is_advertised_false_because_nothing_implements_it() -> None:
-    assert protocol.advertised_capabilities()["resources"]["subscribe"] is False
+def test_subscribe_is_advertised_because_something_implements_it_now() -> None:
+    """It was `False` while nothing answered `resources/subscribe`, and that was the honest
+    value then. `router.subscribe_resource` answers it now, so the flag is a row in the
+    manifest like every other -- and a backend that cannot be subscribed to refuses its own
+    URI, which is a per-resource answer rather than a claim about the gateway."""
+    assert protocol.advertised_capabilities()["resources"]["subscribe"] is True
+    assert protocol.RESOURCES_SUBSCRIBE in ("resources/subscribe",)
 
 
 async def test_the_block_does_not_depend_on_which_backends_are_configured(tmp_path) -> None:

@@ -61,6 +61,8 @@ class Session:
             protocol.RESOURCES_LIST: self._resources_list,
             protocol.RESOURCES_TEMPLATES_LIST: self._resources_templates_list,
             protocol.RESOURCES_READ: self._resources_read,
+            protocol.RESOURCES_SUBSCRIBE: self._resources_subscribe,
+            protocol.RESOURCES_UNSUBSCRIBE: self._resources_unsubscribe,
             protocol.COMPLETION_COMPLETE: self._complete,
         }
 
@@ -187,6 +189,12 @@ class Session:
 
     async def _resources_read(self, params: dict) -> dict[str, Any]:
         return await self.gateway.read_resource(self, params)
+
+    async def _resources_subscribe(self, params: dict) -> dict[str, Any]:
+        return await self.gateway.subscribe_resource(self, params)
+
+    async def _resources_unsubscribe(self, params: dict) -> dict[str, Any]:
+        return await self.gateway.unsubscribe_resource(self, params)
 
     async def _complete(self, params: dict) -> dict[str, Any]:
         return await self.gateway.complete(self, params)

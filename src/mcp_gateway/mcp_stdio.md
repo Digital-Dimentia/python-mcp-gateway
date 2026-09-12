@@ -217,9 +217,15 @@ protocol version out of the result and dropping the rest.
 |---|---|
 | `tools` | `tools/list`, `tools/call` |
 | `prompts` | `prompts/list`, `prompts/get` |
-| `resources` | `resources/list`, `resources/read`, `resources/templates/list`, `resources/subscribe` |
+| `resources` | `resources/list`, `resources/read`, `resources/templates/list` |
+| `resources.subscribe` | `resources/subscribe`, `resources/unsubscribe` |
 | `logging` | `logging/setLevel`, and `notifications/message` coming back |
 | `completions` | `completion/complete` |
+
+`resources.subscribe` is the one row read with `supports_option` rather than `supports`:
+presence is not enough, because these are booleans *inside* an option block and
+`"resources": {}` means resources without subscriptions. Everywhere else presence is the
+whole test — see `supports`.
 
 `complete()` is the wrapper, beside `read_resource()`. It omits `context` rather than
 sending it as `null` — presence is meaningful in MCP, and a `null` where an object is

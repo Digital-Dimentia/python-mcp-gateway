@@ -10,7 +10,7 @@ table wrong is how a daemon becomes noisy or stale — and neither symptom point
 | `notifications/{tools,prompts,resources}/list_changed` | invalidate that backend's cache; emit one upward, **debounced** |
 | `notifications/progress` | relay **to the originating connection only**, verbatim |
 | `notifications/message` | log locally with the backend's name; do not re-emit |
-| `notifications/resources/updated` | drop, with a debug line |
+| `notifications/resources/updated` | rewrite the URI; relay **to the sessions subscribed to it** |
 | anything else | drop, with a debug line |
 
 ## The gateway announces its own catalogue changes too
@@ -64,9 +64,34 @@ client did not declare.
 Nothing is lost: the content goes to the daemon's own log with the backend's name on it,
 which is where an operator looks, and `/admin`'s log stream is how the UI will surface it.
 
-## Why `resources/updated` is dropped
+## Why `resources/updated` goes to subscribers, not everyone
 
-`subscribe: false` is advertised, so nobody has subscribed and nobody is expecting these.
-Forwarding one would also require rewriting its URI into the `mcpgw://` space — which is the
-work the follow-up issue covers, and doing it half-way would produce a notification naming a
-URI no client could read.
+It is the `progress` argument reached from the other side. A backend saying
+`file:///README.md` changed is answering a question *some* client asked, and the URI it names
+is its own — meaningless to a client that only ever saw `mcpgw://docs/file%3A%2F%2F%2F…`. So
+two things happen before it can be relayed: `naming.encode_resource_uri` rewrites the URI,
+and the notification goes only to the sessions subscribed to that exact public URI.
+
+Broadcasting would be wrong twice over. A client that never subscribed is entitled to
+silence — that is what `subscribe` *means* — and a client watching a *different* backend's
+identically-named resource would be woken by a change that did not happen to it. Two
+filesystem backends both publishing `file:///README.md` is the same collision that made
+`encode_resource_uri` necessary in the first place, arriving on the notification path.
+
+## Why a subscription survives a restart
+
+`Subscriptions` is keyed on the public URI, which outlives the process behind it. A restarted
+backend knows nothing about what anyone subscribed to, and the client has no way to find that
+out — its subscription would simply stop producing, which is indistinguishable from a
+resource that stopped changing. So `gateway.resubscribe` replays them against the new
+process, and drops any the new process refuses rather than leaving the registry claiming a
+subscription that does not exist.
+
+A backend a reload *removed* is the other case: its subscriptions are dropped, because there
+is nothing left to replay them against.
+
+## Where the state lives
+
+`Subscriptions` keeps two indexes over one fact — sessions by URI, URIs by session — because
+both directions are hot: an update needs the sessions, a closing connection needs the URIs.
+Nothing outside the class touches either dict, which is the only way they stay in step.

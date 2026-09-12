@@ -2,7 +2,18 @@
 
 Forwards one call to the backend that owns it, and translates what comes back.
 
-Four methods: `tools/call`, `prompts/get`, `resources/read`, `completion/complete`.
+Five methods: `tools/call`, `prompts/get`, `resources/read`, `completion/complete`, and
+`resources/subscribe` — whose two halves share one function, since they differ only in which
+call goes down the wire.
+
+## Subscribing anticipates the refusal rather than relaying it
+
+A backend without `resources.subscribe` would answer `-32601`, and passing that up would
+name a method the client *did* call and the gateway *does* implement — which reads as a
+gateway bug. The capability is checked first and the answer is `-32002`: this URI is not one
+you can watch. Unsubscribing is forgiving in one direction: the gateway forgets the
+subscription whatever the backend says, because a client that asked to stop has stopped, and
+anything the backend keeps sending is filtered out on the way up.
 
 ## A dead backend answers differently per method, deliberately
 

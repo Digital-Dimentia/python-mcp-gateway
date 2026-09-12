@@ -42,6 +42,8 @@ PROMPTS_GET = "prompts/get"
 RESOURCES_LIST = "resources/list"
 RESOURCES_TEMPLATES_LIST = "resources/templates/list"
 RESOURCES_READ = "resources/read"
+RESOURCES_SUBSCRIBE = "resources/subscribe"
+RESOURCES_UNSUBSCRIBE = "resources/unsubscribe"
 COMPLETION_COMPLETE = "completion/complete"
 CANCELLED = "notifications/cancelled"
 PROGRESS = "notifications/progress"
@@ -80,6 +82,7 @@ CAPABILITY_MANIFEST: tuple[Capability, ...] = (
     Capability("tools", "listChanged", "catalogue.tools / router.call_tool; admin tools always exist"),
     Capability("prompts", "listChanged", "catalogue.prompts / router.get_prompt; empty list when none"),
     Capability("resources", "listChanged", "catalogue.resources / router.read_resource"),
+    Capability("resources", "subscribe", "router.subscribe_resource / notifications.Subscriptions"),
     Capability(
         "completions",
         None,
@@ -117,15 +120,17 @@ def advertised_capabilities() -> dict[str, dict[str, bool]]:
     client could have used, and the alternative -- a `-32601` for a method we advertise --
     would be a lie about our own method table.
 
-    `subscribe` is `False` and is the one thing here that is a live claim: nothing
-    implements `resources/subscribe` yet, so saying otherwise would strand a caller.
+    `subscribe` used to be the one negative here, and is now a row like any other: the
+    gateway keeps the subscription itself and forwards `notifications/resources/updated`
+    with the URI rewritten into its own address space. It is unconditional for the same
+    reason the rest of the block is -- a backend that cannot be subscribed to refuses that
+    one `resources/subscribe`, which is a per-URI answer, not a claim about the gateway.
     """
     block: dict[str, dict[str, bool]] = {}
     for capability in CAPABILITY_MANIFEST:
         entry = block.setdefault(capability.key, {})
         if capability.sub_key:
             entry[capability.sub_key] = True
-    block["resources"]["subscribe"] = False
     return block
 
 

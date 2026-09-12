@@ -1,8 +1,8 @@
 """Forward one call to the backend that owns it, and translate what comes back.
 
-Three methods: `tools/call`, `prompts/get`, `resources/read`. Each resolves a namespaced
-name to a backend, forwards the call unchanged, and maps a failure into the client's
-address space.
+Five methods: `tools/call`, `prompts/get`, `resources/read`, and the two halves of
+`resources/subscribe`. Each resolves a namespaced name to a backend, forwards the call
+unchanged, and maps a failure into the client's address space.
 
 ## A dead backend answers differently per method, deliberately
 
@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import nullcontext
 from typing import Any
 
 from mcp_gateway import errors
@@ -211,6 +212,52 @@ class Router:
         with backend.serving(session):
             try:
                 return await backend.client.read_resource(uri)
+            except MCPProtocolError as exc:
+                exc.backend = backend.name
+                raise
+
+    async def subscribe_resource(self, session: Any, public_uri: str, *, on: bool) -> None:
+        """Forward one half of a subscription. `on` picks subscribe or unsubscribe.
+
+        The refusal a backend without `resources.subscribe` would give is anticipated rather
+        than relayed, because `-32601` from down there names a method the *client* did call
+        and the gateway does implement -- an answer that reads as a gateway bug. `-32002`
+        says the true thing: this URI is not one you can watch.
+
+        Unsubscribing is best-effort in one direction only. The gateway forgets the
+        subscription whatever the backend says, because a client that asked to stop must be
+        able to stop; a backend that then keeps sending is filtered out on the way up, since
+        nothing is subscribed to that URI any more.
+        """
+        found = self.catalogue.find_resource(public_uri)
+        if found is None:
+            raise errors.ResourceNotFound(
+                f"no resource at {public_uri!r}",
+                {
+                    "uri": public_uri,
+                    "knownBackends": [b.name for b in self.catalogue.supervisor.all],
+                },
+            )
+        backend, uri = found
+        if not backend.running:
+            raise errors.ResourceNotFound(_unavailable(backend), {"backend": backend.name})
+        if not backend.supports_option("resources", "subscribe"):
+            raise errors.ResourceNotFound(
+                f"backend {backend.name!r} does not support resource subscriptions",
+                {"uri": public_uri, "backend": backend.name},
+            )
+
+        backend.last_call_at = time.time()
+        # `serving` is skipped for a replay, which has no session behind it. Registering
+        # `None` as one would make `origin_session` see two callers and answer "unclear",
+        # so a real client's elicitation racing a restart would be dropped.
+        scope = backend.serving(session) if session is not None else nullcontext()
+        with scope:
+            try:
+                if on:
+                    await backend.client.subscribe_resource(uri)
+                else:
+                    await backend.client.unsubscribe_resource(uri)
             except MCPProtocolError as exc:
                 exc.backend = backend.name
                 raise
