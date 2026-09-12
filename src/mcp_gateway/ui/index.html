@@ -52,6 +52,13 @@
     <div class="detail" id="detail"></div>
   </section>
 
+  <!-- The edge between two columns, and the control that moves it: a `separator` with a
+       tabindex is a window splitter, so the arrows nudge it and Home puts it back. -->
+  <div class="gutter" data-gutter="0" role="separator" aria-orientation="vertical"
+       tabindex="0" aria-label="Resize the primitives and results columns"
+       aria-valuemin="0" aria-valuemax="100" aria-valuenow="45"
+       title="Drag to resize — double-click to reset"></div>
+
   <!-- ── Middle: what came back ──────────────────────────────────────── -->
   <section class="col col-results" aria-label="Results">
     <div class="col-head">
@@ -62,6 +69,11 @@
       <p class="empty">Invoke a tool, get a prompt, or read a resource.</p>
     </div>
   </section>
+
+  <div class="gutter gutter-vars" data-gutter="1" role="separator" aria-orientation="vertical"
+       tabindex="0" aria-label="Resize the results and variables columns"
+       aria-valuemin="0" aria-valuemax="100" aria-valuenow="47"
+       title="Drag to resize — double-click to reset"></div>
 
   <!-- ── Right: the values the server publishes for its own parameters ─ -->
   <section class="col col-variables" aria-label="Variables">

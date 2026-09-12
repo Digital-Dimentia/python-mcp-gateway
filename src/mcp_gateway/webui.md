@@ -42,6 +42,33 @@ lines of log above a field of empty panel; continuous sizing jumps a line taller
 the daemon logs, dragging what you were reading with it; and no floor leaves an empty
 drawer the height of its own chrome.
 
+**The columns are where you put them.** Each edge between two columns is a `separator` you
+can drag, and the split is remembered — in `localStorage`, so it survives a reload and a
+gateway restart, and is per browser rather than per daemon. The default is 28 / 34 / 38: the
+variables rail is the widest of the three, where it used to be a `19rem` cap that handed
+every pixel of a wide screen to the other two.
+
+The widths are three `fr` numbers on `:root`. `fr` because it is a ratio: a dragged layout
+keeps its shape when the window changes size, with no resize handler to write. The drag
+measures pixels and writes the measurements straight back as `fr`, which is the same thing
+said twice — a set of widths *is* a set of ratios — and is the only sound basis for the
+arithmetic, because once a column is sitting on its `--col-min` floor the grid takes that
+track out of the flex distribution and the rendered widths stop following the stored numbers
+altogether. Dragging moves only the pair an edge divides, so the far column holds still while
+you aim; the delta is clamped rather than the result, so a divider dragged past the floor and
+back picks the cursor up exactly where it left it. Double-click or Home puts the default
+back, and forgets the stored split rather than leaving it to return on the next reload.
+
+The validation in `theme.js` is strict — three finite positive numbers, or the stored value
+is dropped — because it is the only guard there is. A custom property is an untyped token
+until it is substituted, and a token that is not a `<flex>` makes `grid-template-columns`
+invalid at computed-value time, which falls back to `none` rather than to the previous
+declaration: the page becomes five stacked rows. `@property` is the usual way to type a
+custom property out of that failure mode, and it is not available here — the registered
+syntaxes are a closed list with no `<flex>` on it, so `syntax: "<flex>"` is an invalid rule
+dropped in silence, which is worse than no rule. Hence the check at the two places that
+write.
+
 `theme.js` is the one file that is not a module, and that is the whole reason it exists.
 Modules are deferred, so a theme applied from `app.js` would land after the first paint —
 someone who picked light on a dark machine would watch the page flash dark on every
@@ -49,6 +76,12 @@ reload. The usual fix is an inline snippet in the `<head>`, which the `script-sr
 policy below rules out, so it ships as a blocking file instead. It writes `data-theme` on
 `<html>`; with no attribute the page follows `prefers-color-scheme`, which is what it did
 before there was a toggle.
+
+The column split is restored there too, for the same reason and with a louder symptom: from
+a deferred module, anyone who had dragged their columns would watch them jump the width of
+the screen on every reload. `theme.js` only ever *overrides* the split, so the defaults exist
+once, in the stylesheet, and resetting is removing the override. `app.js` owns the gesture
+and nothing else.
 
 ## The servers in the header
 

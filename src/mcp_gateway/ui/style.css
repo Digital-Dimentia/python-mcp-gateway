@@ -269,9 +269,48 @@ button:hover .bar-file { color: inherit; }
 
 /* ── Three columns ───────────────────────────────────────────────────────── */
 
+/* The split is three `fr` numbers, and `theme.js` validates every one of them before it is
+ * written -- three finite positive numbers or the stored value is dropped and these
+ * defaults stand.
+ *
+ * That validation is the only guard there is, and it has to be, which is why it is strict.
+ * A custom property is an untyped token until it is substituted, and a token that is not a
+ * `<flex>` makes `grid-template-columns` invalid *at computed-value time* -- which does not
+ * fall back to the previous declaration, it falls back to `none`, and the page becomes five
+ * stacked rows with nothing in the console worth reading. `@property` would type these and
+ * catch it, except that the registered-property syntaxes are a closed list and `<flex>` is
+ * not on it: `syntax: "<flex>"` is an invalid rule that is dropped in silence, which is
+ * worse than no rule at all. So the type check lives in the two functions that write. */
+:root {
+  /* The default split. The variables rail is the widest of the three: it was a 19rem cap,
+   * which meant every pixel of a wide screen went to the other two and a vocabulary was
+   * read sideways forever.
+   *
+   * They are on `:root` rather than on `.columns` for two reasons. `theme.js` applies the
+   * stored split while the `<head>` is parsing, when `.columns` does not exist yet -- and a
+   * declaration *on* `.columns` would beat the inherited value anyway, so the restore would
+   * silently lose to the default. */
+  --col-1: 28fr;
+  --col-2: 34fr;
+  --col-3: 38fr;
+
+  /* One floor for all three tracks, and the number a drag clamps against -- `app.js` reads
+   * this property rather than carrying a copy, so the drag and the grid cannot disagree
+   * about where a column stops. Three of these plus the gutters come to 48rem, under the
+   * 60rem breakpoint where the columns stack, so the floors can never overflow the grid. */
+  --col-min: 16rem;
+
+  /* The hit area. The rule inside it is 1px; the rest is the part you can actually catch
+   * with a trackpad. */
+  --gutter-w: 6px;
+}
+
 .columns {
   display: grid;
-  grid-template-columns: minmax(18rem, 1.1fr) minmax(18rem, 1.3fr) minmax(14rem, 19rem);
+  grid-template-columns:
+    minmax(var(--col-min), var(--col-1)) var(--gutter-w)
+    minmax(var(--col-min), var(--col-2)) var(--gutter-w)
+    minmax(var(--col-min), var(--col-3));
   height: calc(100vh - var(--bar-h) - var(--foot-h));
 }
 
@@ -280,10 +319,55 @@ button:hover .bar-file { color: inherit; }
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-right: 1px solid var(--rule);
   background: var(--panel);
 }
-.col-variables { border-right: 0; background: var(--bg); }
+.col-variables { background: var(--bg); }
+
+/* The rule between two columns belongs to the thing you drag, not to the column on its
+ * left: a border on `.col` would sit three pixels off the handle's centre, so the line you
+ * aim at and the line that moves would not be the same line.
+ *
+ * The gutter wears its neighbours' backgrounds -- the second one straddles the results
+ * panel and the variables rail, so it is split down the middle rather than painted one
+ * colour and showing as a band -- and the hairline is drawn on top of the seam. Invisible
+ * until you approach it. */
+.gutter {
+  position: relative;
+  background: var(--panel);
+  cursor: col-resize;
+  touch-action: none;   /* a drag on a touchscreen resizes rather than scrolling the page */
+}
+.gutter-vars { background: linear-gradient(90deg, var(--panel) 0 50%, var(--bg) 50% 100%); }
+
+.gutter::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--rule);
+  transition: width 80ms ease, background-color 80ms ease;
+}
+/* Approaching it, holding it, and having tabbed to it all say the same thing: this line
+ * moves. The bar thickening in place is the affordance; the outline is only the focus ring. */
+.gutter:hover::before,
+.gutter:focus-visible::before,
+.gutter.on::before {
+  width: 3px;
+  background: var(--accent);
+}
+.gutter:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+@media (prefers-reduced-motion: reduce) { .gutter::before { transition: none; } }
+
+/* While a drag is live the cursor belongs to the gesture rather than to whatever is under
+ * the pointer -- `button { cursor: pointer }` would otherwise flicker every time the
+ * divider crossed a control -- and nothing may select. `app.js` sets this on <html>. */
+:root.col-resizing, :root.col-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
 
 .col-head {
   display: flex;
@@ -295,9 +379,12 @@ button:hover .bar-file { color: inherit; }
 .col-head h2 { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-head input[type="search"] { flex: 1; min-width: 6rem; }
 
+/* Stacked, there is nothing to divide: one column has no edge that is also a control. The
+ * stored widths are simply not named by this template, so they need no unwinding. */
 @media (max-width: 60rem) {
   .columns { grid-template-columns: 1fr; height: auto; }
-  .col { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 70vh; }
+  .col { border-bottom: 1px solid var(--rule); max-height: 70vh; }
+  .gutter { display: none; }
 }
 
 /* ── Controls ────────────────────────────────────────────────────────────── */
@@ -598,7 +685,7 @@ a.button { text-decoration: none; display: inline-block; }
 
 /* ── Middle column ───────────────────────────────────────────────────────── */
 
-.tabs { display: flex; gap: 0.15rem; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--rule-soft); }
+.tabs { display: flex; flex-wrap: wrap; gap: 0.15rem; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--rule-soft); }
 .tabs button {
   background: transparent;
   border: 0;

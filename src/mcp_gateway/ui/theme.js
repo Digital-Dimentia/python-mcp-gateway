@@ -1,10 +1,14 @@
-// The theme, applied before the first paint.
+// The theme and the column widths: the state that has to be right before the first paint.
 //
 // This is a separate, render-blocking classic script rather than part of `app.js` for one
 // reason: `app.js` is a module, modules are deferred, and a deferred script runs after the
 // page has already been painted in whatever the OS said. Someone who chose light on a dark
 // machine would watch the page flash dark on every reload. A CSP of `script-src 'self'`
 // rules out the usual inline snippet, so it ships as a file.
+//
+// A dragged column split is the same class of state, with a louder failure: restored from a
+// module, every reload shows one frame of the default layout and then jumps the width of
+// the screen.
 
 (function () {
   var STORAGE = 'mcp-gateway-ui.theme';
@@ -38,4 +42,61 @@
   };
 
   apply(stored());
+
+  // ── The column widths ──────────────────────────────────────────────────────
+  //
+  // Only ever an *override*: the defaults live in `style.css` and nowhere else, so resetting
+  // is removing the override and there is no second copy of the split in here to drift from
+  // the one the stylesheet ships. `app.js` owns the gesture and calls `save`.
+
+  var COLUMNS = 'mcp-gateway-ui.columns';
+  var PROPS = ['--col-1', '--col-2', '--col-3'];
+
+  // Three positive, finite numbers and nothing else. This is the guard on a value that goes
+  // straight into `grid-template-columns`; the `@property` registrations in `style.css` are
+  // what catches whatever gets past it.
+  function validColumns(values) {
+    if (!Array.isArray(values) || values.length !== PROPS.length) return false;
+    for (var i = 0; i < PROPS.length; i++) {
+      var n = values[i];
+      if (typeof n !== 'number' || !isFinite(n) || n <= 0) return false;
+    }
+    return true;
+  }
+
+  function applyColumns(values) {
+    for (var i = 0; i < PROPS.length; i++) {
+      document.documentElement.style.setProperty(PROPS[i], values[i] + 'fr');
+    }
+  }
+
+  function resetColumns() {
+    for (var i = 0; i < PROPS.length; i++) {
+      document.documentElement.style.removeProperty(PROPS[i]);
+    }
+    try {
+      localStorage.removeItem(COLUMNS);
+    } catch (_) { /* private window, or site data blocked */ }
+  }
+
+  window.__columns = {
+    valid: validColumns,
+    apply: applyColumns,
+    reset: resetColumns,
+    save: function (values) {
+      if (!validColumns(values)) return;
+      applyColumns(values);
+      try {
+        localStorage.setItem(COLUMNS, JSON.stringify(values));
+      } catch (_) { /* private window, or site data blocked */ }
+    },
+  };
+
+  try {
+    // An unreadable or half-written value is not a reason to show a broken page: fall
+    // through to the stylesheet's default, exactly as an unknown theme falls back to
+    // 'system'.
+    var split = JSON.parse(localStorage.getItem(COLUMNS));
+    if (validColumns(split)) applyColumns(split);
+  } catch (_) { /* nothing stored, or no storage: the stylesheet's default stands */ }
 })();
