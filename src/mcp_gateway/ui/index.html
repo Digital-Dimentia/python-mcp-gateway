@@ -5,21 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MCP Gateway</title>
 <link rel="stylesheet" href="style.css">
+<!-- Blocking, and in the head: the attribute has to be on <html> before the first paint. -->
+<script src="theme.js"></script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128268;</text></svg>">
 </head>
 <body>
 
 <header class="bar">
   <h1>MCP Gateway</h1>
-  <div class="bar-status">
-    <span class="pill" id="pill-mcp" data-state="closed" title="MCP socket">/mcp</span>
-    <span class="pill" id="pill-admin" data-state="closed" title="Admin socket">/admin</span>
-    <span class="bar-meta" id="bar-meta"></span>
-  </div>
-  <div class="bar-actions">
-    <button type="button" id="btn-reload" class="ghost" title="Re-read servers.yaml and gateway.env">Reload config</button>
-    <button type="button" id="btn-refresh" class="ghost" title="Refetch every listing">Refresh</button>
-  </div>
+
+  <!-- The configured servers themselves, one button each. The button carries only the
+       indicator and the name; everything else about the server -- what it is, and what you
+       can do to it -- is in the menu it drops. -->
+  <nav class="servers" id="servers" aria-label="Servers"></nav>
+
+  <button type="button" id="btn-add-server" class="ghost" title="Add a server to servers.yaml">+ Add</button>
+  <span class="theme-label" aria-hidden="true">Theme:</span>
+  <button type="button" id="btn-theme" class="ghost theme"><span id="theme-icon" aria-hidden="true"></span></button>
 </header>
 
 <!-- Shown until both sockets are up, or when the key is wrong. -->
@@ -34,35 +36,14 @@
 
 <main class="columns">
 
-  <!-- ── Left: backends and their config ─────────────────────────────── -->
+  <!-- ── Left: vacant ────────────────────────────────────────────────────
+       The backends moved up into the header. What lands here instead is the next step;
+       until then the column holds its place so the three-column grid is unchanged. -->
   <section class="col col-left" aria-label="Backends">
     <div class="col-head">
       <h2>Backends</h2>
-      <button type="button" id="btn-add-server" class="ghost" title="Add a server to servers.yaml">+ Add</button>
     </div>
-    <ul class="backends" id="backends"></ul>
-
-    <div class="col-foot">
-      <details id="status-block">
-        <summary>Gateway</summary>
-        <dl class="kv" id="status-kv"></dl>
-      </details>
-      <details id="log-block">
-        <summary>Log</summary>
-        <div class="log-controls">
-          <label>Level
-            <select id="log-level">
-              <option value="DEBUG">debug</option>
-              <option value="INFO" selected>info</option>
-              <option value="WARNING">warning</option>
-              <option value="ERROR">error</option>
-            </select>
-          </label>
-          <button type="button" id="btn-log-clear" class="ghost">Clear</button>
-        </div>
-        <ol class="log" id="log"></ol>
-      </details>
-    </div>
+    <p class="empty">Servers moved to the header bar.</p>
   </section>
 
   <!-- ── Middle: the selected backend's primitives ───────────────────── -->
@@ -94,7 +75,53 @@
 
 </main>
 
-<!-- The server editor, opened from the left column. -->
+<!-- The log, parked behind the footer. The tab at the footer's left edge raises it. -->
+<div id="log-drawer" class="drawer" role="region" aria-label="Log">
+  <div class="drawer-head">
+    <h2>Log</h2>
+    <label>Level
+      <select id="log-level">
+        <option value="DEBUG">debug</option>
+        <option value="INFO" selected>info</option>
+        <option value="WARNING">warning</option>
+        <option value="ERROR">error</option>
+      </select>
+    </label>
+    <button type="button" id="btn-log-clear" class="ghost">Clear</button>
+  </div>
+  <ol class="log" id="log"></ol>
+</div>
+
+<!-- Three groups: where the gateway is listening, what it is, and what you can do to it. -->
+<footer class="bar bar-foot">
+
+  <!-- Left: the log tab, then the sockets, each pill wearing the address it answers on
+       and the number of clients attached to it. -->
+  <div class="bar-side">
+    <button type="button" id="btn-log" class="tab" aria-expanded="false" aria-controls="log-drawer">
+      Log <span class="count" id="log-count">0</span>
+    </button>
+    <span class="pill" id="pill-mcp" data-state="closed">
+      <span class="pill-addr" data-addr>…</span>/mcp<span class="pill-count" data-count>0</span>
+    </span>
+    <span class="pill" id="pill-admin" data-state="closed">
+      <span class="pill-addr" data-addr>…</span>/admin<span class="pill-count" data-count>0</span>
+    </span>
+  </div>
+
+  <!-- Centre: what this gateway is. -->
+  <span class="bar-meta" id="bar-meta"></span>
+
+  <!-- Right: the two files, each next to the action that re-reads it. -->
+  <div class="bar-side bar-actions">
+    <span class="bar-field" id="env-field" hidden>env <span class="bar-file" id="env-file"></span></span>
+    <!-- The button names the file it re-reads; app.js fills the name in from admin.status. -->
+    <button type="button" id="btn-reload" class="ghost" title="Re-read the config and env files">Reload <span class="bar-file" id="reload-file">config</span></button>
+    <button type="button" id="btn-refresh" class="ghost" title="Refetch every listing">Refresh</button>
+  </div>
+</footer>
+
+<!-- The server editor, opened from a server's menu in the header, or from + Add. -->
 <dialog id="server-dialog">
   <form method="dialog" id="server-form"></form>
 </dialog>

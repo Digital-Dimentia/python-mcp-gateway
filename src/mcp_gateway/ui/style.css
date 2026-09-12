@@ -4,8 +4,9 @@
  * A gateway's admin page that phones a CDN would be a gateway that cannot be used on the
  * air-gapped machine it is most useful on.
  *
- * Colour is defined once on :root and redefined only under prefers-color-scheme, so no
- * value has its only definition inside a media query. */
+ * Colour is defined once on :root and redefined for dark, so no value has its only
+ * definition inside a media query. The header toggle writes `data-theme` on <html>; with
+ * no attribute the page follows the machine, which is what it did before the toggle. */
 
 :root {
   color-scheme: light dark;
@@ -31,10 +32,15 @@
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
   --bar-h: 3rem;
+  --foot-h: 2.5rem;
 }
 
+/* Dark, twice: once for the machine's preference and once for a reader who picked dark
+ * over it in the header. `:not([data-theme="light"])` is what lets the toggle pin light
+ * on a dark machine -- without it the media query would win and the button would look
+ * broken in exactly the case someone reached for it. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg:        #14161a;
     --panel:     #1b1e23;
     --panel-2:   #23272e;
@@ -51,8 +57,31 @@
     --warn:        #e0aa5a;
     --warn-soft:   #2c2415;
     --ok:          #7bc47f;
+    color-scheme: dark;
   }
 }
+
+:root[data-theme="dark"] {
+  --bg:        #14161a;
+  --panel:     #1b1e23;
+  --panel-2:   #23272e;
+  --ink:       #e6e8ec;
+  --ink-soft:  #bcc0c8;
+  --muted:     #8c929c;
+  --rule:      #2e333b;
+  --rule-soft: #262b32;
+
+  --accent:      #63c3aa;
+  --accent-soft: #16302a;
+  --danger:      #ef8074;
+  --danger-soft: #33201d;
+  --warn:        #e0aa5a;
+  --warn-soft:   #2c2415;
+  --ok:          #7bc47f;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
 
 * { box-sizing: border-box; }
 
@@ -84,8 +113,11 @@ h4 { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em; colo
 p { margin: 0; }
 code, pre { font-family: var(--mono); }
 
-/* ── Top bar ─────────────────────────────────────────────────────────────── */
+/* ── The two bars ────────────────────────────────────────────────────────── */
 
+/* The head carries the name and the theme toggle; everything else that was in it --
+ * socket pills, gateway meta, the global actions -- sits in the footer, out of the way
+ * of the three columns that are the actual work surface. */
 .bar {
   display: flex;
   align-items: center;
@@ -96,11 +128,99 @@ code, pre { font-family: var(--mono); }
   border-bottom: 1px solid var(--rule);
 }
 
-.bar-status { display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 0; }
-.bar-meta { color: var(--muted); font-size: 0.76rem; margin-left: 0.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-actions { display: flex; gap: 0.35rem; }
+/* Three groups, and the middle one is centred on the *bar*, not on what is left over
+ * after the sides: a grid with matched `1fr` flanks, so the gateway's name stays put while
+ * a client connects, a path grows or a button appears. `auto` in the middle lets it take
+ * only what it needs, and `min-width: 0` on the flanks is what lets them clip instead of
+ * shoving it off centre. */
+.bar-foot {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  height: var(--foot-h);
+  border-bottom: 0;
+  border-top: 1px solid var(--rule);
+  position: relative;
+  z-index: 2;          /* paints over the parked drawer, which is what "behind" means */
+}
 
+.bar-side { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.bar-side.bar-actions { justify-content: flex-end; }
+
+/* The handle. A tab, so it reads as the top edge of something rather than as one more
+ * button in a row of them: square bottom corners, and it wears the open state. */
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: none;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--rule);
+  border-radius: 5px 5px 0 0;
+  padding: 0.2rem 0.55rem;
+  margin-bottom: -1px;   /* sits on the footer's top rule rather than above it */
+}
+.tab:hover { color: var(--ink); }
+.tab[aria-expanded="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.bar h1 { flex: none; white-space: nowrap; }
+
+/* The word is decoration for a button that already names itself to a screen reader, so it
+ * is aria-hidden and the gap to the toggle is tightened below the bar's default. */
+.theme-label { color: var(--muted); font-size: 0.76rem; margin-right: -0.65rem; }
+
+/* Square, so the glyph sits centred whichever of the three it currently is. */
+.theme {
+  width: 1.85rem;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+/* What this gateway is -- name, version, uptime -- and nothing about where it listens or
+ * what it reads, which the two flanks answer better by sitting next to the thing they
+ * describe. */
+.bar-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.4rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.bar-meta > span { overflow: hidden; text-overflow: ellipsis; }
+.bar-sep { flex: none; color: var(--rule); }
+.bar-actions { gap: 0.35rem; }
+
+/* A labelled fact rather than a control: the label lowercase and quiet, the value in the
+ * same mono the other path wears inside the button next to it. */
+.bar-field { display: flex; align-items: baseline; gap: 0.3rem; min-width: 0; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; }
+
+/* The filename inside the Reload button: monospaced, because it is a path, and dimmed so
+ * the verb still reads first. */
+.bar-file { font-family: var(--mono); font-size: 0.92em; color: var(--muted); text-transform: none; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; }
+.bar-field .bar-file { color: var(--ink); }
+button:hover .bar-file { color: inherit; }
+
+/* The pill carries the endpoint whole -- address, path, and the clients on it -- so the
+ * one thing an operator wants to copy is one thing on screen. The address is dimmed
+ * against the path: both pills repeat it, and the path is what tells them apart. */
 .pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.05rem;
   font-family: var(--mono);
   font-size: 0.68rem;
   padding: 0.12rem 0.45rem;
@@ -109,6 +229,16 @@ code, pre { font-family: var(--mono); }
   color: var(--muted);
   white-space: nowrap;
 }
+.pill-addr { color: var(--muted); opacity: 0.75; }
+.pill-count {
+  margin-left: 0.35rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.92em;
+}
+.pill[data-state="ready"] .pill-count { color: inherit; }
 .pill[data-state="ready"] { color: var(--ok); border-color: var(--ok); }
 .pill[data-state="open"],
 .pill[data-state="connecting"] { color: var(--warn); border-color: var(--warn); }
@@ -142,7 +272,7 @@ code, pre { font-family: var(--mono); }
 .columns {
   display: grid;
   grid-template-columns: minmax(15rem, 20rem) minmax(18rem, 1.2fr) minmax(18rem, 1.4fr);
-  height: calc(100vh - var(--bar-h));
+  height: calc(100vh - var(--bar-h) - var(--foot-h));
 }
 
 .col {
@@ -164,8 +294,6 @@ code, pre { font-family: var(--mono); }
 }
 .col-head h2 { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-head input[type="search"] { flex: 1; min-width: 6rem; }
-
-.col-foot { border-top: 1px solid var(--rule); background: var(--panel-2); }
 
 @media (max-width: 60rem) {
   .columns { grid-template-columns: 1fr; height: auto; }
@@ -210,38 +338,72 @@ a.button { text-decoration: none; display: inline-block; }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* ── Left column ─────────────────────────────────────────────────────────── */
+/* ── The servers in the header ───────────────────────────────────────────── */
 
-.backends { list-style: none; margin: 0; padding: 0.35rem; overflow-y: auto; flex: 1; }
-
-.backend {
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 0.3rem 0.35rem;
-  margin-bottom: 0.15rem;
-}
-.backend.on { background: var(--accent-soft); border-color: var(--accent); }
-.backend.off .backend-name { color: var(--muted); text-decoration: line-through; }
-
-.backend-main {
+/* A row you read sideways. It takes the slack the h1 used to take, scrolls rather than
+ * wrapping -- the header is one bar tall and stays one bar tall -- and each button is the
+ * anchor its own menu hangs from. */
+.servers {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: 0;
-  padding: 0.1rem;
+  gap: 0.25rem;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
-.backend-name { font-weight: 600; }
-.backend-note {
-  color: var(--muted);
-  font-size: 0.75rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.servers-empty { color: var(--muted); font-size: 0.76rem; white-space: nowrap; }
+
+.server { position: relative; flex: none; }
+
+/* Indicator and name, and nothing else. The caret is the affordance for the menu; it is
+ * aria-hidden, since the button already says it has a popup. */
+.server-button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: transparent;
+  border-color: transparent;
+  padding: 0.2rem 0.5rem;
   white-space: nowrap;
-  flex: 1;
 }
+.server-button:hover { background: var(--panel-2); }
+.server-name { font-size: 0.82rem; font-weight: 600; }
+.server-caret { color: var(--muted); font-size: 0.65rem; }
+
+.server.on .server-button {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.server.off .server-name { color: var(--muted); text-decoration: line-through; }
+
+/* Hangs off the button, over the columns. Fixed rather than absolute, and placed by
+ * `app.js`: the row it hangs from scrolls sideways, and an absolutely positioned menu
+ * inside a scroll container is a menu clipped to one bar's height. */
+.server-menu {
+  position: fixed;
+  z-index: 5;
+  min-width: 13rem;
+  max-width: 22rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0.55rem;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+}
+
+/* The description that used to sit beside the name in the left column. Here it has room to
+ * wrap, which is the point of moving it. */
+.server-desc { color: var(--ink-soft); font-size: 0.78rem; }
+.server-error { color: var(--danger); font-size: 0.74rem; }
+.server-missing { color: var(--warn); font-size: 0.74rem; }
+.server-missing code { font-size: 0.74rem; }
+
+.server-actions { display: flex; flex-wrap: wrap; gap: 0.15rem; border-top: 1px solid var(--rule-soft); padding-top: 0.4rem; }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
 .dot-running { background: var(--ok); }
@@ -250,29 +412,58 @@ a.button { text-decoration: none; display: inline-block; }
 .dot-starting { background: var(--warn); }
 .dot-meta { background: var(--accent); }
 
-.backend-error { color: var(--danger); font-size: 0.72rem; padding: 0.1rem 0.35rem; }
-.backend-missing { color: var(--warn); font-size: 0.72rem; padding: 0.1rem 0.35rem; }
-.backend-missing code { font-size: 0.72rem; }
+/* ── The log drawer ──────────────────────────────────────────────────────── */
 
-.backend-actions { display: none; gap: 0.1rem; padding-top: 0.15rem; }
-.backend:hover .backend-actions, .backend.on .backend-actions { display: flex; }
-
-.col-foot details { border-top: 1px solid var(--rule-soft); }
-.col-foot summary {
-  padding: 0.35rem 0.75rem;
-  cursor: pointer;
-  font-size: 0.74rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--muted);
+/* Height is measured from the content once, at the moment it opens, and then pinned by
+ * `app.js` for as long as it stays open. Sizing to content continuously would mean a panel
+ * that jumped a line taller every time the daemon logged something, dragging whatever you
+ * were reading with it. A cap because two thirds of the screen is enough log; a floor
+ * because an empty drawer sized to its own chrome is a slot, not a panel you can watch.
+ *
+ * Closed is `translateY(100%)`, not `display: none` -- the panel slides down to exactly
+ * where the footer is and the footer's higher z-index hides it, which is the whole visual
+ * idea. `visibility` follows on a delay so a closed drawer is not a tab stop. */
+.drawer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--foot-h);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 10vh;
+  max-height: 66vh;
+  background: var(--panel);
+  border-top: 1px solid var(--rule);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+  transform: translateY(100%);
+  visibility: hidden;
+  transition: transform 160ms ease, visibility 0s linear 160ms;
+}
+.drawer.on {
+  transform: translateY(0);
+  visibility: visible;
+  transition: transform 160ms ease, visibility 0s;
 }
 
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.6rem; margin: 0; padding: 0 0.75rem 0.6rem; }
-.kv dt { color: var(--muted); font-size: 0.74rem; }
-.kv dd { margin: 0; font-family: var(--mono); font-size: 0.72rem; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) {
+  .drawer, .drawer.on { transition: none; }
+}
 
-.log-controls { display: flex; gap: 0.5rem; align-items: center; padding: 0 0.75rem 0.4rem; font-size: 0.74rem; color: var(--muted); }
-.log { list-style: none; margin: 0; padding: 0 0.5rem 0.5rem; max-height: 14rem; overflow-y: auto; font-family: var(--mono); font-size: 0.7rem; }
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--rule-soft);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.drawer-head h2 { flex: 1; }
+.drawer-head label { display: flex; align-items: center; gap: 0.3rem; }
+
+.log { list-style: none; margin: 0; padding: 0.35rem 0.75rem 0.6rem; min-height: 0; overflow-y: auto; font-family: var(--mono); font-size: 0.7rem; }
+.log .empty { color: var(--muted); font-family: var(--sans); }
 .log li { display: flex; gap: 0.45rem; padding: 0.05rem 0; }
 .log-time { color: var(--muted); flex: none; }
 .log-level { flex: none; width: 3.6rem; color: var(--muted); }

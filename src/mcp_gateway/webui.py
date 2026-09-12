@@ -61,6 +61,7 @@ ASSETS: dict[str, str] = {
     INDEX: "text/html; charset=utf-8",
     "style.css": "text/css; charset=utf-8",
     "app.js": "text/javascript; charset=utf-8",
+    "theme.js": "text/javascript; charset=utf-8",
     "rpc.js": "text/javascript; charset=utf-8",
     "schema_form.js": "text/javascript; charset=utf-8",
     "render.js": "text/javascript; charset=utf-8",

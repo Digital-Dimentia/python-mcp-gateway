@@ -1,15 +1,82 @@
 # `webui.py` — the admin UI, and why it is served from here
 
-The UI is six files: [`index.html`](ui/index.html), [`style.css`](ui/style.css),
-[`app.js`](ui/app.js), [`rpc.js`](ui/rpc.js), [`schema_form.js`](ui/schema_form.js) and
-[`render.js`](ui/render.js). No build step, no bundler, no dependency — ES modules the
-browser loads directly. This module answers a GET for one of them.
+The UI is seven files: [`index.html`](ui/index.html), [`style.css`](ui/style.css),
+[`app.js`](ui/app.js), [`rpc.js`](ui/rpc.js), [`schema_form.js`](ui/schema_form.js),
+[`render.js`](ui/render.js) and [`theme.js`](ui/theme.js). No build step, no bundler, no
+dependency — ES modules the browser loads directly. This module answers a GET for one of
+them.
+
+## The frame
+
+A header with the name, the configured servers, and the theme toggle; three columns; and a
+footer. The footer is
+where the socket pills, the gateway meta line and the global actions live: they are status
+and escape hatches, not the work, and the work is the columns.
+
+The footer is three groups, and all of what they show comes from one `admin.status`.
+On the left, the log tab and the two socket pills, each pill carrying the whole endpoint —
+address, path, and the clients attached to that path, counted by matching `connections[].path`.
+In the centre, what this gateway is: name, version, uptime. On the right, the two files,
+each beside the action that re-reads it: the config names the Reload button itself
+(`Reload servers.yaml`, where `Reload config` only named the act) and the env file sits
+next to it under an `env` label.
+
+All of this was once a `Gateway` `<details>` at the foot of the left column, holding the
+same `admin.status` fields the footer was already showing name, version and uptime from —
+so two of them were on screen twice, and the one column that has to stay readable while
+you work was paying for the rest. Splitting it by what each fact answers puts every field
+next to the thing it describes. Paths and addresses are the only fields long enough to
+blow the bar out, so the files show their basename with the full path on the `title`.
+
+The centre is centred on the *bar*, not on what is left over between the flanks: the
+footer is a grid of `1fr auto 1fr`, so the gateway's name holds still while a client
+connects, a path grows or a button appears, and the flanks clip rather than shove it.
+
+The log is a drawer parked behind the footer, raised by the tab at the footer's left edge
+and dismissed by a click anywhere outside it or by Escape. It was a `<details>` in the left
+column, where it competed with the backend list for the one column that has to stay
+readable while you work. Its height is measured from the content at the moment it
+opens and then pinned, under a `66vh` cap and over a `10vh` floor. Three decisions, each
+against an alternative that looks fine until you watch it: a fixed two thirds shows four
+lines of log above a field of empty panel; continuous sizing jumps a line taller every time
+the daemon logs, dragging what you were reading with it; and no floor leaves an empty
+drawer the height of its own chrome.
+
+`theme.js` is the one file that is not a module, and that is the whole reason it exists.
+Modules are deferred, so a theme applied from `app.js` would land after the first paint —
+someone who picked light on a dark machine would watch the page flash dark on every
+reload. The usual fix is an inline snippet in the `<head>`, which the `script-src 'self'`
+policy below rules out, so it ships as a blocking file instead. It writes `data-theme` on
+`<html>`; with no attribute the page follows `prefers-color-scheme`, which is what it did
+before there was a toggle.
+
+## The servers in the header
+
+Each configured server is a button in the header bar, and the button carries only two
+things: the status indicator and the name. A row of servers is a row you read sideways, and
+a description on every button makes that unreadable at four of them — so the description
+moved into the menu the button drops, where it has room to wrap. The menu is the rest of
+what the left column's rows used to hold: the description, the error the backend failed
+with, the credentials missing from `gateway.env`, and the four controls — Restart,
+Enable/Disable, Edit, Remove.
+
+Clicking a button does both jobs at once: it selects the server for the middle column and
+drops its menu, so nothing needs clicking twice. A click anywhere else, or Escape, puts the
+menu away. The row scrolls sideways rather than wrapping, because the header is one bar
+tall and stays one bar tall — which is also why the menu is `position: fixed` and placed by
+`app.js`: an absolutely positioned menu inside that scroll container would be clipped to
+the bar's own height.
+
+The `gateway` entry leading the row is synthetic. The gateway's own meta-tools have no
+backend behind them, and without it they are listed by `/mcp` and reachable from nowhere in
+the UI. It comes first because it is the one entry always present: anywhere else in the row
+and it would move every time a server is added or removed.
 
 ## Three columns
 
 | Column | Source | What it is for |
 |---|---|---|
-| Backends | `/admin` | What is configured, what is running, what is missing a credential, and the editor that changes it |
+| Backends | `/admin` | Vacant for now — the servers moved into the header, and what lands here instead is the next step |
 | Primitives | `/mcp` | The selected backend's tools, prompts, resources and templates, with a form built from each one's own schema |
 | Results | `/mcp` | What came back, rendered, with the raw payload one click away |
 
