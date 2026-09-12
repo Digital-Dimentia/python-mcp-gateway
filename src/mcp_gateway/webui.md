@@ -52,17 +52,20 @@ before there was a toggle.
 
 ## The servers in the header
 
-Each configured server is a button in the header bar, and the button carries only two
-things: the status indicator and the name. A row of servers is a row you read sideways, and
-a description on every button makes that unreadable at four of them — so the description
-moved into the menu the button drops, where it has room to wrap. The menu is the rest of
-what the left column's rows used to hold: the description, the error the backend failed
-with, the credentials missing from `gateway.env`, and the four controls — Restart,
-Enable/Disable, Edit, Remove.
+Each configured server is a pill in the header bar, and the pill carries only two things:
+the status indicator and the name. A row of servers is a row you read sideways, and a
+description on every button makes that unreadable at four of them — so the description moved
+into the menu, where it has room to wrap. The menu is the rest of what the left column's
+rows used to hold: the description, the error the backend failed with, the credentials
+missing from `gateway.env`, and the four controls — Restart, Enable/Disable, Edit, Remove.
 
-Clicking a button does both jobs at once: it selects the server for the primitives column and
-drops its menu, so nothing needs clicking twice. A click anywhere else, or Escape, puts the
-menu away. The row scrolls sideways rather than wrapping, because the header is one bar
+**The pill is two buttons.** The name selects the server for the primitives column; the
+caret beside it drops the menu, and neither does the other's job. They were one button that
+did both, which meant you could not look at a server's primitives without a menu landing
+over the columns you were about to read, and could not open the menu of the server you were
+already on without it toggling. They are still drawn as one pill, divided by a hairline
+rather than a gap: two gestures, one server. A caret appears only where the menu has
+something in it. A click anywhere else, or Escape, puts the menu away. The row scrolls sideways rather than wrapping, because the header is one bar
 tall and stays one bar tall — which is also why the menu is `position: fixed` and placed by
 `app.js`: an absolutely positioned menu inside that scroll container would be clipped to
 the bar's own height.

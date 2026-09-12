@@ -298,11 +298,11 @@ function renderBackends() {
 function placeMenu() {
   const menu = $('servers').querySelector('.server-menu:not([hidden])');
   if (!menu) return;
-  const button = menu.parentElement.querySelector('.server-button').getBoundingClientRect();
-  menu.style.top = `${button.bottom + 4}px`;
+  const pill = menu.parentElement.getBoundingClientRect();
+  menu.style.top = `${pill.bottom + 4}px`;
   menu.style.left = '0px';
   const width = menu.getBoundingClientRect().width;
-  menu.style.left = `${Math.max(8, Math.min(button.left, window.innerWidth - width - 8))}px`;
+  menu.style.left = `${Math.max(8, Math.min(pill.left, window.innerWidth - width - 8))}px`;
 }
 
 function serverEntry(backend, meta = false) {
@@ -320,24 +320,22 @@ function serverEntry(backend, meta = false) {
   const button = el('button', {
     type: 'button',
     class: 'server-button',
-    'aria-haspopup': 'true',
-    'aria-expanded': String(open),
     title: meta ? backend.description : (backend.error || backend.status),
   }, [
     el('span', { class: `dot dot-${backend.status}` }),
     el('span', { class: 'server-name', text: name }),
-    el('span', { class: 'server-caret', 'aria-hidden': 'true', text: '▾' }),
   ]);
-  // Picking a server and looking at its controls are the same gesture: the click selects
-  // it for the middle column *and* drops the menu, so nothing needs clicking twice.
+  // Selecting a server and acting on one are two different intentions, so they are two
+  // different buttons. This one only selects: choosing what the columns show should not
+  // drop a menu over the columns you were choosing to look at.
   button.addEventListener('click', (event) => {
     event.stopPropagation();
-    openMenu = open ? null : name;
+    openMenu = null;
     select(name);
   });
   wrap.append(button);
 
-  const menu = el('div', { class: 'server-menu', hidden: !open });
+  const menu = el('div', { class: 'server-menu', id: `server-menu-${name}`, hidden: !open });
   const note = meta ? backend.description
     : (backend.description || spec.description || backend.command || '');
   if (note) menu.append(el('p', { class: 'server-desc', text: note }));
@@ -362,6 +360,31 @@ function serverEntry(backend, meta = false) {
       return admin('admin.backend.remove', { name });
     }, 'danger'));
     menu.append(actions);
+  }
+
+  // The caret carries the menu, and nothing else. It is added last because whether the
+  // menu has anything in it is only known once it is built -- a server with no
+  // description, no error and no actions would otherwise wear a caret that drops an
+  // empty box.
+  if (menu.childElementCount) {
+    wrap.classList.add('server-split');
+    const caret = el('button', {
+      type: 'button',
+      class: 'server-caret',
+      'aria-haspopup': 'true',
+      'aria-expanded': String(open),
+      'aria-controls': menu.id,
+      'aria-label': `Actions for ${name}`,
+      title: `Actions for ${name}`,
+    }, [el('span', { 'aria-hidden': 'true', text: '▾' })]);
+    // Toggle only. The selection is the other button's business, so the menu of a server
+    // you are not looking at can be opened without moving what the columns show.
+    caret.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openMenu = open ? null : name;
+      renderBackends();
+    });
+    wrap.append(caret);
   }
 
   wrap.append(menu);

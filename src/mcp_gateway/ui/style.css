@@ -354,10 +354,20 @@ a.button { text-decoration: none; display: inline-block; }
 }
 .servers-empty { color: var(--muted); font-size: 0.76rem; white-space: nowrap; }
 
-.server { position: relative; flex: none; }
+/* Two buttons, drawn as one pill: the name selects the server, the caret drops its menu.
+ * They are split because the intentions are -- looking at a server's primitives should not
+ * put a menu over the columns you are looking at -- and joined because they still name one
+ * server. The pill carries the border and the selected state; the halves carry only their
+ * own hover, divided by a hairline rather than a gap. */
+.server {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
 
-/* Indicator and name, and nothing else. The caret is the affordance for the menu; it is
- * aria-hidden, since the button already says it has a popup. */
 .server-button {
   display: flex;
   align-items: center;
@@ -369,11 +379,35 @@ a.button { text-decoration: none; display: inline-block; }
 }
 .server-button:hover { background: var(--panel-2); }
 .server-name { font-size: 0.82rem; font-weight: 600; }
-.server-caret { color: var(--muted); font-size: 0.65rem; }
 
-.server.on .server-button {
+.server-caret {
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  font-size: 0.65rem;
+  padding: 0.2rem 0.35rem;
+}
+.server-caret:hover { background: var(--panel-2); color: var(--ink); }
+/* The halves meet: square the sides that touch, and divide them. */
+.server-split .server-button { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.server-split .server-caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid var(--rule-soft);
+}
+
+.server.on {
   background: var(--accent-soft);
   border-color: var(--accent);
+  color: var(--accent);
+}
+.server.on .server-caret { color: var(--accent); border-left-color: var(--accent); }
+/* Over a selected pill, `--panel-2` would read as a *different* state rather than a hover.
+ * A wash of the accent it is already wearing reads as the same pill, lit. */
+.server.on :is(.server-button, .server-caret):hover {
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
   color: var(--accent);
 }
 .server.off .server-name { color: var(--muted); text-decoration: line-through; }
