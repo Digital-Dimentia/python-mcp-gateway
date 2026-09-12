@@ -8,7 +8,7 @@ table wrong is how a daemon becomes noisy or stale, and neither symptom points a
 | `notifications/{tools,prompts,resources}/list_changed` | invalidate that backend's cache; emit one upward, **debounced** |
 | `notifications/progress` | relay **to the originating connection only**, verbatim |
 | `notifications/message` (logging) | log locally, prefixed with the backend's name; do not re-emit |
-| `notifications/resources/updated` | drop, with a debug line |
+| `notifications/resources/updated` | rewrite the URI and relay **to the sessions subscribed to it** |
 | anything else | drop, with a debug line |
 
 ## Why `list_changed` is debounced
@@ -37,11 +37,31 @@ the client did not declare. The content is not lost -- it goes to the daemon's o
 the backend's name on it, which is where an operator looks, and `/admin`'s log stream
 surfaces it to the UI.
 
-## Why `resources/updated` is dropped
+## Why `resources/updated` goes to subscribers, not everyone
 
-`subscribe: false` is advertised, so no client has subscribed and none is expecting these.
-Forwarding would also require rewriting the URI, which is the work the follow-up issue
-covers.
+It is the same argument as `progress`, reached from the other side. A backend saying
+`file:///README.md` changed is answering a question *some* client asked, and the URI it
+names is its own -- meaningless to a client that only ever saw `mcpgw://docs/file%3A///...`.
+So two things have to happen before it can be relayed: the URI is rewritten into the
+gateway's address space by `naming.encode_resource_uri`, and the notification goes only to
+the sessions that subscribed to that exact public URI.
+
+Broadcasting instead would be wrong twice over. A client that never subscribed is entitled
+to assume it will not be told -- that is what `subscribe` *means* -- and a client that
+subscribed to a different backend's identically-named resource would be woken by a change
+that did not happen to it. Two filesystem backends both publishing `file:///README.md` is
+the same collision that made `encode_resource_uri` necessary in the first place.
+
+## Why a subscription survives a restart
+
+`Subscriptions` is keyed on the public URI, which outlives the process behind it. A backend
+that restarts comes back knowing nothing about what anyone had subscribed to, so the gateway
+replays them -- see `gateway.resubscribe`. The alternative is a subscription that silently
+stops working after a crash-and-respawn nobody watched, which is indistinguishable from a
+resource that stopped changing.
+
+A subscription to a backend that is *removed* by a reload is dropped instead. There is
+nothing to replay it against, and the resource it names no longer exists.
 """
 
 from __future__ import annotations
@@ -50,7 +70,7 @@ import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
-from mcp_gateway import protocol
+from mcp_gateway import naming, protocol
 
 logger = logging.getLogger(__name__)
 
@@ -128,3 +148,91 @@ class Notifier:
 
     async def cancel_pending(self) -> None:
         await self.flush()
+
+
+class Subscriptions:
+    """Who is listening to which resource, in the gateway's own address space.
+
+    Two indexes over one fact, because both directions are hot: a
+    `notifications/resources/updated` needs the sessions for a URI, and a closing session
+    needs its URIs. Keeping them in step is this class's whole job -- nothing outside it
+    touches either dict.
+
+    Public URIs throughout (`mcpgw://server/...`). A backend's own URI is never stored: it
+    is derivable, it is ambiguous across backends, and storing the public form is what lets
+    a replay after a restart work without re-deriving anything.
+    """
+
+    def __init__(self) -> None:
+        self._by_uri: dict[str, set[Any]] = {}
+        self._by_session: dict[Any, set[str]] = {}
+
+    def add(self, session: Any, public_uri: str) -> bool:
+        """Record one subscription. False if this session already had it.
+
+        The caller uses the answer to skip a redundant `resources/subscribe` on the wire:
+        MCP does not say what a duplicate does, and the honest reading of a set is that
+        subscribing twice is subscribing once.
+        """
+        uris = self._by_session.setdefault(session, set())
+        if public_uri in uris:
+            return False
+        uris.add(public_uri)
+        self._by_uri.setdefault(public_uri, set()).add(session)
+        return True
+
+    def remove(self, session: Any, public_uri: str) -> bool:
+        """Forget one subscription. False if this session did not have it."""
+        uris = self._by_session.get(session)
+        if uris is None or public_uri not in uris:
+            return False
+        uris.discard(public_uri)
+        if not uris:
+            self._by_session.pop(session, None)
+        self._discard_uri(session, public_uri)
+        return True
+
+    def drop_session(self, session: Any) -> None:
+        """Forget everything one session subscribed to. For a closing connection."""
+        for public_uri in self._by_session.pop(session, set()):
+            self._discard_uri(session, public_uri)
+
+    def drop_backend(self, name: str) -> None:
+        """Forget every subscription against one backend. For a backend a reload removed."""
+        for public_uri in self.uris_for(name):
+            self.drop_uri(public_uri)
+
+    def _discard_uri(self, session: Any, public_uri: str) -> None:
+        sessions = self._by_uri.get(public_uri)
+        if sessions is None:
+            return
+        sessions.discard(session)
+        if not sessions:
+            self._by_uri.pop(public_uri, None)
+
+    def sessions_for(self, public_uri: str) -> list[Any]:
+        """Who to tell about a change to this URI. A list, so the caller can await freely
+        without iterating a set that a closing session may mutate underneath it."""
+        return list(self._by_uri.get(public_uri, ()))
+
+    def uris_of(self, session: Any) -> frozenset[str]:
+        """What one session is subscribed to, for the duplicate check on `subscribe`."""
+        return frozenset(self._by_session.get(session, ()))
+
+    def drop_uri(self, public_uri: str) -> None:
+        """Forget one URI for everyone. For a subscription that could not be replayed."""
+        for session in self._by_uri.pop(public_uri, set()):
+            uris = self._by_session.get(session)
+            if uris is None:
+                continue
+            uris.discard(public_uri)
+            if not uris:
+                self._by_session.pop(session, None)
+
+    def uris_for(self, name: str) -> list[str]:
+        """Every public URI subscribed against one backend, for a replay after a restart."""
+        prefix = f"{naming.RESOURCE_SCHEME}://{name}/"
+        return [uri for uri in self._by_uri if uri.startswith(prefix)]
+
+    def __len__(self) -> int:
+        return sum(len(sessions) for sessions in self._by_uri.values())

@@ -427,6 +427,18 @@ class MCPStdioClient:
             return True
         return capability in self.server_capabilities
 
+    def supports_option(self, capability: str, option: str) -> bool:
+        """Whether a capability's *option block* sets one flag, e.g. `resources.subscribe`.
+
+        Unlike `supports`, presence is not enough: these are booleans inside the block, and
+        `"resources": {}` means resources without subscriptions. Also true before the
+        handshake, and for the same reason.
+        """
+        if self.server_capabilities is None:
+            return True
+        block = self.server_capabilities.get(capability)
+        return isinstance(block, dict) and bool(block.get(option))
+
     def _declared_capabilities(self) -> dict[str, Any]:
         """The capability block to send, refusing to promise what nobody answers.
 
@@ -589,6 +601,19 @@ class MCPStdioClient:
         them, so the substitution still never happens here.
         """
         return await self.request("resources/read", {"uri": uri})
+
+    async def subscribe_resource(self, uri: str) -> dict[str, Any]:
+        """Ask to be told when one resource changes: `resources/subscribe`.
+
+        The result is an empty object on success; what matters is that it did not raise.
+        A server that does not offer `subscribe` answers `-32601`, and that refusal is
+        propagated rather than swallowed -- see `notifications.md`.
+        """
+        return await self.request("resources/subscribe", {"uri": uri})
+
+    async def unsubscribe_resource(self, uri: str) -> dict[str, Any]:
+        """Stop being told: `resources/unsubscribe`."""
+        return await self.request("resources/unsubscribe", {"uri": uri})
 
     async def complete(
         self,

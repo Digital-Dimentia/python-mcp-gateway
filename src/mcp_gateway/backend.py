@@ -242,6 +242,9 @@ class Backend:
     def supports(self, capability: str) -> bool:
         return self.client is not None and self.client.supports(capability)
 
+    def supports_option(self, capability: str, option: str) -> bool:
+        return self.client is not None and self.client.supports_option(capability, option)
+
     @contextmanager
     def serving(self, session: Any):
         """Mark `session` as having a call in flight on this backend, for its duration."""

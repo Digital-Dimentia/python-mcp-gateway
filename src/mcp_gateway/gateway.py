@@ -38,7 +38,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from mcp_gateway import __version__, errors, jsonrpc, protocol
+from mcp_gateway import __version__, errors, jsonrpc, naming, protocol
 from mcp_gateway.admin import Admin, error_result, is_admin_tool, text_result, tool_definitions
 from mcp_gateway.admin_channel import AdminConnection, LogStream
 from mcp_gateway.backend import Backend
@@ -51,7 +51,7 @@ from mcp_gateway.mcp_stdio import (
     MCPProtocolError,
     UnsupportedServerRequest,
 )
-from mcp_gateway.notifications import Notifier
+from mcp_gateway.notifications import Notifier, Subscriptions
 from mcp_gateway.router import Router
 from mcp_gateway.secrets import SecretError, SecretStore
 from mcp_gateway.secrets import load as load_secrets
@@ -83,6 +83,8 @@ class Gateway:
         self.admin = Admin(self)
         self._server_request_handler = self.backend_request
         self.notifier = Notifier(self._broadcast)
+        #: Who is watching which resource. See `notifications.md`.
+        self.subscriptions = Subscriptions()
         self.supervisor = Supervisor(
             config,
             store,
@@ -199,6 +201,10 @@ class Gateway:
 
     async def session_closed(self, session: Session) -> None:
         self._sessions.discard(session)
+        # Its subscriptions go with it. Not unsubscribed downward: the backend's own send
+        # is cheap, nothing is listening any more, and a shutdown that waits on a round
+        # trip per subscription is a shutdown that hangs on a wedged backend.
+        self.subscriptions.drop_session(session)
 
     def resolve_client_response(self, session: Session, message: dict[str, Any]) -> None:
         """Resolve an answer to something the gateway asked this client.
@@ -342,6 +348,38 @@ class Gateway:
             raise errors.InvalidParams("resources/read requires a 'uri'")
         return await self.router.read_resource(session, uri)
 
+    async def subscribe_resource(self, session: Session, params: dict) -> dict[str, Any]:
+        """`resources/subscribe`: tell me when this changes.
+
+        The backend is asked first and the subscription recorded only if it agreed, so a
+        refusal leaves no state behind and a client that retries is not fighting a
+        half-registered entry. A repeat of a subscription this session already holds is a
+        no-op that still answers `{}` -- the set semantics MCP leaves unstated, chosen so
+        that a client resubscribing after its own reconnect logic costs nothing.
+        """
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise errors.InvalidParams("resources/subscribe requires a 'uri'")
+        if uri not in self.subscriptions.uris_of(session):
+            await self.router.subscribe_resource(session, uri, on=True)
+            self.subscriptions.add(session, uri)
+        return {}
+
+    async def unsubscribe_resource(self, session: Session, params: dict) -> dict[str, Any]:
+        """`resources/unsubscribe`: stop telling me.
+
+        Forgotten locally first and unconditionally. A client that asked to stop has
+        stopped, whatever the backend then does with the request -- and if the backend
+        refuses or is gone, the notification it keeps sending now reaches nobody.
+        """
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise errors.InvalidParams("resources/unsubscribe requires a 'uri'")
+        had = self.subscriptions.remove(session, uri)
+        if had:
+            await self.router.subscribe_resource(session, uri, on=False)
+        return {}
+
     async def complete(self, session: Session, params: dict) -> dict[str, Any]:
         """`completion/complete`: what values one argument might take.
 
@@ -385,7 +423,55 @@ class Gateway:
         if method == protocol.MESSAGE:
             self.notifier.log_backend_message(name, params)
             return
+        if method == protocol.RESOURCES_UPDATED:
+            await self._resource_updated(name, params)
+            return
         logger.debug("dropping %s from backend %r", method, name)
+
+    async def _resource_updated(self, name: str, params: dict) -> None:
+        """Relay one `notifications/resources/updated`, rewritten and narrowly addressed.
+
+        The backend names its own URI; the client only ever saw the `mcpgw://` form, so the
+        rewrite is what makes the notification mean anything to it. Everything else in
+        `params` is forwarded untouched -- a later revision's `title` rides along.
+
+        Delivered per session rather than broadcast, and per session failures are isolated:
+        a client whose socket died mid-relay must not cost the others their notification.
+        """
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            logger.debug("backend %r sent resources/updated with no uri", name)
+            return
+        public_uri = naming.encode_resource_uri(name, uri)
+        sessions = self.subscriptions.sessions_for(public_uri)
+        if not sessions:
+            logger.debug("no subscriber for %s", public_uri)
+            return
+        payload = dict(params, uri=public_uri)
+        for session in sessions:
+            try:
+                await session.link.notify(protocol.RESOURCES_UPDATED, payload)
+            except Exception as exc:  # pragma: no cover - a dead socket is not our problem
+                logger.debug("failed to relay resources/updated to a session: %s", exc)
+
+    async def resubscribe(self, name: str) -> None:
+        """Replay this backend's subscriptions against the process that just replaced it.
+
+        A restarted backend knows nothing about what anyone subscribed to, and the client
+        has no way to find that out -- its subscription would simply stop producing, which
+        looks exactly like a resource that stopped changing. One that cannot be replayed is
+        dropped rather than retried: it is gone either way, and keeping it would leave the
+        registry claiming a subscription that does not exist.
+        """
+        backend = self.supervisor.get(name)
+        if backend is None or not backend.running:
+            return
+        for public_uri in self.subscriptions.uris_for(name):
+            try:
+                await self.router.subscribe_resource(None, public_uri, on=True)
+            except Exception as exc:
+                logger.warning("could not resubscribe %s after restart: %s", public_uri, exc)
+                self.subscriptions.drop_uri(public_uri)
 
     async def _broadcast(self, method: str, params: dict | None) -> int:
         if self.server is None:
@@ -411,6 +497,7 @@ class Gateway:
             protocol.RESOURCES_LIST_CHANGED,
         ):
             await self.notifier.list_changed(method)
+        await self.resubscribe(name)
         return restarted
 
     async def reload(self, *, dry_run: bool = False) -> dict[str, Any]:
@@ -439,6 +526,10 @@ class Gateway:
                 )
 
             plan = await self.supervisor.reload(config, store)
+            # A removed backend's subscriptions have nothing left to point at; a changed
+            # one is a new process that has never heard of them. See `notifications.md`.
+            for name in plan.removed:
+                self.subscriptions.drop_backend(name)
             self.config = config
             self.store = store
             # Re-install redaction with the new store: a rotated credential's *old* value
@@ -464,6 +555,9 @@ class Gateway:
                 protocol.RESOURCES_LIST_CHANGED,
             ):
                 await self.notifier.list_changed(method)
+
+            for name in plan.changed:
+                await self.resubscribe(name)
 
             logger.info(
                 "reload: %d added, %d restarted, %d removed, %d unchanged, %d failed",

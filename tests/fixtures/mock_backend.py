@@ -28,6 +28,8 @@ mechanism it is testing.
 | `MOCK_COMPLETIONS_ERROR` | Declare `completions` and answer `completion/complete` with `-32601` |
 | `MOCK_COMPLETIONS_MANY` | Answer with 120 values plus `total`/`hasMore`, past the spec's 100 cap |
 | `MOCK_RESOURCES` | Comma-separated concrete resource URIs |
+| `MOCK_SUBSCRIBE` | Declare `resources.subscribe` and answer subscribe/unsubscribe |
+| `MOCK_UPDATE_ON_SUBSCRIBE` | On a subscribe, send `notifications/resources/updated` for that URI after 50ms |
 | `MOCK_TEMPLATES` | Comma-separated `uriTemplate` values |
 | `MOCK_PROMPTS` | Comma-separated prompt names |
 | `MOCK_LIST_CHANGED_AFTER_MS` | Send an unprompted `tools/list_changed` after this delay |
@@ -74,6 +76,8 @@ COMPLETIONS = _flag("MOCK_COMPLETIONS")
 COMPLETIONS_ERROR = _flag("MOCK_COMPLETIONS_ERROR")
 COMPLETIONS_MANY = _flag("MOCK_COMPLETIONS_MANY")
 RESOURCES = _csv("MOCK_RESOURCES")
+SUBSCRIBE = _flag("MOCK_SUBSCRIBE")
+UPDATE_ON_SUBSCRIBE = _flag("MOCK_UPDATE_ON_SUBSCRIBE")
 TEMPLATES = _csv("MOCK_TEMPLATES")
 PROMPTS = _csv("MOCK_PROMPTS", "greet")
 CRASH_ON = _env("MOCK_CRASH_ON_CALL")
@@ -183,6 +187,8 @@ def capabilities() -> dict:
         block["prompts"] = {"listChanged": True}
     if "resources" in CAPABILITIES:
         block["resources"] = {"listChanged": True}
+        if SUBSCRIBE or UPDATE_ON_SUBSCRIBE:
+            block["resources"]["subscribe"] = True
     if "completions" in CAPABILITIES:
         # No options to set, which is the commonest capability shape there is -- and the
         # one a gateway reading `bool(block)` rather than presence gets wrong.
@@ -314,6 +320,39 @@ def handle_resources_read(request_id, params: dict) -> None:
     result(request_id, {"contents": [{"uri": uri, "mimeType": "text/plain", "text": f"{NAME}:{uri}"}]})
 
 
+def handle_resources_subscribe(request_id, params: dict) -> None:
+    """Accept a subscription, and optionally prove it by firing one update.
+
+    The update carries the backend's *own* URI, which is the whole point of the test: what
+    reaches the client has to have been rewritten on the way through, and the only way to
+    see that is for this end to have never said the public form.
+    """
+    uri = params.get("uri", "")
+    if uri not in RESOURCES:
+        error(request_id, -32002, f"{NAME} cannot subscribe to {uri!r}")
+        return
+    _subscribed.add(uri)
+    result(request_id, {})
+    if UPDATE_ON_SUBSCRIBE:
+        timer = threading.Timer(
+            0.05,
+            lambda: send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/resources/updated",
+                    "params": {"uri": uri},
+                }
+            ),
+        )
+        timer.daemon = True
+        timer.start()
+
+
+def handle_resources_unsubscribe(request_id, params: dict) -> None:
+    _subscribed.discard(params.get("uri", ""))
+    result(request_id, {})
+
+
 def handle_completion_complete(request_id, params: dict) -> None:
     """Echo the request back as values, which is what makes forwarding observable.
 
@@ -354,6 +393,15 @@ HANDLERS = {
     "resources/templates/list": handle_resources_templates_list,
     "resources/read": handle_resources_read,
 }
+
+#: What this process believes it is subscribed to. Not reported anywhere: what a test can
+#: observe is the `notifications/resources/updated` a subscribe provokes, which is also the
+#: only thing a real client can observe.
+_subscribed: set[str] = set()
+
+if SUBSCRIBE or UPDATE_ON_SUBSCRIBE:
+    HANDLERS["resources/subscribe"] = handle_resources_subscribe
+    HANDLERS["resources/unsubscribe"] = handle_resources_unsubscribe
 
 if COMPLETIONS or COMPLETIONS_ERROR or COMPLETIONS_MANY:
     HANDLERS["completion/complete"] = handle_completion_complete

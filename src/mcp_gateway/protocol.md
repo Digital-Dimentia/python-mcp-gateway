@@ -61,8 +61,15 @@ server's empty list says nothing about whether it *could* have suggested somethi
 nothing is lost that a client could have used, and the alternative — `-32601` for a method
 we advertise — would be a lie about our own method table. See [`router.md`](router.md).
 
-`subscribe: false` is the one live claim in the block, and it is negative: nothing
-implements `resources/subscribe` yet, so saying otherwise would strand a caller.
+`subscribe` was the one negative in the block for as long as nothing answered
+`resources/subscribe`, and that was the honest value then. It is now a row like any other:
+the gateway holds the subscription itself, forwards the backend's half, and rewrites the
+`notifications/resources/updated` that comes back into its own address space — see
+[`notifications.md`](notifications.md).
+
+It is advertised unconditionally for the same reason the rest of the block is. A backend
+that offers no subscriptions refuses that one `resources/subscribe` with `-32002`, which is
+an answer about a URI rather than a claim about the gateway's method table.
 
 ## The manifest
 
