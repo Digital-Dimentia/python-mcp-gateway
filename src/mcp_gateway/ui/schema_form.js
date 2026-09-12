@@ -273,7 +273,11 @@ function renderField(name, schema, { required, depth, onChange }) {
   const warn = el('p', { class: 'field-problem', hidden: true });
   parts.push(warn);
 
-  const element = el('div', { class: `field field-${control.kind}` }, parts);
+  // `data-field` is how the variables column finds the control a value belongs in. It
+  // carries the *wire* name, not the title: that is what the vocabulary names.
+  const element = el('div', {
+    class: `field field-${control.kind}`, dataset: { field: name },
+  }, parts);
 
   const isRequired = () => required || impliedRequired;
 
@@ -688,7 +692,7 @@ export function buildPromptForm(promptArguments, { onChange = () => {} } = {}) {
     if (arg.required) label.append(el('span', { class: 'req', text: 'required' }));
     const parts = [label, input];
     if (arg.description) parts.push(el('p', { class: 'field-help', text: arg.description }));
-    wrap.append(el('div', { class: 'field field-string' }, parts));
+    wrap.append(el('div', { class: 'field field-string', dataset: { field: arg.name } }, parts));
   }
   return {
     element: wrap,

@@ -36,20 +36,10 @@
 
 <main class="columns">
 
-  <!-- ── Left: vacant ────────────────────────────────────────────────────
-       The backends moved up into the header. What lands here instead is the next step;
-       until then the column holds its place so the three-column grid is unchanged. -->
-  <section class="col col-left" aria-label="Backends">
+  <!-- ── Left: the selected server's primitives ──────────────────────── -->
+  <section class="col col-primitives" aria-label="Primitives">
     <div class="col-head">
-      <h2>Backends</h2>
-    </div>
-    <p class="empty">Servers moved to the header bar.</p>
-  </section>
-
-  <!-- ── Middle: the selected backend's primitives ───────────────────── -->
-  <section class="col col-mid" aria-label="Primitives">
-    <div class="col-head">
-      <h2 id="mid-title">Primitives</h2>
+      <h2 id="primitives-title">Primitives</h2>
       <input type="search" id="filter" placeholder="Filter…" spellcheck="false">
     </div>
     <nav class="tabs" id="tabs">
@@ -62,8 +52,8 @@
     <div class="detail" id="detail"></div>
   </section>
 
-  <!-- ── Right: what came back ───────────────────────────────────────── -->
-  <section class="col col-right" aria-label="Results">
+  <!-- ── Middle: what came back ──────────────────────────────────────── -->
+  <section class="col col-results" aria-label="Results">
     <div class="col-head">
       <h2>Results</h2>
       <button type="button" id="btn-clear-results" class="ghost">Clear</button>
@@ -71,6 +61,16 @@
     <div class="results" id="results">
       <p class="empty">Invoke a tool, get a prompt, or read a resource.</p>
     </div>
+  </section>
+
+  <!-- ── Right: the values the server publishes for its own parameters ─ -->
+  <section class="col col-variables" aria-label="Variables">
+    <div class="col-head">
+      <h2>Variables</h2>
+      <button type="button" id="btn-vars-refresh" class="ghost" title="Re-read every vocabulary">Reread</button>
+    </div>
+    <p class="vars-note" id="vars-note" hidden></p>
+    <div class="variables" id="variables"></div>
   </section>
 
 </main>

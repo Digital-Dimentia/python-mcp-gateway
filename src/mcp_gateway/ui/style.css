@@ -271,7 +271,7 @@ button:hover .bar-file { color: inherit; }
 
 .columns {
   display: grid;
-  grid-template-columns: minmax(15rem, 20rem) minmax(18rem, 1.2fr) minmax(18rem, 1.4fr);
+  grid-template-columns: minmax(18rem, 1.1fr) minmax(18rem, 1.3fr) minmax(14rem, 19rem);
   height: calc(100vh - var(--bar-h) - var(--foot-h));
 }
 
@@ -283,7 +283,7 @@ button:hover .bar-file { color: inherit; }
   border-right: 1px solid var(--rule);
   background: var(--panel);
 }
-.col-right { border-right: 0; background: var(--bg); }
+.col-variables { border-right: 0; background: var(--bg); }
 
 .col-head {
   display: flex;
@@ -412,6 +412,96 @@ a.button { text-decoration: none; display: inline-block; }
 .dot-starting { background: var(--warn); }
 .dot-meta { background: var(--accent); }
 
+/* ── The variables column ────────────────────────────────────────────────── */
+
+/* One group per vocabulary the server publishes. The group is the pairing itself: the
+ * variable it fills, the listing resource the values came from, and the template that
+ * spends one of them. */
+.vars-note {
+  color: var(--warn);
+  background: var(--warn-soft);
+  font-size: 0.75rem;
+  padding: 0.35rem 0.5rem;
+  margin: 0.5rem 0.5rem -0.15rem;
+  border-radius: 5px;
+}
+
+.variables { flex: 1; overflow-y: auto; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.6rem; }
+
+.vocab {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 0.45rem 0.5rem;
+}
+.vocab-head { display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+.vocab-name { font-family: var(--mono); font-size: 0.82rem; font-weight: 600; color: var(--accent); }
+.vocab-from { color: var(--muted); font-size: 0.7rem; font-family: var(--mono); overflow-wrap: anywhere; }
+.vocab-template { color: var(--muted); font-size: 0.7rem; font-family: var(--mono); overflow-wrap: anywhere; }
+.vocab-error { color: var(--danger); font-size: 0.73rem; }
+
+/* one | many. A segmented pair rather than a checkbox labelled "multiple": the two words
+ * name what happens, and one of them is always lit. */
+.vocab-modes { display: flex; margin-left: auto; flex: none; }
+.vocab-mode {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: transparent;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0;
+}
+.vocab-mode:first-child { border-radius: 5px 0 0 5px; }
+.vocab-mode:last-child { border-radius: 0 5px 5px 0; margin-left: -1px; }
+.vocab-mode.on { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); z-index: 1; }
+
+/* Values are chips, not a list: they are short, there are usually a handful, and a wrapped
+ * row of them reads as a vocabulary rather than as a menu of actions. Each chip is a label
+ * wrapping its own control, so the whole chip is the hit target and the control -- round in
+ * `one`, square in `many` -- says which kind of pick this is. */
+.vocab-values { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.vocab-value {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  font-size: 0.76rem;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+.vocab-value:hover { border-color: var(--accent); color: var(--accent); }
+.vocab-value input { margin: 0 0.05rem 0 0; flex: none; }
+.vocab-value code { font-family: var(--mono); font-size: 0.92em; color: var(--muted); }
+.vocab-value:hover code { color: inherit; }
+.vocab-value.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.vocab-value.on code { color: inherit; }
+
+.vocab-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--rule-soft);
+}
+.vocab-count { flex: 1; color: var(--muted); font-size: 0.72rem; }
+
+/* Where the value landed. Long enough to catch the eye in a column you were not looking
+ * at, short enough not to sit there as decoration. */
+@keyframes field-filled {
+  from { background: var(--accent-soft); }
+  to   { background: transparent; }
+}
+.field-filled { animation: field-filled 0.9s ease-out; border-radius: 5px; }
+
+/* A field holding `[a, b]` is holding the fan-out, not a value. It says so quietly, in the
+ * accent the picks in the variables column wear. */
+.field-fanned input, .field-fanned textarea { border-color: var(--accent); color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .field-filled { animation: none; } }
+
 /* ── The log drawer ──────────────────────────────────────────────────────── */
 
 /* Height is measured from the content once, at the moment it opens, and then pinned by
@@ -523,6 +613,8 @@ a.button { text-decoration: none; display: inline-block; }
 .detail { flex: 1; overflow-y: auto; padding: 0.7rem 0.75rem 2rem; border-top: 1px solid var(--rule); min-height: 0; }
 .detail-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
 .detail-id { font-size: 0.72rem; color: var(--muted); overflow-wrap: anywhere; }
+/* A template fanned out over six values expands six times, one per line. */
+.expansions { display: block; white-space: pre-line; }
 .detail-desc { color: var(--ink-soft); margin: 0.3rem 0 0.6rem; }
 .detail-actions { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.8rem; flex-wrap: wrap; }
 

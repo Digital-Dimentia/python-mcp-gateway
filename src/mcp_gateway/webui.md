@@ -33,10 +33,10 @@ footer is a grid of `1fr auto 1fr`, so the gateway's name holds still while a cl
 connects, a path grows or a button appears, and the flanks clip rather than shove it.
 
 The log is a drawer parked behind the footer, raised by the tab at the footer's left edge
-and dismissed by a click anywhere outside it or by Escape. It was a `<details>` in the left
-column, where it competed with the backend list for the one column that has to stay
-readable while you work. Its height is measured from the content at the moment it
-opens and then pinned, under a `66vh` cap and over a `10vh` floor. Three decisions, each
+and dismissed by a click anywhere outside it or by Escape. It was a `<details>` in the
+column the backends used to live in, where it competed with them for the room. Its height
+is measured from the content at the moment it opens and then pinned, under a `66vh` cap and
+over a `10vh` floor. Three decisions, each
 against an alternative that looks fine until you watch it: a fixed two thirds shows four
 lines of log above a field of empty panel; continuous sizing jumps a line taller every time
 the daemon logs, dragging what you were reading with it; and no floor leaves an empty
@@ -60,7 +60,7 @@ what the left column's rows used to hold: the description, the error the backend
 with, the credentials missing from `gateway.env`, and the four controls — Restart,
 Enable/Disable, Edit, Remove.
 
-Clicking a button does both jobs at once: it selects the server for the middle column and
+Clicking a button does both jobs at once: it selects the server for the primitives column and
 drops its menu, so nothing needs clicking twice. A click anywhere else, or Escape, puts the
 menu away. The row scrolls sideways rather than wrapping, because the header is one bar
 tall and stays one bar tall — which is also why the menu is `position: fixed` and placed by
@@ -76,16 +76,96 @@ and it would move every time a server is added or removed.
 
 | Column | Source | What it is for |
 |---|---|---|
-| Backends | `/admin` | Vacant for now — the servers moved into the header, and what lands here instead is the next step |
-| Primitives | `/mcp` | The selected backend's tools, prompts, resources and templates, with a form built from each one's own schema |
+| Primitives | `/mcp` | The selected server's tools, prompts, resources and templates, with a form built from each one's own schema |
 | Results | `/mcp` | What came back, rendered, with the raw payload one click away |
+| Variables | `/mcp` | The values that server publishes for its own parameters, each one a button that fills the open form |
 
-**The middle and right columns speak MCP, not `admin.*`.** That is the design decision the
-rest follows from. A UI that asked `/admin` for a tool listing would be showing its own
+**All three columns speak MCP, not `admin.*`.** That is the design decision the rest
+follows from. A UI that asked `/admin` for a tool listing would be showing its own
 rendering of the catalogue, and the whole value of a test bench is that what you exercise
 in it is byte-identical to what the model gets — same `tools/list`, same namespacing, same
 `tools/call`, same `isError` semantics. See [`session.md`](session.md) for that method table
-and [`catalogue.md`](catalogue.md) for what it publishes.
+and [`catalogue.md`](catalogue.md) for what it publishes. `admin.*` now answers only the
+header and the footer.
+
+## The variables column
+
+A server that publishes `zoo://animals/{id}` usually publishes `zoo://animals` beside it: a
+listing small enough to send whole, and a template for the per-member read that would not
+be. That pair is a **vocabulary** — the set of values `id` may take — and this column is
+those vocabularies, one group per variable, every value something you can spend.
+
+**Pairing is read off the URIs, not guessed.** A template's fixed prefix, up to its first
+`{`, is the listing's URI: `zoo://animals/{id}` names `zoo://animals`, and `zoo://echo/{word}`
+names nothing, so it contributes no group. The comparison is on the backend's own spelling,
+after the gateway's `mcpgw://<server>/<percent-encoded>` wrapper is unwound.
+
+That rule is also what keeps this column from reading a server's resources at large.
+`resources/read` is a call to a live backend — `zoo://ticks` in the fixture exists precisely
+to prove a read can move state — so **a resource that pairs with no template is never
+fetched.** What is fetched is cached until the listings change or Reread is pressed.
+
+**Values are read from JSON only.** A vocabulary has to be machine-readable to be one, and
+splitting prose on newlines would turn every text resource into a list of garbage. Three
+shapes are understood:
+
+| Body | Values | Labels |
+|---|---|---|
+| A JSON Schema enum fragment | `enum` | `enumNames` |
+| An array of scalars, or of records | the scalar, or `id`/`value`/`uri`/`name` | `title`/`name` |
+| An object keyed by identifier | the keys | each record's `name`/`title` |
+
+The first is what `zoo://animals` publishes, and the only one that carries labels *and*
+names its own template: `readOne` is not a JSON Schema keyword, it is the listing saying
+where one of its values is spent. When it is present it wins over the pairing found by
+prefix — the server knows where its values go better than the URIs do.
+
+**Clicking a value fills the open form.** Tools, prompts and templates all tag their fields
+with `data-field` carrying the wire name, so one lookup covers the three. The match loosens
+in steps, and stops where a wrong guess would be worse than none: the exact name, then the
+same name spelt in another case or with other separators, then a field whose name ends in it
+(`animalId` for `id`), then whatever you were last typing in — the only sane target for a
+form that fell back to a raw JSON box. The value arrives as an `input` event rather than by
+assignment, because that is what the forms recompute their preview and their problems from.
+The field it landed in flashes; when nothing matched, the column says so rather than filling
+something at random.
+
+**One or many.** Each group carries a `one | many` switch, and the values under it are the
+control that mode calls for: a radio in `one`, a checkbox in `many`, both inside the same
+chip. Picking looks like picking either way, and the shape of the control — round or square
+— is what says whether this vocabulary spends one value or several. A radio fills the field;
+a set of boxes is sent once per value. Narrowing back to `one` keeps the first pick rather
+than dropping the lot: that is a change of mind about the fan-out, not about the animals.
+
+**A set shows in the field as `[axolotl, capybara]`.** Not a value the form will ever send,
+and not pretending to be one: it is the fan-out, written where the fan-out will happen, so
+the form shows what the send button's `×6` is counting. The field wears the accent while it
+holds one. Everything that reads the form knows to ask what it means:
+
+- the template's `Expands to` line expands once per value, a line each, and counts the rest
+  past six;
+- the tool's wire preview shows the **first** call, because the payload of a fan-out is *n*
+  payloads and the first is the only honest single thing to show;
+- the send writes the real values in one at a time, and puts the set back when it is done —
+  a form left holding the last combination would read as though the picks had collapsed.
+
+A set is only ever written into a field that can hold one. A `<select>` takes one of its own
+options and a number input silently drops text it cannot parse — the browser empties the
+field without saying so — so those show the value the first call will use instead.
+
+**A fan-out is `n` ordinary calls, not a bulk method.** Nothing reaches inside a form: each
+combination is written into the controls as an `input` event, and the form is then collected
+and sent exactly as a click would collect and send it. So the sixth call in a fan-out is
+byte-identical to the one you would have made by typing that value yourself — the same
+reason the columns speak MCP rather than `admin.*`. The calls go out in sequence, so the
+result cards land in the order you picked, and two vocabularies picked at once multiply:
+six animals crossed with four sizes is twenty-four calls, which is why anything over eight
+asks first.
+
+Binding for a fan-out is stricter than for a click: it needs a field that actually carries
+the variable's name. Filling the field you were last typing in is a helpful guess for one
+value; sending a form twenty-four times into it because a box is ticked in another column is
+not.
 
 ## Why the same port
 

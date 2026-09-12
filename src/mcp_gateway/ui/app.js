@@ -239,7 +239,7 @@ const formatDuration = (seconds) => {
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 };
 
-// ── Left column ────────────────────────────────────────────────────────────────
+// ── What /admin says ───────────────────────────────────────────────────────────
 
 async function refreshAdmin() {
   const [backends, config, status, missing] = await Promise.all([
@@ -533,7 +533,7 @@ $('btn-log').addEventListener('click', () => {
   setLogOpen($('btn-log').getAttribute('aria-expanded') !== 'true');
 });
 
-// ── Middle column ──────────────────────────────────────────────────────────────
+// ── The primitives column ──────────────────────────────────────────────────────
 
 async function refreshListings() {
   if (state.mcp?.state !== 'ready') return;
@@ -555,6 +555,9 @@ async function refreshListings() {
     templates: templates.resourceTemplates || [],
   };
   renderPrimitives();
+  // The listings changed, so the vocabularies behind them may have too.
+  vocabularies.clear();
+  refreshVariables();
 }
 
 /** The backend a listing entry belongs to. Mirrors naming.py, and only that. */
@@ -596,10 +599,11 @@ function select(name) {
   state.item = null;
   renderBackends();
   renderPrimitives();
+  refreshVariables();
 }
 
 function renderPrimitives() {
-  $('mid-title').textContent = state.selected || 'Primitives';
+  $('primitives-title').textContent = state.selected || 'Primitives';
   for (const kind of Object.keys(state.listings)) {
     const count = state.selected
       ? (state.listings[kind] || []).filter((e) => ownerOf(kind, e) === state.selected).length
@@ -660,6 +664,549 @@ document.querySelectorAll('#tabs button').forEach((button) => {
 
 $('filter').addEventListener('input', renderPrimitives);
 
+// ── The variables column ───────────────────────────────────────────────────────
+//
+// A server that publishes `zoo://animals/{id}` usually publishes `zoo://animals` beside it:
+// a listing small enough to send whole, and a template for the per-member read that would
+// not be. That pair is a *vocabulary* -- the set of values `id` may take -- and this column
+// is those vocabularies, one group per variable, every value a button that fills the field
+// it belongs in.
+//
+// The pairing is read off the URIs rather than guessed: a template's fixed prefix, up to
+// its first `{`, is the listing's URI. That is also what keeps this column from reading the
+// server's resources at large. `resources/read` is a call to a live backend -- `zoo://ticks`
+// in the fixture exists precisely to prove a read can move state -- so a resource that pairs
+// with no template is never fetched.
+
+//: Bodies already read, keyed by the gateway's URI for them. Kept across selections, so
+//: flipping between two servers does not re-read either one's listings; the Reread button
+//: and a `list_changed` are what clear it.
+const vocabularies = new Map();
+
+//: What is picked, per vocabulary: `{variable, multi, values}`. Keyed by the listing's
+//: gateway URI rather than by the variable name, because two servers -- or two listings on
+//: one server -- may both name their variable `id`.
+const picks = new Map();
+
+//: Input types that parse what they are given, and so cannot be shown a `[a, b]` set: the
+//: browser drops the text and leaves the field empty, without saying so.
+const PARSED_INPUTS = new Set([
+  'checkbox', 'radio', 'number', 'range', 'date', 'time', 'datetime-local', 'month', 'week',
+  'color',
+]);
+
+//: How many expansions a template's `Expands to` line shows before it counts the rest.
+const EXPANSIONS_SHOWN = 6;
+
+//: How many calls a fan-out may start before it asks. Not a limit, a speed bump: six
+//: animals crossed with four sizes is twenty-four calls at a live backend, and the person
+//: who meant that should say so once.
+const FAN_OUT_ASKS_ABOVE = 8;
+
+//: The control in the detail panel that last had focus. The fallback for a value whose
+//: variable names no field in the open form: the field you were last typing in is a better
+//: guess than nothing, and it is the only sane target for a raw-JSON form.
+let lastFocused = null;
+
+//: The open form's send button and the word it wears when nothing is fanned out. Held here
+//: so a pick made in this column can show, on the button, how many calls it just bought.
+let sendControl = null;
+
+$('detail').addEventListener('focusin', (event) => {
+  const control = event.target.closest('input, select, textarea');
+  lastFocused = control && !control.readOnly ? control : lastFocused;
+});
+
+/**
+ * The vocabularies the selected server publishes, as
+ * `[{variable, listing, template, uri}]` — `listing` and `template` in the backend's own
+ * spelling, `uri` in the gateway's, because that is what `resources/read` takes.
+ */
+function vocabularyPairs() {
+  if (!state.selected) return [];
+  const mine = (kind) => (state.listings[kind] || [])
+    .filter((entry) => ownerOf(kind, entry) === state.selected);
+
+  const listings = new Map(mine('resources').map((r) => [localName('resources', r), r]));
+  const pairs = [];
+  for (const template of mine('templates')) {
+    const spelling = localName('templates', template);
+    const cut = spelling.indexOf('{');
+    if (cut < 1) continue;
+    // `zoo://animals/{id}` -> `zoo://animals`. The separator before the variable belongs to
+    // the template, not to the listing's own URI.
+    const prefix = spelling.slice(0, cut).replace(/[/#?&]+$/, '');
+    const listing = listings.get(prefix);
+    if (!listing) continue;
+    const variable = templateVariables(spelling)[0];
+    if (!variable) continue;
+    pairs.push({ variable, listing: prefix, template: spelling, uri: listing.uri });
+  }
+  return pairs;
+}
+
+/** Read whatever has not been read yet, then draw. */
+async function refreshVariables() {
+  renderVariables();
+  if (state.mcp?.state !== 'ready') return;
+  const pairs = vocabularyPairs();
+  const unread = pairs.filter((pair) => !vocabularies.has(pair.uri));
+  if (!unread.length) return;
+  await Promise.all(unread.map(async (pair) => {
+    vocabularies.set(pair.uri, { loading: true });
+    try {
+      const result = await state.mcp.request('resources/read', { uri: pair.uri });
+      vocabularies.set(pair.uri, readVocabulary(result));
+    } catch (err) {
+      vocabularies.set(pair.uri, { values: [], error: err.message || String(err) });
+    }
+  }));
+  renderVariables();
+}
+
+/**
+ * The values in a `resources/read` result.
+ *
+ * JSON only, and deliberately: a vocabulary has to be machine-readable to be one, and
+ * splitting prose on newlines would turn every text resource into a list of garbage values.
+ * Three shapes are understood, in the order a server is likely to publish them.
+ */
+function readVocabulary(result) {
+  const contents = result?.contents || [];
+  const text = contents.map((c) => c.text).find((t) => typeof t === 'string');
+  if (text === undefined) {
+    return { values: [], error: 'This listing has no text content to read values from.' };
+  }
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return { values: [], error: 'This listing is not JSON, so no values can be read from it.' };
+  }
+  return valuesFrom(body);
+}
+
+function valuesFrom(body) {
+  // 1. A JSON Schema enum fragment — what `zoo://animals` publishes, and the one shape that
+  //    carries labels *and* names its own template. `readOne` is not a Schema keyword; it is
+  //    the listing saying where one of its values is spent.
+  if (body && typeof body === 'object' && Array.isArray(body.enum)) {
+    const names = Array.isArray(body.enumNames) ? body.enumNames : [];
+    return {
+      values: body.enum.map((value, i) => choice(value, names[i])),
+      readOne: typeof body.readOne === 'string' ? body.readOne : null,
+    };
+  }
+
+  // 2. An array: of scalars, or of records carrying an id and something to call it.
+  if (Array.isArray(body)) {
+    const values = body.map((item) => {
+      if (item === null || item === undefined) return null;
+      if (typeof item !== 'object') return choice(item, null);
+      const value = item.id ?? item.value ?? item.uri ?? item.name;
+      return value === undefined ? null : choice(value, item.title ?? item.name);
+    }).filter(Boolean);
+    return { values };
+  }
+
+  // 3. An object keyed by the identifier — a map of id to record, which is how a server
+  //    that never thought about clients tends to publish a set.
+  if (body && typeof body === 'object') {
+    const entries = Object.entries(body);
+    return { values: entries.map(([key, value]) => choice(key, value?.name ?? value?.title)) };
+  }
+
+  return { values: [], error: 'This listing is a single JSON scalar, not a set of values.' };
+}
+
+/** One value, and the label to show for it when the label says something the value does not. */
+function choice(value, label) {
+  const text = String(value);
+  return { value: text, label: label != null && String(label) !== text ? String(label) : null };
+}
+
+function renderVariables() {
+  const host = $('variables');
+  host.replaceChildren();
+
+  if (!state.selected) {
+    host.append(el('p', { class: 'empty', text: 'Select a server in the header.' }));
+    return;
+  }
+  const pairs = vocabularyPairs();
+  if (!pairs.length) {
+    host.append(el('p', {
+      class: 'empty',
+      text: `${state.selected} publishes no listing that pairs with a template, so there are `
+        + 'no values to offer.',
+    }));
+    return;
+  }
+
+  for (const pair of pairs) host.append(vocabularyGroup(pair));
+  updateSendLabel();
+}
+
+function vocabularyGroup(pair) {
+  const read = vocabularies.get(pair.uri) || { loading: true };
+  // A listing that names its own template overrides the pairing found by prefix: the
+  // server knows where its values are spent better than the URIs do.
+  const spends = read.readOne || pair.template;
+  const variable = (read.readOne && templateVariables(read.readOne)[0]) || pair.variable;
+  const pick = pickFor(pair.uri, variable);
+
+  const group = el('div', { class: 'vocab' }, [
+    el('div', { class: 'vocab-head' }, [
+      el('span', { class: 'vocab-name', text: variable }),
+      el('span', { class: 'vocab-from', text: pair.listing }),
+    ]),
+    el('p', { class: 'vocab-template', text: `spent on ${spends}` }),
+  ]);
+
+  if (read.loading) {
+    group.append(el('p', { class: 'note', text: 'Reading…' }));
+    return group;
+  }
+  if (read.error) {
+    group.append(el('p', { class: 'vocab-error', text: read.error }));
+    return group;
+  }
+  if (!read.values.length) {
+    group.append(el('p', { class: 'note', text: 'This listing is empty.' }));
+    return group;
+  }
+
+  // One or many, and the switch is the whole feature: one value fills the field, several
+  // fill it in turn and send the form once per value.
+  const modes = el('div', { class: 'vocab-modes', role: 'group' }, [
+    modeButton(pick, false, 'one'),
+    modeButton(pick, true, 'many'),
+  ]);
+  group.querySelector('.vocab-head').append(modes);
+
+  // Radios in `one`, boxes in `many`, and the same chip around either: the switch changes
+  // what picking means, and the control under your cursor says which it currently is.
+  const values = el('div', { class: 'vocab-values' });
+  for (const item of read.values) values.append(valueChoice(pick, pair.uri, variable, item));
+  group.append(values);
+
+  const count = el('span', { class: 'vocab-count' });
+  const clear = el('button', { type: 'button', class: 'ghost', text: 'Clear' });
+  clear.addEventListener('click', () => {
+    pick.values.clear();
+    fillPick(pick, { quiet: true });
+    renderVariables();
+  });
+  group.append(el('div', { class: 'vocab-foot' }, [count, clear]));
+
+  const say = () => {
+    const n = pick.values.size;
+    if (!n) count.textContent = 'Nothing picked.';
+    else if (!pick.multi) count.textContent = `${[...pick.values][0]} is in the field.`;
+    else count.textContent = `${n} picked — the form is sent ${n} time${n === 1 ? '' : 's'}.`;
+    clear.disabled = !n;
+  };
+  pick.say = say;
+  say();
+  return group;
+}
+
+/** The pick state for one vocabulary, created on first sight. */
+function pickFor(uri, variable) {
+  let pick = picks.get(uri);
+  if (!pick) {
+    pick = { variable, multi: false, values: new Set(), say: () => {} };
+    picks.set(uri, pick);
+  }
+  pick.variable = variable;   // a re-read may have moved the listing to another template
+  return pick;
+}
+
+function modeButton(pick, multi, label) {
+  const button = el('button', {
+    type: 'button',
+    class: `vocab-mode${pick.multi === multi ? ' on' : ''}`,
+    text: label,
+    'aria-pressed': String(pick.multi === multi),
+    title: multi
+      ? 'Pick several; the form is sent once per value'
+      : 'Pick one; it fills the field',
+  });
+  button.addEventListener('click', () => {
+    if (pick.multi === multi) return;
+    pick.multi = multi;
+    // Narrowing keeps the first pick rather than dropping the lot: `many` -> `one` after
+    // picking three is a change of mind about the fan-out, not about the animals.
+    if (!multi) {
+      const first = [...pick.values][0];
+      pick.values = new Set(first === undefined ? [] : [first]);
+    }
+    fillPick(pick, { quiet: true });
+    renderVariables();
+  });
+  return button;
+}
+
+/**
+ * One value, as the control the current mode calls for.
+ *
+ * A radio in `one` and a box in `many`, both inside the same chip. The pair is the point:
+ * picking looks like picking either way, and the shape of the control is what says whether
+ * this vocabulary spends one value or several.
+ */
+function valueChoice(pick, group, variable, item) {
+  const chosen = pick.values.has(item.value);
+  const box = el('input', {
+    type: pick.multi ? 'checkbox' : 'radio',
+    // Radios need a shared name to be one group, and the listing's URI is the one name a
+    // vocabulary already has that no other vocabulary shares.
+    name: `vocab:${group}`,
+    checked: chosen,
+  });
+  const wrap = el('label', {
+    class: `vocab-value${chosen ? ' on' : ''}`,
+    title: pick.multi
+      ? `Send the form once with ${item.value}`
+      : `Put ${item.value} in ${variable}`,
+  }, [
+    box,
+    el('span', { text: item.label || item.value }),
+    item.label ? el('code', { text: item.value }) : null,
+  ]);
+
+  box.addEventListener('change', () => {
+    if (pick.multi) {
+      if (box.checked) pick.values.add(item.value);
+      else pick.values.delete(item.value);
+    } else {
+      // The browser has already unchecked the other radio; this is the same fact in the
+      // pick.
+      pick.values = new Set(box.checked ? [item.value] : []);
+    }
+    for (const chip of wrap.parentElement.children) {
+      chip.classList.toggle('on', chip.querySelector('input').checked);
+    }
+    pick.say();
+    // `many` writes the whole set, and only where the set can be fanned out from. `one`
+    // writes the value, and may fall back to the field you were last typing in.
+    if (pick.multi) fillPick(pick);
+    else if (box.checked) fillField(variable, item.value);
+    updateSendLabel();
+  });
+  return wrap;
+}
+
+/** How a set reads in a field it does not fit in: `[axolotl, capybara]`. */
+function pickDisplay(values) {
+  return values.length > 1 ? `[${values.join(', ')}]` : (values[0] ?? '');
+}
+
+/**
+ * Show a whole pick in the field it binds to.
+ *
+ * One value goes in as itself. Several go in as `[a, b]` — not a value the form will ever
+ * send, and not pretending to be one: it is the fan-out, written where the fan-out will
+ * happen, so the form shows what the send button's `×6` is counting. Every reader of the
+ * form knows to ask what it means: the template expands one line per value, the wire
+ * preview shows the first call, and the send writes the real values in one at a time.
+ *
+ * Strictly bound, like the fan-out itself. A set written into a field that merely had focus
+ * is a set that would be sent literally, since the fan-out would not rewrite it.
+ */
+function fillPick(pick, { quiet = false } = {}) {
+  const values = [...pick.values];
+  const say = quiet ? () => {} : varsNote;
+  const control = controlFor(pick.variable, { strict: true });
+  if (!control) {
+    say(values.length
+      ? `Nothing in this form is named ${pick.variable}, so there is nowhere to fan out.`
+      : null);
+    return;
+  }
+  // A select takes one of its own options, and a number input silently drops text it
+  // cannot parse. Neither can hold a set, so both show the value the first call will use.
+  const oneOnly = control.tagName === 'SELECT' || PARSED_INPUTS.has(control.type);
+  say(putValue(control, oneOnly ? (values[0] ?? '') : pickDisplay(values)));
+  markFanned(control, !oneOnly && values.length > 1);
+}
+
+/** Write every `many` pick into the open form. The form is new, or the values moved. */
+function applyPicks() {
+  for (const pick of picks.values()) {
+    if (pick.multi && pick.values.size) fillPick(pick, { quiet: true });
+  }
+  updateSendLabel();
+}
+
+/** The open form's fields that hold a set, as `fieldName -> values`. */
+function fannedFields() {
+  const fanned = new Map();
+  for (const { control, values } of boundPicks()) {
+    if (values.length < 2) continue;
+    const field = control.closest('[data-field]');
+    if (field) fanned.set(field.dataset.field, values);
+  }
+  return fanned;
+}
+
+/** `{id: '[a, b]'}` and `{id: ['a','b']}` -> `[{id: 'a'}, {id: 'b'}]`. */
+function spread(values, fanned) {
+  let combos = [values];
+  for (const [name, picked] of fanned) {
+    if (!(name in values)) continue;
+    // The picked value is always a string; the collected one says what the field's schema
+    // made of it, and the preview should not turn a number into a quoted one.
+    const like = (value) => (typeof values[name] === 'number' ? Number(value) : value);
+    combos = combos.flatMap((combo) => picked.map((value) => ({ ...combo, [name]: like(value) })));
+  }
+  return combos;
+}
+
+/** The field wears the fact that it is holding a set rather than a value. */
+function markFanned(control, fanned) {
+  control.closest('.field')?.classList.toggle('field-fanned', fanned);
+}
+
+// ── Fanning a form out over several values ─────────────────────────────────────
+//
+// Nothing here reaches inside a form. Each combination is written into the controls as an
+// `input` event and the form is then collected and sent exactly as a click would collect
+// and send it — so a fanned-out call is byte-identical to the one you would have made by
+// typing the value yourself, which is the same reason the middle column speaks MCP.
+
+/** The picks that name a field in the open form, as `[{variable, control, values}]`. */
+function boundPicks() {
+  const bound = [];
+  for (const pick of picks.values()) {
+    if (!pick.multi || !pick.values.size) continue;
+    const control = controlFor(pick.variable, { strict: true });
+    if (control) bound.push({ variable: pick.variable, control, values: [...pick.values] });
+  }
+  return bound;
+}
+
+/** Every combination of the bound picks, as `[[{control, value}, …], …]`. */
+function combinations() {
+  let combos = [[]];
+  for (const { control, values } of boundPicks()) {
+    combos = combos.flatMap((combo) => values.map((value) => [...combo, { control, value }]));
+  }
+  return combos.length === 1 && !combos[0].length ? [] : combos;
+}
+
+/** Run `once` for each combination, or exactly once when nothing is fanned out. */
+async function fanOut(once) {
+  const combos = combinations();
+  if (!combos.length) return once();
+  if (combos.length > FAN_OUT_ASKS_ABOVE
+      && !confirm(`This sends the form ${combos.length} times. Go ahead?`)) return;
+  for (const combo of combos) {
+    for (const { control, value } of combo) putValue(control, value);
+    await once();                 // sequential: the result cards land in the order picked
+  }
+  // The form is left holding the last combination otherwise, which reads as though the
+  // picks had collapsed to whatever went out last.
+  applyPicks();
+}
+
+/** Name the send button so a fan-out can say how many calls it is. */
+function registerSend(button, base) {
+  sendControl = { button, base };
+  updateSendLabel();
+}
+
+function setSendBase(base) {
+  if (sendControl) sendControl.base = base;
+  updateSendLabel();
+}
+
+function updateSendLabel() {
+  if (!sendControl || !$('detail').contains(sendControl.button)) return;
+  const n = combinations().length;
+  sendControl.button.textContent = n > 1 ? `${sendControl.base} ×${n}` : sendControl.base;
+}
+
+// ── Putting a value in a form ──────────────────────────────────────────────────
+
+/**
+ * The control in the open form that `name` belongs in, or null.
+ *
+ * The form may be a tool's, a prompt's or a template's — they all tag their fields with
+ * `data-field`, so one lookup covers the three. The loosening below stops at the point
+ * where a wrong guess would be worse than none: an exact name, then the same name spelt in
+ * another case or with other separators, then a field whose name ends in it (`animalId` for
+ * `id`), then whatever you were last typing in.
+ */
+function controlFor(name, { strict = false } = {}) {
+  const detail = $('detail');
+  const fields = [...detail.querySelectorAll('[data-field]')];
+  const norm = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const target = fields.find((f) => f.dataset.field === name)
+    || fields.find((f) => norm(f.dataset.field) === norm(name))
+    || fields.find((f) => norm(f.dataset.field).endsWith(norm(name)) && norm(name).length > 1);
+
+  // `strict` drops the last-focused fallback. Filling a field you were just typing in is a
+  // helpful guess; *fanning a form out* into it because a box is ticked somewhere is not.
+  const fallback = !strict && detail.contains(lastFocused) ? lastFocused : null;
+  return target?.querySelector('input:not([readonly]), select, textarea') || fallback;
+}
+
+/** Put `value` in `control`, the way a keystroke would. Returns why not, or null. */
+function putValue(control, value) {
+  if (control.tagName === 'SELECT') {
+    if (![...control.options].some((option) => option.value === value)) {
+      return `${value} is not one of the choices this field offers.`;
+    }
+    control.value = value;
+  } else if (control.type === 'checkbox') {
+    return 'That field is a checkbox, so a value cannot be put in it.';
+  } else {
+    control.value = value;
+  }
+
+  // The forms recompute their preview and their problems off `input`, so the value has to
+  // arrive the way a keystroke would rather than by assignment alone.
+  control.dispatchEvent(new Event('input', { bubbles: true }));
+  control.dispatchEvent(new Event('change', { bubbles: true }));
+
+  const field = control.closest('.field') || control;
+  // Whatever this field was holding, it is holding a plain value now. `fillPick` puts the
+  // mark back when what it just wrote is a set.
+  field.classList.remove('field-fanned');
+  field.classList.remove('field-filled');
+  void field.offsetWidth;               // restart the animation on a second pick
+  field.classList.add('field-filled');
+  field.scrollIntoView({ block: 'nearest' });
+  return null;
+}
+
+/** Put `value` in the open form's `name` field, and say so when there is nowhere to put it. */
+function fillField(name, value) {
+  const control = controlFor(name);
+  if (!control) {
+    varsNote(state.item
+      ? `Nothing in this form is named ${name}. Open something that takes it, or put the `
+        + 'cursor where the value belongs.'
+      : `Open a tool, prompt or template that takes ${name} first.`);
+    return;
+  }
+  varsNote(putValue(control, value));
+  updateSendLabel();
+}
+
+/** A line under the column head, or nothing. The only place this column talks back. */
+function varsNote(text) {
+  const line = $('vars-note');
+  line.textContent = text || '';
+  line.hidden = !text;
+}
+
+$('btn-vars-refresh').addEventListener('click', () => {
+  vocabularies.clear();
+  varsNote(null);
+  refreshVariables();
+});
+
 // ── The detail panel: a form, and the button that sends it ─────────────────────
 
 function openItem(kind, entry) {
@@ -667,6 +1214,9 @@ function openItem(kind, entry) {
   renderPrimitives();
   const detail = $('detail');
   detail.replaceChildren();
+  // The old form's send button has just left the page; whatever replaces it registers
+  // itself below.
+  sendControl = null;
 
   const head = el('div', { class: 'detail-head' }, [
     el('h3', { text: localName(kind, entry) }),
@@ -675,9 +1225,12 @@ function openItem(kind, entry) {
   detail.append(head);
   if (entry.description) detail.append(el('p', { class: 'detail-desc', text: entry.description }));
 
-  if (kind === 'tools') return renderToolDetail(detail, entry);
-  if (kind === 'prompts') return renderPromptDetail(detail, entry);
-  return renderResourceDetail(detail, entry, kind === 'templates');
+  // The form is built first and filled second: the picks are written into whatever fields
+  // it turns out to have, exactly as they would be if you had picked them now.
+  if (kind === 'tools') renderToolDetail(detail, entry);
+  else if (kind === 'prompts') renderPromptDetail(detail, entry);
+  else renderResourceDetail(detail, entry, kind === 'templates');
+  applyPicks();
 }
 
 function renderToolDetail(detail, entry) {
@@ -703,7 +1256,9 @@ function renderToolDetail(detail, entry) {
 
   function update() {
     try {
-      const args = form.collect();
+      // The first of the calls, when a field is holding a set: the payload of a fan-out is
+      // n payloads, and the first one is the only honest single thing to show.
+      const [args] = spread(form.collect(), fannedFields());
       preview.firstChild.textContent = pretty({
         method: 'tools/call', params: { name: entry.name, arguments: args },
       });
@@ -713,17 +1268,20 @@ function renderToolDetail(detail, entry) {
       // Advice, not a gate. The button stays live: the gateway and the backend are the
       // authority on what is acceptable, and a form that refused to send would be
       // pretending to be one.
-      send.textContent = found.length ? 'Call anyway' : 'Call tool';
+      setSendBase(found.length ? 'Call anyway' : 'Call tool');
     } catch (err) {
       preview.firstChild.textContent = String(err.message);
       problems.replaceChildren(el('li', { text: err.message }));
       problems.hidden = false;
-      send.textContent = 'Call tool';
+      setSendBase('Call tool');
     }
   }
+  registerSend(send, 'Call tool');
   update();
 
-  send.addEventListener('click', async () => {
+  // Collected inside the loop, not outside it: a fan-out writes each value into the form
+  // and this reads the form back, so every call is the one the visible form describes.
+  const once = async () => {
     let args;
     try {
       args = form.collect();
@@ -743,7 +1301,8 @@ function renderToolDetail(detail, entry) {
       // the JSON-RPC call failed.
       failedIf: (result) => !!result.isError,
     }, send);
-  });
+  };
+  send.addEventListener('click', () => fanOut(once));
 }
 
 function renderPromptDetail(detail, entry) {
@@ -751,13 +1310,16 @@ function renderPromptDetail(detail, entry) {
   detail.append(form.element);
   const send = el('button', { type: 'button', class: 'primary', text: 'Get prompt' });
   detail.append(el('div', { class: 'detail-actions' }, [send]));
-  send.addEventListener('click', () => invoke({
+  registerSend(send, 'Get prompt');
+  send.addEventListener('click', () => fanOut(() => invoke({
     title: entry.name,
     subtitle: 'prompts/get',
     method: 'prompts/get',
+    // Read per call, so a fan-out sends the arguments it just wrote rather than the first
+    // set it collected.
     params: { name: entry.name, arguments: form.collect() },
     render: renderPromptResult,
-  }, send));
+  }, send)));
 }
 
 function renderResourceDetail(detail, entry, isTemplate) {
@@ -770,17 +1332,26 @@ function renderResourceDetail(detail, entry, isTemplate) {
     const names = templateVariables(entry.uriTemplate);
     const inputs = new Map();
     const wrap = el('div', { class: 'fields' });
-    const resolved = el('code', { class: 'detail-id' });
-    const refresh = () => {
+    const resolved = el('code', { class: 'detail-id expansions' });
+    const valuesNow = () => {
       const values = {};
       for (const [name, input] of inputs) values[name] = input.value;
-      resolved.textContent = expandTemplate(entry.uriTemplate, values);
+      return values;
+    };
+    // A field holding `[a, b]` expands to a line per value rather than to one URI with a
+    // bracket in it: what a fan-out is about to read is what this should show.
+    const refresh = () => {
+      const combos = spread(valuesNow(), fannedFields());
+      const shown = combos.slice(0, EXPANSIONS_SHOWN)
+        .map((values) => expandTemplate(entry.uriTemplate, values));
+      if (combos.length > shown.length) shown.push(`…and ${combos.length - shown.length} more`);
+      resolved.textContent = shown.join('\n');
     };
     for (const name of names) {
       const input = el('input', { type: 'text', spellcheck: false });
       input.addEventListener('input', refresh);
       inputs.set(name, input);
-      wrap.append(el('div', { class: 'field field-string' }, [
+      wrap.append(el('div', { class: 'field field-string', dataset: { field: name } }, [
         el('label', { class: 'field-label' }, [el('span', { class: 'field-name', text: name })]),
         input,
       ]));
@@ -789,19 +1360,22 @@ function renderResourceDetail(detail, entry, isTemplate) {
     detail.append(wrap, el('p', { class: 'note' }, [el('span', { text: 'Expands to ' }), resolved]));
     refresh();
     // Expanded here rather than sent as a template: `resources/read` takes a URI, and the
-    // expansion is the client's job in MCP exactly as it is in RFC 6570.
-    uriOf = () => resolved.textContent;
+    // expansion is the client's job in MCP exactly as it is in RFC 6570. Read off the
+    // inputs rather than off the line above, which may be showing six of them.
+    uriOf = () => expandTemplate(entry.uriTemplate, valuesNow());
   }
 
   const send = el('button', { type: 'button', class: 'primary', text: 'Read resource' });
   detail.append(el('div', { class: 'detail-actions' }, [send]));
-  send.addEventListener('click', () => invoke({
+  registerSend(send, 'Read resource');
+  // `uriOf` is read per call: a template fanned out over six ids expands six times.
+  send.addEventListener('click', () => fanOut(() => invoke({
     title: localName(isTemplate ? 'templates' : 'resources', entry),
     subtitle: 'resources/read',
     method: 'resources/read',
     params: { uri: uriOf() },
     render: renderResourceResult,
-  }, send));
+  }, send)));
 }
 
 /** Send one MCP request and put the answer on the right. */
@@ -837,7 +1411,7 @@ async function invoke({ title, subtitle, method, params, render, failedIf }, but
   }
 }
 
-// ── Right column ───────────────────────────────────────────────────────────────
+// ── The results column ─────────────────────────────────────────────────────────
 
 function pushCard(options) {
   const results = $('results');
