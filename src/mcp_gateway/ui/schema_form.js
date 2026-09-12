@@ -139,6 +139,9 @@ const el = (tag, props = {}, children = []) => {
     if (v === undefined || v === null || v === false) continue;
     if (k === 'class') node.className = v;
     else if (k === 'text') node.textContent = v;
+    // Before the `k in node` branch: `dataset` is a readonly attribute, so assigning to it
+    // throws in a module rather than setting the data-* attributes anyone asked for.
+    else if (k === 'dataset') Object.assign(node.dataset, v);
     else if (k in node) node[k] = v;
     else node.setAttribute(k, v);
   }
