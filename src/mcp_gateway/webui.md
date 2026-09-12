@@ -233,6 +233,13 @@ One rule covers that and the `×` both: **a pick lives exactly as long as its gr
 screen.** Every resolve drops the picks whose group is not, which is the same fact whether
 the group went because its continent changed or because the whole vocabulary was closed.
 
+**And the form gives the value back.** A buried pick is taken out of the field it had
+filled, because the alternative is a template still expanding to
+`…/africa/countries/nepal/animals` after you changed the continent — a form describing a
+read that will miss, which is worse than an empty field. Only what that pick put there: a
+value you typed over it is yours, and a pick dying elsewhere in the column is no reason to
+take it away.
+
 **A URI the server never handed over is a miss, not an empty list.** The zoo answers
 `-32002` for a country under a continent it is not in — which is exactly what a client
 picking from two listings out of step would send — because an empty listing would read as a

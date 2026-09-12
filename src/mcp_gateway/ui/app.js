@@ -1101,7 +1101,11 @@ function vocabularyGroups() {
   // The bodies are *not* dropped with them. Those are a cache of what a live backend said;
   // re-opening a vocabulary, or going back to a continent, should cost no second read.
   liveKeys = new Set(groups.filter((group) => !group.pending).map((group) => group.uri));
-  for (const key of [...picks.keys()]) if (!liveKeys.has(key)) picks.delete(key);
+  for (const [key, pick] of [...picks.entries()]) {
+    if (liveKeys.has(key)) continue;
+    picks.delete(key);
+    buryField(pick);
+  }
   return groups;
 }
 
@@ -1415,6 +1419,29 @@ function vocabularyGroup(pair) {
   pick.say = say;
   say();
   return group;
+}
+
+/**
+ * Take a buried pick's value back out of the form.
+ *
+ * The other half of "a pick lives as long as its group is on screen". Change the continent
+ * and the country picked under the old one stops existing — but the form is still holding
+ * it, and a template expanding to `.../africa/countries/nepal/animals` is a read that will
+ * miss. The value has to go where the pick went.
+ *
+ * **Only what this pick put there.** A value you typed over it is yours, and a pick dying
+ * elsewhere in the column is no reason to take it away. Strictly bound, like every other
+ * write: a field carrying the variable's name, or nothing.
+ */
+function buryField(pick) {
+  const control = controlFor(pick.variable, { strict: true });
+  if (!control || control.value !== pickDisplay([...pick.values])) return;
+  control.value = '';
+  // As a keystroke would, so the expansion line and the problems recompute — the whole
+  // point is that the form stops claiming a value it no longer has.
+  control.dispatchEvent(new Event('input', { bubbles: true }));
+  control.dispatchEvent(new Event('change', { bubbles: true }));
+  markFanned(control, false);
 }
 
 /** The pick state for one vocabulary, created on first sight. */
