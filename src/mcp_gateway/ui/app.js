@@ -886,13 +886,18 @@ const vocabularies = new Map();
 //: one server -- may both name their variable `id`.
 const picks = new Map();
 
-//: Pick keys this column created by following a `narrows`, rather than by pairing a listing
-//: with a template. Held apart from the rest because they are the ones that can go *away*:
-//: change the continent and the countries picked under the old one no longer name anything.
-const chainPicks = new Set();
+//: The vocabularies asked for, by the listing's gateway URI, in the order they were added.
+//:
+//: Empty to begin with, and deliberately: this column reads live backends, and a column that
+//: opened every vocabulary a server publishes would spend a read on each one before knowing
+//: whether anybody wanted it -- and would fill itself with groups that have nothing in them
+//: yet, which reads as clutter rather than as an offer. So it starts as a menu and becomes a
+//: column as you choose from it.
+let opened = [];
 
-//: The keys the last resolve produced. A pick belonging to `chainPicks` and missing from
-//: here is a pick on an abandoned branch, which must not go on multiplying the fan-out.
+//: The keys the last resolve produced -- the groups actually on screen. A pick outside this
+//: set is a pick nothing can show you or take back: a closed vocabulary's, or one made under
+//: a continent you have since changed. Either way it must not go on multiplying the fan-out.
 let liveKeys = new Set();
 
 //: How deep a chain of `narrows` is followed. A server whose listings point at each other in
@@ -1050,7 +1055,11 @@ function variableFor(group, read) {
  */
 function vocabularyGroups() {
   const groups = [];
-  const queue = vocabularyPairs().map((pair) => ({ ...pair, context: {}, depth: 0 }));
+  // Only what was asked for. A pairing nobody opened is an entry in the menu below, not a
+  // group here and not a read.
+  const available = new Map(vocabularyPairs().map((pair) => [pair.uri, pair]));
+  opened = opened.filter((uri) => available.has(uri));
+  const queue = opened.map((uri) => ({ ...available.get(uri), context: {}, depth: 0 }));
 
   while (queue.length) {
     const group = queue.shift();
@@ -1084,16 +1093,15 @@ function vocabularyGroups() {
     queue.push({ ...child, listing, uri: gatewayUri(listing), context, variable: null });
   }
 
-  // Every chain key that survived, and the burial of those that did not: a country picked
-  // under Africa is not a country once the continent is Asia, and leaving it in `picks`
-  // would keep it in the fan-out's count with nothing on screen to explain the number.
-  liveKeys = new Set(groups.filter((g) => !g.pending).map((g) => g.uri));
-  for (const key of [...chainPicks]) {
-    if (liveKeys.has(key)) continue;
-    chainPicks.delete(key);
-    picks.delete(key);
-  }
-  for (const group of groups) if (group.depth > 0 && group.uri) chainPicks.add(group.uri);
+  // A pick outlives its group in exactly two ways, and one rule buries both: a country
+  // picked under Africa once the continent is Asia, and anything picked in a vocabulary that
+  // has since been closed. Left in `picks`, either would keep counting toward the send
+  // button's `×n` with nothing on screen to explain the number.
+  //
+  // The bodies are *not* dropped with them. Those are a cache of what a live backend said;
+  // re-opening a vocabulary, or going back to a continent, should cost no second read.
+  liveKeys = new Set(groups.filter((group) => !group.pending).map((group) => group.uri));
+  for (const key of [...picks.keys()]) if (!liveKeys.has(key)) picks.delete(key);
   return groups;
 }
 
@@ -1195,6 +1203,59 @@ function choice(value, label) {
   return { value: text, label: label != null && String(label) !== text ? String(label) : null };
 }
 
+/**
+ * Open one vocabulary, and whatever cascades from it.
+ *
+ * The read happens in `refreshVariables`, not here: this only says that somebody wants it.
+ */
+function openVocabulary(uri) {
+  if (!opened.includes(uri)) opened.push(uri);
+  varsNote(null);
+  refreshVariables();
+}
+
+/**
+ * Put one back in the menu, and forget what was picked in it.
+ *
+ * The picks go because they are a claim about what you meant, and a claim made in a group
+ * that is no longer on screen is one nothing can show you or take back. The bodies stay:
+ * those are a cache, and re-opening should not re-read a live backend.
+ */
+function closeVocabulary(uri) {
+  opened = opened.filter((held) => held !== uri);
+  // The picks go with it, this one's and the whole chain's: the next resolve buries every
+  // key that is no longer on screen, and re-rendering is what runs it.
+  renderVariables();
+  applyPicks();
+}
+
+/** The menu this column starts as: every vocabulary not already open. */
+function vocabularyPicker(available) {
+  const closed = available.filter((pair) => !opened.includes(pair.uri));
+  const select = el('select', { class: 'vocab-add' });
+  select.append(el('option', {
+    value: '',
+    text: closed.length
+      ? (opened.length ? 'Add a parameter…' : 'Choose a parameter to start…')
+      : 'Every parameter is open',
+    disabled: !closed.length,
+  }));
+  for (const pair of closed) {
+    select.append(el('option', { value: pair.uri, text: `${pair.variable} — ${pair.listing}` }));
+  }
+  select.disabled = !closed.length;
+  select.addEventListener('change', () => {
+    const uri = select.value;
+    // Back to the placeholder: the select is a verb here, not a statement of what is showing.
+    select.value = '';
+    if (uri) openVocabulary(uri);
+  });
+  return el('div', { class: 'vocab-picker' }, [
+    el('label', { class: 'vocab-picker-label', text: 'Parameter' }),
+    select,
+  ]);
+}
+
 function renderVariables() {
   const host = $('variables');
   host.replaceChildren();
@@ -1203,12 +1264,23 @@ function renderVariables() {
     host.append(el('p', { class: 'empty', text: 'Select a server in the header.' }));
     return;
   }
-  const groups = vocabularyGroups();
-  if (!groups.length) {
+  const available = vocabularyPairs();
+  if (!available.length) {
     host.append(el('p', {
       class: 'empty',
       text: `${state.selected} publishes no listing that pairs with a template, so there are `
         + 'no values to offer.',
+    }));
+    return;
+  }
+
+  host.append(vocabularyPicker(available));
+  const groups = vocabularyGroups();
+  if (!groups.length) {
+    host.append(el('p', {
+      class: 'empty',
+      text: 'Nothing open yet. Choose a parameter above and its values — and whatever they '
+        + 'narrow — appear here.',
     }));
     return;
   }
@@ -1230,11 +1302,26 @@ function vocabularyGroup(pair) {
   const variable = pair.variable;
   const depth = pair.depth || 0;
 
+  const head = el('div', { class: 'vocab-head' }, [
+    el('span', { class: 'vocab-name', text: variable || '…' }),
+    el('span', { class: 'vocab-from', text: pair.listing || pair.template }),
+  ]);
+  // Only the root wears it: the groups under it are not separately closeable, because they
+  // are not separately opened -- they are what this one narrowed to.
+  if (!depth) {
+    const close = el('button', {
+      type: 'button',
+      class: 'vocab-close',
+      text: '×',
+      title: `Put ${variable || 'this parameter'} back in the menu`,
+      'aria-label': `Close ${variable || 'this parameter'}`,
+    });
+    close.addEventListener('click', () => closeVocabulary(pair.uri));
+    head.append(close);
+  }
+
   const group = el('div', { class: depth ? 'vocab vocab-child' : 'vocab' }, [
-    el('div', { class: 'vocab-head' }, [
-      el('span', { class: 'vocab-name', text: variable || '…' }),
-      el('span', { class: 'vocab-from', text: pair.listing || pair.template }),
-    ]),
+    head,
     el('p', { class: 'vocab-template', text: `${read.narrows ? 'narrows' : 'spent on'} ${spends}` }),
   ]);
   // Why this group holds these values and not others. Without it a countries group under a
@@ -1291,7 +1378,10 @@ function vocabularyGroup(pair) {
       modeButton(pick, false, 'one'),
       modeButton(pick, true, 'many'),
     ]);
-    group.querySelector('.vocab-head').append(modes);
+    // Before the close button, which stays the last thing in the row: the control that
+    // removes the group should not move when the group grows a switch.
+    const headRow = group.querySelector('.vocab-head');
+    headRow.insertBefore(modes, headRow.querySelector('.vocab-close'));
   }
 
   // Radios in `one`, boxes in `many`, and the same chip around either: the switch changes
@@ -1457,14 +1547,12 @@ function fillPick(pick, { quiet = false } = {}) {
 /**
  * The picks that are still on screen, as `[key, pick]`.
  *
- * A pick this column made by following a `narrows` stops meaning anything the moment its
- * branch is abandoned — pick Asia and the countries picked under Africa name nothing. The
- * resolver deletes those, but it only runs when the column draws, and the fan-out reads
- * `picks` directly: without this filter a stale leaf would go on multiplying the send
- * button's count with nothing on screen to explain the number.
+ * `vocabularyGroups` already drops the rest, but it only runs when the column resolves, and
+ * the fan-out reads `picks` directly — so this is what keeps a pick made a moment before a
+ * group closed out of a send that happens a moment after.
  */
 function livePicks() {
-  return [...picks.entries()].filter(([key]) => !chainPicks.has(key) || liveKeys.has(key));
+  return [...picks.entries()].filter(([key]) => liveKeys.has(key));
 }
 
 /** Write every `many` pick into the open form. The form is new, or the values moved. */

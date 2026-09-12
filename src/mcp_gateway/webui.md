@@ -136,6 +136,20 @@ listing small enough to send whole, and a template for the per-member read that 
 be. That pair is a **vocabulary** — the set of values `id` may take — and this column is
 those vocabularies, one group per variable, every value something you can spend.
 
+**It starts as a menu, not as a column.** A select names every vocabulary the selected server
+publishes; choosing one opens it, and whatever cascades from it, beneath. Nothing is read
+until then. Two reasons, and the first is the one that matters: `resources/read` is a call to
+a live backend, so opening every vocabulary on sight would spend a read on each one before
+knowing whether anybody wanted it. The second is what it looks like — a column that arrives
+full of groups, some of them empty until a pick elsewhere fills them, reads as clutter rather
+than as an offer.
+
+A `×` on each opened group puts it back in the menu, taking the chain under it and every pick
+in either. The **bodies are kept**: those are a cache of what a live backend said, and
+re-opening a vocabulary should not cost a second read. The picks are not — a pick is a claim
+about what you meant, and a claim in a group that is no longer on screen is one nothing can
+show you or take back.
+
 **Pairing is read off the URIs, not guessed.** A template's fixed prefix, up to its first
 `{`, is the listing's URI: `zoo://animals/{id}` names `zoo://animals`, and `zoo://echo/{word}`
 names nothing, so it contributes no group. The comparison is on the backend's own spelling,
@@ -213,8 +227,11 @@ never read and is never given a pick of its own.
 **Changing a pick buries what it decided.** The child's cache key is the *expanded* URI, so
 switching Africa to Asia is a miss that fetches and switching back is a hit; and the
 countries picked under Africa are deleted rather than left in `picks`, where they would go on
-multiplying the send button's `×n` with nothing on screen to explain the number. Bodies are
-kept, picks are not: the first is a cache, the second is a claim about what you meant.
+multiplying the send button's `×n` with nothing on screen to explain the number.
+
+One rule covers that and the `×` both: **a pick lives exactly as long as its group is on
+screen.** Every resolve drops the picks whose group is not, which is the same fact whether
+the group went because its continent changed or because the whole vocabulary was closed.
 
 **A URI the server never handed over is a miss, not an empty list.** The zoo answers
 `-32002` for a country under a continent it is not in — which is exactly what a client
