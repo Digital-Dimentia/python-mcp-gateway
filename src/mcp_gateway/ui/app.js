@@ -1215,10 +1215,12 @@ function fillPick(pick, { quiet = false } = {}) {
   const values = [...pick.values];
   const say = quiet ? () => {} : varsNote;
   const control = controlFor(pick.variable, { strict: true });
+  //: Nothing in the open form takes this variable -- or nothing is open yet. That is an
+  //: ordinary way to work, not a mistake to report: you pick the values you want and then
+  //: open the thing to spend them on. The group's own foot line already says how many are
+  //: picked, and the send button counts them the moment a form that takes them is open.
   if (!control) {
-    say(values.length
-      ? `Nothing in this form is named ${pick.variable}, so there is nowhere to fan out.`
-      : null);
+    say(null);
     return;
   }
   // A select takes one of its own options, and a number input silently drops text it
@@ -1378,14 +1380,16 @@ function putValue(control, value) {
   return null;
 }
 
-/** Put `value` in the open form's `name` field, and say so when there is nowhere to put it. */
+/** Put `value` in the open form's `name` field, if the open form has one. */
 function fillField(name, value) {
   const control = controlFor(name);
+  //: Nowhere to put it, which is not news -- the same reasoning as `fillPick`. Picking a
+  //: value before opening the thing that takes it is how the column is meant to be used,
+  //: and a line of complaint under the heading every time you do it is the column talking
+  //: over the work. What `putValue` reports below is different: those are cases where there
+  //: *is* a field and the value cannot go in it, which is worth a word.
   if (!control) {
-    varsNote(state.item
-      ? `Nothing in this form is named ${name}. Open something that takes it, or put the `
-        + 'cursor where the value belongs.'
-      : `Open a tool, prompt or template that takes ${name} first.`);
+    varsNote(null);
     return;
   }
   varsNote(putValue(control, value));
