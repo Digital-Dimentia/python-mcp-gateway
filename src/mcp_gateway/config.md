@@ -74,6 +74,18 @@ servers:                       # required
 Server names are validated by [`naming.py`](naming.md): no `__`, no `/` or `:`, and
 `gateway` is reserved.
 
+## `defaults:` is folded in, and also kept
+
+Every key under `defaults:` is applied to each server that omits it, at parse time, by
+`_parse_entry`. Nothing at runtime consults the block again — a `ServerSpec` is complete on
+its own, which is what makes it safe to hand around.
+
+`GatewayConfig.defaults` keeps the block anyway, and it is the one piece of this module
+that exists for a reader outside it. An editor offering to *add* a server has to show what
+leaving a field blank will do, and the folded specs cannot say: a spec reading `timeout:
+30.0` looks identical whether the file set it, `defaults:` set it, or nothing did.
+`admin.config.get` reports both, and the admin UI uses the block for its placeholders.
+
 ## `enabled` and `required`
 
 `enabled: false` means never launched, never resolved, never checked — the way to park a

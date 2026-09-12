@@ -58,6 +58,32 @@ servers:
     assert parsed.servers["b"].env_mode == config.ENV_MODE_CURATED
 
 
+def test_the_defaults_block_is_kept_as_written() -> None:
+    """Folded into the specs *and* retained, because only the block answers "what if I omit
+    this?" -- the question an editor adding a server has to answer. See config.md."""
+    parsed = config.parse(
+        """
+defaults:
+  timeout: 45
+servers:
+  a:
+    command: x
+    timeout: 5
+"""
+    )
+    assert parsed.defaults == {"timeout": 45}
+    # Folding still happened, and an entry still wins over the block.
+    assert parsed.servers["a"].timeout == 5.0
+
+
+def test_a_catalogue_without_defaults_reports_an_empty_block() -> None:
+    """Empty, not absent: a reader asking what a key falls back to should not have to
+    distinguish "no block" from "block that is silent about this key"."""
+    parsed = config.parse("servers:\n  a:\n    command: x\n")
+    assert parsed.defaults == {}
+    assert parsed.servers["a"].timeout == config.DEFAULT_TIMEOUT
+
+
 def test_json_parses_through_the_identical_path() -> None:
     """YAML 1.2 is a superset of JSON, so a pasted Claude Desktop config needs no branch."""
     parsed = config.parse(

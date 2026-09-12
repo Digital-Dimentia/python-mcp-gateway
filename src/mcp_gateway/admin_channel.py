@@ -156,6 +156,11 @@ class AdminConnection:
         config = self.gateway.config
         return {
             "source": str(config.source),
+            # The `defaults:` block as written, alongside the servers it has already been
+            # folded into. Both, because they answer different questions: the specs say
+            # what each backend runs with, and only this says what *omitting* a key would
+            # mean -- which is what an editor adding a server has to show.
+            "defaults": dict(config.defaults),
             "servers": {
                 name: {
                     "command": spec.command,

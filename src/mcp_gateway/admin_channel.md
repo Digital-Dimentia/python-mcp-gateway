@@ -49,6 +49,13 @@ A UI editing the config must see and write back `"${GITHUB_TOKEN}"`, not the tok
 resolved secrets into an editor is how they end up pasted somewhere else, and it would make
 the config surface a second way to read the credential store.
 
+## `admin.config.get` reports `defaults:` as well as the servers
+
+The servers come back with the block already folded into them, which is what they run with
+— and is exactly why the block itself is reported too. Only it can say what *omitting* a
+key would mean, and that is the question an editor adding a server has to answer before
+there is a server to inspect. See [`config.md`](config.md).
+
 ## The log stream is installed *after* the redaction filter
 
 `LogStream` formats records and sends them over a socket, so it must never be the thing that

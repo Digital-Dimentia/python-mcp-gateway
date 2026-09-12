@@ -106,6 +106,14 @@ class GatewayConfig:
 
     source: Path | None
     servers: dict[str, ServerSpec] = field(default_factory=dict)
+    #: The file's `defaults:` block, exactly as written and already validated.
+    #:
+    #: Redundant to the running gateway -- every value here is folded into the specs above
+    #: by `_parse_entry`, and nothing at runtime consults it. It is kept for the one reader
+    #: that needs the block itself rather than its effect: an editor offering to add a
+    #: server has to say what omitting a key will mean, and the folded specs cannot answer
+    #: that. `admin.config.get` reports it; see python-mcp-gateway-cw4.
+    defaults: dict[str, Any] = field(default_factory=dict)
 
     @property
     def enabled(self) -> dict[str, ServerSpec]:
@@ -274,7 +282,7 @@ def parse(text: str, *, source: Path | None = None) -> GatewayConfig:
             raise ConfigError(f"{label}.servers.{name}: {exc}") from exc
         servers[name] = _parse_entry(name, entry, defaults, where=f"{label}.servers.{name}")
 
-    return GatewayConfig(source=source, servers=servers)
+    return GatewayConfig(source=source, servers=servers, defaults=dict(defaults))
 
 
 def load(path: Path) -> GatewayConfig:

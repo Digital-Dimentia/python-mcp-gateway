@@ -2129,30 +2129,37 @@ $('btn-refresh').addEventListener('click', async () => { await refreshAdmin(); a
 
 // ── The server editor ──────────────────────────────────────────────────────────
 
-//: The daemon's own timeouts, from `config.py`. Mirrored rather than fetched because
-//: `admin.config.get` reports each spec with its defaults already folded in and never
-//: reports the file's `defaults:` block, so there is nothing to read them from -- see
-//: python-mcp-gateway-cw4. They are shown as placeholders only, so a drift here misleads
-//: about an unset field and cannot write a wrong value.
-const DEFAULT_TIMEOUT = 30;
-const DEFAULT_STARTUP_TIMEOUT = 20;
+//: The daemon's own fallbacks, mirrored from `config.py`. The last resort only: the file's
+//: own `defaults:` block wins where it sets a key, and `admin.config.get` reports that
+//: block for exactly this reason. Shown as placeholders and never written, so a drift here
+//: misleads about an unset field and cannot put a wrong value in `servers.yaml`.
+const BUILTIN_DEFAULTS = { timeout: 30, startup_timeout: 20 };
+
+/** What omitting `key` will actually mean, as text for a placeholder. */
+function defaultFor(key) {
+  const value = state.config?.defaults?.[key] ?? BUILTIN_DEFAULTS[key];
+  return value === undefined || value === null ? undefined : String(value);
+}
 
 // Three columns, so the whole spec is visible at once rather than scrolled past: what
 // the daemon runs, what it runs it with, and how it treats the result. The `name` field
 // only exists when adding, and is prepended to the first column there.
 //
-// The fourth entry is a placeholder -- what the field means when you leave it alone. For
-// the two timeouts that is the daemon's own default, which `config.py` applies to any spec
-// that omits the key; for the rest it is a worked example of the shape the field wants.
+// The fourth entry is a placeholder -- what the field means when you leave it alone --
+// either a string, or a function called at open time for the ones that depend on the
+// loaded config. For the keys `defaults:` can set that is the value actually in force; for
+// the rest it is a worked example of the shape the field wants.
+//
 // Placeholders and not values, deliberately: a prefilled `30` is a `30` *written to
-// servers.yaml*, which would quietly override the file's own `defaults:` block. Left blank
-// the key is omitted (see `collectEditor`) and the fallback chain still runs.
+// servers.yaml*, which would quietly override the file's own `defaults:` block and pin the
+// new server to today's number forever. Left blank the key is omitted (see
+// `collectEditor`) and the fallback chain still runs.
 const EDITOR_GROUPS = [
   ['Process', [
     ['command', 'text', 'The executable, e.g. npx or python', 'npx'],
     ['description', 'text', 'What this server is for', 'Read-only files under /srv'],
     ['args', 'lines', 'One argument per line', '-y\n@modelcontextprotocol/server-filesystem\n/srv'],
-    ['cwd', 'text', 'Working directory (optional)', "the daemon's own"],
+    ['cwd', 'text', 'Working directory (optional)', () => defaultFor('cwd') ?? "the daemon's own"],
   ]],
   ['Environment', [
     ['env', 'pairs', 'KEY=${SECRET_NAME}, one per line. Values live in gateway.env, never here',
@@ -2160,9 +2167,9 @@ const EDITOR_GROUPS = [
     ['env_passthrough', 'lines', 'Variables inherited from the daemon, one per line', 'PATH\nHOME'],
   ]],
   ['Behaviour', [
-    ['timeout', 'number', 'Per-request seconds', String(DEFAULT_TIMEOUT)],
+    ['timeout', 'number', 'Per-request seconds', () => defaultFor('timeout')],
     ['startup_timeout', 'number', 'Spawn + initialize + first listing, in seconds',
-      String(DEFAULT_STARTUP_TIMEOUT)],
+      () => defaultFor('startup_timeout')],
     ['enabled', 'boolean', 'Spawn this backend'],
     ['required', 'boolean', 'A failure here is fatal to the daemon'],
   ]],
@@ -2195,7 +2202,8 @@ function openEditor(name) {
       column.append(field('name', input, 'The namespace its tools appear under. No "__", "/" or ":".'));
     }
     for (const [key, kind, help, placeholder] of fields) {
-      column.append(field(key, editorInput(key, kind, existing[key], placeholder, inputs), help));
+      const hint = typeof placeholder === 'function' ? placeholder() : placeholder;
+      column.append(field(key, editorInput(key, kind, existing[key], hint, inputs), help));
     }
     columns.push(column);
   }

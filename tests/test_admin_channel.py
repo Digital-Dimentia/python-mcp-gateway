@@ -92,6 +92,46 @@ async def test_config_get_returns_references_not_values(tmp_path) -> None:
         await harness.close()
 
 
+async def test_config_get_reports_the_defaults_block_beside_the_folded_specs(tmp_path) -> None:
+    """The specs say what each backend runs with; only the block says what omitting a key
+    means, which is what an editor adding a server has to show. See admin_channel.md."""
+    servers = f"""
+defaults:
+  timeout: 45
+servers:
+  alpha:
+    command: {PY}
+    args: ["{FIXTURE}"]
+    env:
+      MOCK_NAME: "alpha"
+  brisk:
+    command: /usr/bin/true
+    enabled: false
+    timeout: 5
+"""
+    harness = await daemon(tmp_path, servers=servers)
+    try:
+        client = await admin(harness)
+        config = await client.call("admin.config.get")
+        assert config["defaults"] == {"timeout": 45}
+        # Folded, too: the block reached the spec that omitted the key, and not the one
+        # that set it. Reporting the block is in addition to that, never instead of it.
+        assert config["servers"]["alpha"]["timeout"] == 45.0
+        assert config["servers"]["brisk"]["timeout"] == 5.0
+    finally:
+        await harness.close()
+
+
+async def test_config_get_reports_an_empty_defaults_block_when_the_file_has_none(tmp_path) -> None:
+    """Present and empty, so a reader never has to tell "no block" from "silent block"."""
+    harness = await daemon(tmp_path, servers=SERVERS, env=ENV)
+    try:
+        client = await admin(harness)
+        assert (await client.call("admin.config.get"))["defaults"] == {}
+    finally:
+        await harness.close()
+
+
 async def test_secrets_keys_returns_names_only(tmp_path) -> None:
     harness = await daemon(tmp_path, servers=SERVERS, env=ENV)
     try:

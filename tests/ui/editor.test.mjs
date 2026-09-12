@@ -76,7 +76,20 @@ describe('the server editor', () => {
     assert.equal(document.querySelectorAll('#server-form .field').length - ticks.length, 8);
   });
 
+  it("prefers the file's own defaults: block to the built-in fallback", () => {
+    ui.state.config = { servers: {}, defaults: { timeout: 45, cwd: '/srv' } };
+    ui.openEditor(null);
+    const fields = [...document.querySelectorAll('#server-form .field')];
+    const by = (key) => fields.find((f) => f.querySelector('.field-name').textContent === key);
+    assert.equal(by('timeout').querySelector('input').placeholder, '45');
+    assert.equal(by('cwd').querySelector('input').placeholder, '/srv');
+    // A key the block is silent about still falls back to the daemon's own.
+    assert.equal(by('startup_timeout').querySelector('input').placeholder, '20');
+    ui.state.config = { servers: {} };
+  });
+
   it('shows the daemon defaults as placeholders, and writes neither', async () => {
+    ui.state.config = { servers: {} };
     ui.openEditor(null);
     const fields = [...document.querySelectorAll('#server-form .field')];
     const by = (key) => fields.find((f) => f.querySelector('.field-name').textContent === key);
