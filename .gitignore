@@ -242,3 +242,20 @@ artifacts/
 # Dev-only, for tests/ui: jsdom and what it pulls in. The lockfile *is* committed -- it is
 # what makes the UI suite reproducible -- but the tree it installs is not.
 tests/ui/node_modules/
+
+# --- the desktop shell ----------------------------------------------------
+# Everything under desktop/ that a build produces. All three need the network to rebuild,
+# which is why `make clean` leaves them alone and only `distclean` takes them -- the same
+# rule the venv and tests/ui/node_modules already follow.
+#
+# The bundled interpreter: ~58 MB of standalone CPython with the gateway installed into it,
+# produced by scripts/bundle_python.py. A build artifact in every sense, and the one thing
+# here that would be actively harmful to commit.
+desktop/src-tauri/resources/python/
+desktop/src-tauri/resources/.python.staging/
+# Cargo's build tree, and Tauri's generated platform scaffolding.
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+# The staging view of src/mcp_gateway/ui/. There is one copy of the UI and it is not this
+# one; scripts/stage_ui.py rebuilds this from it. See desktop/README.md.
+desktop/.staging/

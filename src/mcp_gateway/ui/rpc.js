@@ -8,10 +8,53 @@
 // Both reconnect on their own. A gateway restart is the ordinary case (that is what
 // `make run` and a SIGHUP look like from here), and a UI that needs a page reload
 // afterwards is a UI that lies about the daemon being down.
+//
+// ## The transport is pluggable; everything else is not
+//
+// Opening the socket is one function, `openTransport`, and it is the only part of this
+// file a host may replace. Reconnect, backoff, the `pending` table and the MCP handshake
+// stay here in every host, because they are the protocol and the protocol does not vary.
+//
+// Two hosts exist. A browser gets a real `WebSocket` -- the default below -- and carries
+// the key in the query string, because the `WebSocket` constructor takes a URL and a
+// subprotocol list and there is no header parameter. The desktop shell replaces the
+// function with one that talks to a socket Rust already opened with a real
+// `Authorization: Bearer` header, so the key never reaches this file at all; see
+// `tauri-transport.js`. Retiring the query form for the browser is
+// python-mcp-gateway-isb.
+//
+// A transport is anything with `send(text)`, `close()`, a numeric `readyState`, and the
+// four `on*` handlers this file assigns. That is the `WebSocket` interface narrowed to
+// what is actually used -- which is also what makes a scripted fake one cheap, and is why
+// `tests/ui/` can now drive these classes through frames in both directions with no
+// server and no browser.
 
 const BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000];
 
+//: `WebSocket.OPEN`, spelled as the number it is. A transport is not required to be a
+//: `WebSocket`, so `send` cannot reach for that class's static.
+const OPEN = 1;
+
 export const PROTOCOL_VERSION = '2025-06-18';
+
+/** The browser transport: a real socket, with the key in the query string. */
+function browserTransport(path, key) {
+  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const query = key ? `?key=${encodeURIComponent(key)}` : '';
+  return new WebSocket(`${scheme}//${location.host}${path}${query}`);
+}
+
+let openTransport = browserTransport;
+
+/**
+ * Replace how sockets are opened. Call before anything constructs an `RpcSocket`.
+ *
+ * `fn(path, key)` returns the transport, or throws -- a throw is reported through the
+ * ordinary failure path, exactly as a `WebSocket` constructor that throws is.
+ */
+export function setTransport(fn) {
+  openTransport = fn || browserTransport;
+}
 
 /** One JSON-RPC connection. Subclasses decide what "ready" means. */
 export class RpcSocket extends EventTarget {
@@ -27,18 +70,12 @@ export class RpcSocket extends EventTarget {
     this.stopped = false;
   }
 
-  url() {
-    const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const query = this.key ? `?key=${encodeURIComponent(this.key)}` : '';
-    return `${scheme}//${location.host}${this.path}${query}`;
-  }
-
   connect() {
     this.stopped = false;
     this.setState('connecting');
     let ws;
     try {
-      ws = new WebSocket(this.url());
+      ws = openTransport(this.path, this.key);
     } catch (err) {
       this.fail(String(err));
       return;
@@ -125,7 +162,7 @@ export class RpcSocket extends EventTarget {
   }
 
   send(message) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    if (!this.ws || this.ws.readyState !== OPEN) return false;
     this.ws.send(JSON.stringify(message));
     return true;
   }

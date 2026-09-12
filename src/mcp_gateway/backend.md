@@ -135,3 +135,16 @@ set by a later call, and every forwarded request would find nothing.
 sessions** have calls in flight at once — MCP gives no correlation between a
 server-to-client request and the call that provoked it, so the honest answer there is that
 we cannot tell. Two concurrent calls from one session are not ambiguous.
+
+
+## Under the desktop shell
+
+`PATH` is in the allowlist above, and it is the entry that decides whether an `npx` backend
+can be spawned at all. An app launched from Finder inherits launchd's `PATH`, which has no
+Homebrew, no nvm and no `~/.local/bin` on it — so the shell asks the user's login shell what
+`PATH` really is and hands *that* to the daemon, which this module then forwards to every
+backend. One repair, at one boundary. See `desktop/README.md`.
+
+The shell adds to the daemon's environment rather than replacing it, which is why
+`env_passthrough` keeps working there: a cleared environment would have silently narrowed
+what that list can reach.

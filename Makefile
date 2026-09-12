@@ -95,7 +95,8 @@ OFFLINE ?=
 VENV_FLAGS := $(if $(strip $(OFFLINE)),--offline,)
 
 .PHONY: venv sync install lint docs-check test ui-deps check build wheel sdist container-image \
-        print-release-platforms package run run-dev connect clean clean-outputs clean-venv distclean
+        print-release-platforms package run run-dev connect tauri-python tauri-stage tauri-dev \
+        tauri-bundle tauri-check clean clean-outputs clean-venv distclean
 
 venv: $(VENV_STAMP)
 
@@ -242,6 +243,47 @@ connect:
 	@printf 'Bridging stdin/stdout to $(URL); diagnostics on stderr.\n' >&2
 	@cd '$(MAKEFILE_DIR)' && exec $(PYTHON_BIN) -m mcp_gateway.bridge --url '$(URL)' $(DEBUG_FLAG)
 
+# --- the desktop shell ----------------------------------------------------------------
+#
+# A Tauri app that owns both halves: a Rust host that mints the access key, supervises a
+# bundled-CPython gateway, and proxies its two sockets into an embedded webview running the
+# same UI assets `webui.py` serves. See desktop/README.md.
+#
+# None of these are prerequisites of `test` or `build`. The daemon is the product and it
+# ships without any of this; a checkout with no Rust toolchain runs the whole Python suite.
+
+DESKTOP_DIR := $(MAKEFILE_DIR)/desktop
+TAURI_DIR := $(DESKTOP_DIR)/src-tauri
+
+## The interpreter the app ships: standalone CPython with the gateway installed into it.
+## Depends on `build` because it installs the wheel that target produces -- there is no
+## second path that installs from source, so what the app runs is what `make build` made.
+tauri-python: build
+	$(PYTHON_BIN) scripts/bundle_python.py
+
+## The UI, where Tauri looks for a frontend. `copy` by default: the bundler follows what it
+## finds, and a symlink would resolve to a path that does not exist inside the .app.
+tauri-stage:
+	$(PYTHON_BIN) scripts/stage_ui.py --mode copy
+
+## Run the app from source, with the UI symlinked rather than copied so an edit to
+## `src/mcp_gateway/ui/app.js` is one Cmd+R away. Needs the bundled interpreter to exist;
+## `tauri-python` is cheap to re-run but not free, so it is a separate target you run once.
+tauri-dev:
+	$(PYTHON_BIN) scripts/stage_ui.py --mode link
+	cd '$(TAURI_DIR)' && cargo tauri dev
+
+## The installable bundle. Stages by copy, and rebuilds the interpreter so the artifact is
+## never quietly a week older than the wheel beside it.
+tauri-bundle: tauri-python tauri-stage
+	cd '$(TAURI_DIR)' && cargo tauri build
+
+## The Rust half of the test suite: the stderr parser, the restart backoff, the PATH
+## discovery, the first-run seeding. Not part of `make test`, which must stay runnable on a
+## machine with no Rust toolchain at all.
+tauri-check:
+	cd '$(TAURI_DIR)' && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+
 ## Build outputs and tool caches. **Leaves the virtual environment alone.** Deleting it
 ## is the one action here that forces a full reinstall over the network -- and behind a
 ## TLS-intercepting proxy that may not be recoverable at all without PIP_TRUSTED_HOST. A
@@ -269,3 +311,5 @@ clean-venv:
 ## which is why neither is in `clean`.
 distclean: clean-outputs clean-venv
 	rm -rf tests/ui/node_modules
+	rm -rf $(TAURI_DIR)/resources/python $(TAURI_DIR)/resources/.python.staging
+	rm -rf $(TAURI_DIR)/target $(TAURI_DIR)/gen

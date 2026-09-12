@@ -118,3 +118,16 @@ what the spec reserves that for.
 `@as_error_object`) from anything else (something above forgot the decorator). The second
 is logged as the bug it is — and still answered, because a client waiting forever is worse
 than a generic code.
+
+
+## The startup line is a contract now
+
+`listening on ws://host:port/mcp` is how the desktop shell learns which port `--port 0`
+landed on: it spawns this daemon, reads its stderr, and parses that line. So the format is no
+longer only a log line. `tests/test_desktop_contract.py` pins it, and
+`desktop/src-tauri/src/supervisor.rs` carries the twin of the parser — each names the other.
+
+The same shell is why the `Origin` rule's "a request with no `Origin` proceeds" branch is now
+load-bearing rather than merely convenient: the shell's own client is `tokio-tungstenite`,
+which sends none. That, plus `Authorization: Bearer` already being accepted, is the whole
+reason this module needed no change to support a desktop app. See `desktop/README.md`.

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Everything the window may ask the host to do: open, write to, and close one of the gateway's two sockets, and read the supervisor's state. No filesystem, no shell, no HTTP client -- the page's entire reach is the three commands below.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

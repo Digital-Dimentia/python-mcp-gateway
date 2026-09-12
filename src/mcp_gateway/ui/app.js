@@ -7,6 +7,7 @@
 // what you exercise here is byte-identical to what the model gets.
 
 import { AdminSocket, McpSocket, RpcError } from './rpc.js';
+import { inShell, onGatewayState } from './tauri-transport.js';
 import { buildForm, buildPromptForm, templateVariables, expandTemplate } from './schema_form.js';
 import {
   renderToolResult, renderPromptResult, renderResourceResult, renderError, resultCard, pretty,
@@ -63,6 +64,12 @@ const state = {
 // ── Access key ─────────────────────────────────────────────────────────────────
 
 function initialKey() {
+  // In the desktop shell there is no key here and there never will be: the host mints one
+  // per launch, keeps it in Rust, and opens both sockets itself. Returning early is not
+  // just a shortcut -- it also means the shell never writes a secret into `localStorage`,
+  // even on an origin where the browser build once did.
+  if (inShell) return null;
+
   const params = new URLSearchParams(location.search);
   const fromUrl = params.get('key');
   if (fromUrl) {
@@ -81,6 +88,16 @@ function initialKey() {
 function showGate(message) {
   $('gate-message').textContent = message;
   $('gate').hidden = false;
+  // Under the shell the gate is a status panel, not a prompt. There is no key to ask a
+  // human for -- a socket that will not open means the gateway is down or still starting,
+  // which is the host's problem and not the user's -- so the field goes and the button
+  // becomes a retry. The heading says what is actually true.
+  if (inShell) {
+    $('gate').querySelector('h2').textContent = 'Gateway not connected';
+    $('gate-key').closest('label').hidden = true;
+    $('gate-form').querySelector('button[type="submit"]').textContent = 'Retry';
+    return;
+  }
   $('gate-key').focus();
 }
 
@@ -151,7 +168,13 @@ function wire(socket, name, pill, onReady) {
       // console nobody can read anything else in. Three attempts first, so a browser opened
       // a moment before the daemon finished starting still finds it. The Connect button
       // builds fresh sockets, so this costs one click and nothing else.
-      if (socket.attempt >= RETRIES_BEFORE_GATE) {
+      //
+      // Not in the shell. Every word of the reasoning above is about a *browser*: a page
+      // parked on a wrong key, generating a 401 every few seconds. Here there is no key to
+      // be wrong, and a closed socket means the host is restarting the gateway -- which
+      // recovers on its own, in seconds. Stopping after three tries would leave a window
+      // that has to be relaunched every time the daemon reloads.
+      if (!inShell && socket.attempt >= RETRIES_BEFORE_GATE) {
         socket.close();
         $('gate-message').textContent += ' Retrying stopped; press Connect to try again.';
       }
@@ -2256,6 +2279,25 @@ showTheme(window.__theme.get());
 // ── Go ─────────────────────────────────────────────────────────────────────────
 
 state.key = initialKey();
+
+// In the shell, the host knows things the page cannot: that the gateway is still importing,
+// that it exited, that it is on its fourth restart, and what it last said on stderr. Without
+// this the first launch is a blank gate for as long as a cold interpreter takes to start,
+// and a `servers.yaml` the daemon refuses is a window that says "connecting" forever with
+// the reason sitting unread in the host's log buffer.
+if (inShell) {
+  onGatewayState((status) => {
+    if (status.state === 'listening') return;      // the sockets speak for themselves
+    const last = status.log.length ? status.log[status.log.length - 1] : '';
+    showGate({
+      idle: 'Starting the gateway…',
+      starting: 'Starting the gateway…',
+      restarting: `The gateway stopped; restarting (attempt ${status.attempt})…`,
+      failed: `The gateway could not start. ${status.reason || last}`,
+    }[status.state] || last);
+  });
+}
+
 connect();
 
 // ── The test seam ──────────────────────────────────────────────────────────────

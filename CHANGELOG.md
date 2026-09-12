@@ -9,6 +9,73 @@ nobody reads.
 
 ## Unreleased
 
+**A desktop app: the daemon, its backends and the admin UI in one window, with no terminal
+and no key to copy.**
+
+Until now, running the gateway meant `make venv`, a terminal, and pasting a URL with a secret
+in its query string out of a startup banner. `desktop/` builds `MCP-Gateway.app` instead: a
+Tauri shell whose Rust host mints the access key at launch, supervises the daemon as a child
+process on a bundled CPython, and opens the daemon's two WebSockets itself.
+
+That last part is the point. A browser's `WebSocket` constructor cannot send an
+`Authorization` header, which is why the page has always carried its key in the URL and why
+`python-mcp-gateway-isb` sat deferred rather than picking a browser-shaped workaround. A host
+process just sends the header. The window never sees a secret, dials nothing, and its content
+security policy says so.
+
+**The daemon is unchanged.** `Authorization: Bearer` was already accepted, and a client that
+sends no `Origin` was already allowed — the branch that exists for `mcp-gateway-connect` and
+for Claude Desktop, which a Rust WebSocket client falls straight into. Both are now pinned
+from the Python side by `tests/test_desktop_contract.py`, because a convenience that becomes
+load-bearing should fail a test rather than someone's window.
+
+### Added
+
+- **`desktop/`**: the Tauri shell. A Rust host (`supervisor.rs`, `proxy.rs`, `key.rs`,
+  `pathenv.rs`, `appdata.rs`) and the configuration to bundle it. `make tauri-python`,
+  `make tauri-dev`, `make tauri-bundle`, `make tauri-check`. macOS, unsigned, first cut —
+  see [`desktop/README.md`](desktop/README.md).
+- **`scripts/bundle_python.py`**: builds the interpreter the app ships — a
+  python-build-standalone CPython with the gateway wheel installed into it, stripped of
+  developer tooling and Tk, pre-compiled, and then *verified*: the build fails if the result
+  cannot import the gateway, find the UI assets through `importlib.resources`, or validate a
+  config. Works because both runtime dependencies are pure Python by decision, so the
+  interpreter is the only per-target artifact.
+- **`scripts/stage_ui.py`**: puts the admin UI where Tauri looks for a frontend without
+  making a second copy of it — a symlink for development, and for a bundle a copy that takes
+  `webui.ASSETS` as its manifest, so the app can never ship a file the HTTP server would not.
+- **`ui/tauri-transport.js`**: the shell's transport. Inert in a browser.
+- **Ad-hoc code signing** for the bundle (`signingIdentity: "-"`, no certificate needed).
+  Without it Tauri writes no `_CodeSignature` at all and `codesign --verify` reports "code
+  has no resources but signature indicates they must be present" — a bundle Apple Silicon
+  may refuse, with a LaunchServices error code that names the symptom and not the cause.
+- **Port discovery with no new Python surface.** The app starts the daemon with `--port 0` and
+  reads the port out of its existing `listening on ws://…` line, so a desktop app and a
+  `make run` daemon cannot collide on 8765.
+
+### Changed
+
+- **`rpc.js` has a transport seam.** Opening a socket is one replaceable function; reconnect,
+  the backoff, the pending table and the MCP handshake are not. This is not only for the
+  shell: `tests/ui/` previously had to stub `globalThis.WebSocket` with something that could
+  silence a socket but never drive one, so the handshake, the timeout-cancellation and the
+  backoff were all untested. They are now.
+- **`app.js` stands its key handling down inside the shell.** No key is read, none is written
+  to `localStorage`, and the gate becomes a status panel showing what the host knows — that
+  the gateway is starting, restarting, or refused its config — instead of asking for a secret
+  that does not exist. The three-strikes retry stop is a browser rule and does not apply.
+- **`check_docs.py` skips `target/`.** Cargo's build tree fills with vendored crates whose
+  READMEs link within their own repositories; without this, `make docs-check` fails on files
+  nobody here wrote. The same bug as the `.venv` one it already records, in a second language.
+
+### Fixed
+
+- **`tests/ui/harness.mjs` no longer installs jsdom's timers over Node's.** jsdom's
+  `setTimeout` calls `globalThis.setTimeout`, so the first scheduled callback recursed until
+  the stack ran out. Latent while no suite scheduled anything; immediate once `rpc.js`'s
+  reconnect and request timeouts were under test.
+
+
 **The admin UI: a browser console for configuring the gateway and exercising what it
 publishes, served by the daemon itself.**
 

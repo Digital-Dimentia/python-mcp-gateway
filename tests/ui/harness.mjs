@@ -26,7 +26,17 @@ const PAGE_URL = 'http://127.0.0.1:8765/ui/';
 //: Node's own globals that a jsdom one must not replace. `performance` is the load-bearing
 //: entry: jsdom's implementation *calls* `globalThis.performance.now()`, so handing it its
 //: own is an infinite recursion the moment anything asks the time.
-const SHADOWED = new Set(['window', 'globalThis', 'performance']);
+//:
+//: The timers are here for exactly the same reason, found the same way: jsdom's
+//: `setTimeout` runs `timerInitializationSteps`, which calls `globalThis.setTimeout` -- so
+//: once jsdom's own is installed over Node's, the first `setTimeout` recurses until the
+//: stack runs out. It stayed hidden for a while because nothing in the first three suites
+//: ever scheduled anything; `rpc.js` schedules on every request timeout and every reconnect,
+//: so `transport.test.mjs` and `shell.test.mjs` hit it immediately.
+const SHADOWED = new Set([
+  'window', 'globalThis', 'performance',
+  'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'queueMicrotask',
+]);
 
 //: Everything the language itself puts on a global object, whichever realm it belongs to.
 //: Computed rather than listed, so a newer V8's additions are covered without an edit.
@@ -39,13 +49,19 @@ const INTRINSICS = new Set(Object.getOwnPropertyNames(runInNewContext('this')));
 //: own process, so the rule is one `boot()` per test file.
 let booted = false;
 
-/** A socket that connects, then nothing. Enough for `state.mcp.state` to be inspectable. */
-class SilentWebSocket {
-  static CONNECTING = 0;
-
-  constructor(url) {
-    this.url = url;
-    this.readyState = SilentWebSocket.CONNECTING;
+/**
+ * A socket that connects, then nothing. Enough for `state.mcp.state` to be inspectable.
+ *
+ * Handed to `rpc.setTransport` rather than written over `globalThis.WebSocket`, which is
+ * what this used to be. The global stub worked, but it was a statement about the whole
+ * realm made in order to reach one call site — and it could only ever silence the socket,
+ * never drive it, because nothing called the `on*` handlers. The seam in `rpc.js` is the
+ * honest version, and `transport.test.mjs` is what it bought.
+ */
+class SilentTransport {
+  constructor(path) {
+    this.path = path;
+    this.readyState = 0;                 // CONNECTING, and it stays there
     this.sent = [];
   }
 
@@ -61,7 +77,7 @@ class SilentWebSocket {
  * tearing down: the jsdom window is garbage once the test drops it, and the stub socket
  * holds no timer.
  */
-export async function boot() {
+export async function boot({ shell = false } = {}) {
   if (booted) {
     throw new Error('boot() is once per process — put this suite in its own test file');
   }
@@ -100,10 +116,74 @@ export async function boot() {
     }
   }
   globalThis.window = window;
-  globalThis.WebSocket = SilentWebSocket;
+
+  // The desktop shell, faked. `tauri-transport.js` looks for `__TAURI_INTERNALS__` as it
+  // loads and installs its own transport only if it is there, so this has to be in place
+  // *before* `app.js` pulls that module in -- which is the same ordering the real window
+  // has, where the runtime injects these before any of our script runs.
+  const host = shell ? fakeTauri() : null;
+  if (host) {
+    window.__TAURI_INTERNALS__ = {};
+    window.__TAURI__ = host.api;
+  }
+
+  // Before `app.js`, which connects as it loads. Both modules come out of one registry, so
+  // setting it here is setting it for the graph `app.js` is about to pull in. Skipped in
+  // shell mode, where the point is to let the real shim install the real thing.
+  const rpc = await import(new URL('rpc.js', UI).href);
+  if (!shell) rpc.setTransport((path) => new SilentTransport(path));
 
   const ui = await import(new URL('app.js', UI).href);
-  return { ui, window, document: window.document, dom };
+  return { ui, window, document: window.document, dom, host };
+}
+
+/**
+ * Enough of Tauri's injected API for `tauri-transport.js` to run against.
+ *
+ * `invoke` records rather than dispatches, which is the whole assertion in `shell.test.mjs`:
+ * what the window asks the host to do, and -- more to the point -- what it does not ask for.
+ * `Channel` is the far side of the socket, so a test can push frames at the page.
+ */
+export function fakeTauri() {
+  const calls = [];
+  const channels = [];
+  const listeners = new Map();
+
+  class Channel {
+    set onmessage(handler) { this._handler = handler; }
+    get onmessage() { return this._handler; }
+  }
+
+  const api = {
+    core: {
+      invoke(command, args) {
+        calls.push({ command, args });
+        if (command === 'gw_open') channels.push(args.onFrame);
+        return Promise.resolve();
+      },
+      Channel,
+    },
+    event: {
+      listen(name, handler) {
+        listeners.set(name, handler);
+        return Promise.resolve(() => listeners.delete(name));
+      },
+    },
+  };
+
+  return {
+    api,
+    calls,
+    /** Every `gw_open` so far, in order. */
+    opened: () => calls.filter((c) => c.command === 'gw_open'),
+    /** Push a frame at the socket opened by the nth `gw_open`. */
+    deliver(index, frame) { channels[index].onmessage(frame); },
+    /** Fire a `gateway-state` event at the page. */
+    emit(name, payload) {
+      const handler = listeners.get(name);
+      if (handler) handler({ payload });
+    },
+  };
 }
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────

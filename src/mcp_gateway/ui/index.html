@@ -138,6 +138,9 @@
   <form method="dialog" id="server-form"></form>
 </dialog>
 
+<!-- Before app.js, which connects as it loads. Inert in a browser: it looks for the
+     desktop shell, finds none, and returns without swapping the transport. -->
+<script type="module" src="tauri-transport.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

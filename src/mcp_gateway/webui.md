@@ -1,8 +1,33 @@
 # `webui.py` — the admin UI, and why it is served from here
+## Two hosts, one directory
 
-The UI is seven files: [`index.html`](ui/index.html), [`style.css`](ui/style.css),
+These files are served over HTTP by this module *and* loaded off disk by the desktop shell
+(`desktop/README.md`). There is deliberately one copy: `desktop/.staging/ui` is a view of
+this directory rebuilt by `scripts/stage_ui.py`, and the copy it makes takes `ASSETS` as its
+manifest, so the app can never ship a file this module would not serve.
+
+One file exists only for the second host. [`tauri-transport.js`](ui/tauri-transport.js) swaps
+`rpc.js`'s transport for one that talks to sockets the Tauri host already opened — with a
+real `Authorization: Bearer` header, which a page cannot send. `index.html` loads it
+unconditionally and in a browser it finds no Tauri and returns, so this module serves a file
+that will never be used. That costs one small GET, and the alternative is a second copy of
+eight files that drifts.
+
+The transport seam in `rpc.js` is worth its own sentence, because it is not only for the
+shell: opening a socket is one replaceable function and everything else — reconnect, the
+backoff, the pending table, the MCP handshake — is not. `tests/ui/` drives those through
+scripted frames because of it, which was impossible when the only way in was a stub written
+over `globalThis.WebSocket`.
+
+The Tauri window's content security policy is *narrower* than the one below: its
+`connect-src` names `ipc:` and drops `ws:`/`wss:` entirely, which is the machine-checkable
+form of "that page opens no sockets". `tests/test_desktop_layout.py` asserts it.
+
+
+The UI is eight files: [`index.html`](ui/index.html), [`style.css`](ui/style.css),
 [`app.js`](ui/app.js), [`rpc.js`](ui/rpc.js), [`schema_form.js`](ui/schema_form.js),
-[`render.js`](ui/render.js) and [`theme.js`](ui/theme.js). No build step, no bundler, no
+[`render.js`](ui/render.js), [`theme.js`](ui/theme.js) and
+[`tauri-transport.js`](ui/tauri-transport.js). No build step, no bundler, no
 dependency — ES modules the browser loads directly. This module answers a GET for one of
 them.
 
@@ -382,7 +407,7 @@ exactly, so the failure mode is a red test rather than a 404 nobody can explain.
 ## Assets are read on every request
 
 Caching them would save microseconds and cost the ability to edit `app.js` and press reload,
-which is most of the development loop for the six files in this package.
+which is most of the development loop for the files in this package.
 `Cache-Control: no-store` says the same thing to the browser.
 
 `importlib.resources` rather than `__file__` arithmetic, so a wheel install works the same
@@ -444,6 +469,6 @@ see. The header is what stops a future edit from quietly adding one.
 ## What is not here
 
 This module does not serve the *data* and never touches the gateway. It answers GETs for
-six files. Everything the UI shows comes over `/admin`
+eight files. Everything the UI shows comes over `/admin`
 ([`admin_channel.md`](admin_channel.md)) or `/mcp` ([`session.md`](session.md)), which is
 why the security argument above is about files rather than about access control.

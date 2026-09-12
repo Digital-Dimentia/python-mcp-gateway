@@ -1,7 +1,7 @@
 """Serve the admin UI's static assets, on the same port as the two sockets.
 
 The UI is HTML, CSS and ES modules with no build step and no dependencies, so "serving it"
-is reading six files off disk and answering a GET. That happens inside the WebSocket
+is reading eight files off disk and answering a GET. That happens inside the WebSocket
 server's `process_request` hook, which runs before the opening handshake and may return an
 ordinary HTTP response instead of upgrading -- the documented way to put a health check or
 a static page on a `websockets` port.
@@ -63,6 +63,12 @@ ASSETS: dict[str, str] = {
     "app.js": "text/javascript; charset=utf-8",
     "theme.js": "text/javascript; charset=utf-8",
     "rpc.js": "text/javascript; charset=utf-8",
+    # Served here and used only in the desktop shell, where the page is loaded off disk
+    # rather than fetched. It is in this list because there is one copy of the admin UI and
+    # two hosts for it: `index.html` loads the file unconditionally, and in a browser it
+    # finds no Tauri and does nothing. Shipping it costs one small GET; the alternative is a
+    # second copy of the assets that drifts. See `desktop/README.md`.
+    "tauri-transport.js": "text/javascript; charset=utf-8",
     "schema_form.js": "text/javascript; charset=utf-8",
     "render.js": "text/javascript; charset=utf-8",
 }

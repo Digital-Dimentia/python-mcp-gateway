@@ -62,7 +62,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 # The admin UI's assets. `mcp_gateway.ui` is a package (it has an `__init__.py`) purely so
-# these six files ship in the wheel and `importlib.resources` can find them there exactly as
+# these files ship in the wheel and `importlib.resources` can find them there exactly as
 # it does in a checkout -- see webui.md. `tests/test_webui.py` asserts they are in the built
 # wheel, because "works from the repo, 404s from pip install" is the failure this invites.
 [tool.setuptools.package-data]

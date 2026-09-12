@@ -25,6 +25,20 @@ mcp-gateway daemon ◄─────────┴─────────�
  github      slack      filesystem
 ```
 
+## Desktop app
+
+`desktop/` builds **MCP-Gateway.app**: the daemon, its backends and the admin UI in one
+window, with no terminal and no URL to copy. The app generates the access key itself at every
+launch, hands it to the daemon through the environment, and opens the sockets from Rust — so
+there is no key to paste, and none written down anywhere.
+
+```bash
+make tauri-python     # the bundled interpreter, once
+make tauri-bundle     # desktop/src-tauri/target/release/bundle/macos/
+```
+
+macOS, unsigned, and a first cut. See [`desktop/README.md`](desktop/README.md).
+
 ## Why a daemon
 
 Backends are a **single shared pool**. Three clients attached means one copy of each backend

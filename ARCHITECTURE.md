@@ -135,7 +135,7 @@ drop in-flight work on the other eleven. See [`supervisor.md`](src/mcp_gateway/s
 
 ## The UI
 
-`/ui` serves six static files -- HTML, CSS and three ES modules -- from the same port as the
+`/ui` serves eight static files -- HTML, CSS and six ES modules -- from the same port as the
 two sockets. No build step and no dependency; `webui.py` answers the GET.
 
 ```mermaid
@@ -166,6 +166,35 @@ contract in python-acp's `docs/tool-schema-contract.md`: a schema using `if`/`th
 reason rather than rendering half a conditional schema as though it were the whole thing.
 `examples/zoo_server.py` publishes one tool per construct, which is what that code is
 answerable to. See [`webui.md`](src/mcp_gateway/webui.md).
+
+## The desktop shell
+
+`desktop/` is a Tauri app that is all of the above in one window. A Rust host mints the
+access key, supervises the daemon as a child process with a bundled CPython, and opens the
+daemon's two sockets itself — so the page it shows has no key and dials nothing.
+
+```mermaid
+flowchart TB
+    window["the window: the same UI assets"]
+    host["the Rust host"]
+    child["mcp-gateway, on a bundled CPython"]
+    backends["npx backends"]
+
+    window -->|"ipc"| host
+    host -->|"ws /mcp and /admin, Authorization: Bearer"| child
+    host -->|"stderr: the port, and the log"| child
+    child -->|stdio| backends
+```
+
+**The daemon needed no change for any of it**, which is the test of whether the shape is
+right. `Authorization: Bearer` was already accepted, and a client that sends no `Origin` was
+already allowed — that branch exists for the bridge and for Claude Desktop, and a Rust
+WebSocket client falls into it. What a browser-hosted page could not do, a host process
+simply does.
+
+Two couplings came out of it, both pinned by `tests/test_desktop_contract.py`: the daemon's
+`listening on ws://…` line is how the host learns which port `--port 0` chose, and the
+`Origin`-less branch is now load-bearing. See [`desktop/README.md`](desktop/README.md).
 
 ## Notes
 

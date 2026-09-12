@@ -22,3 +22,24 @@ def test_repository_satisfies_its_own_documentation_invariants() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cargos_build_tree_is_not_mistaken_for_ours() -> None:
+    """`desktop/src-tauri/target/` is vendored crate sources, not this project's docs.
+
+    A dependency's own `README.md` is full of links that resolve inside *its* repository, so
+    a walker that descends into `target/` fails `make docs-check` on files nobody here
+    wrote. This is the `.venv` bug the module documents, in a second language -- and the
+    reason it is pinned is that the first one was found only after it bit.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    try:
+        from check_docs import is_ignored
+    finally:
+        sys.path.pop(0)
+
+    assert is_ignored(Path("desktop/src-tauri/target/package/foo-1.0/README.md"))
+    assert is_ignored(Path("desktop/src-tauri/target/debug/build/x/out/NOTES.md"))
+    # The shell's own documentation is ours, and stays checked.
+    assert not is_ignored(Path("desktop/README.md"))
+    assert not is_ignored(Path("desktop/src-tauri/src/supervisor.rs"))

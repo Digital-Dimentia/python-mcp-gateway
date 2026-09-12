@@ -1,0 +1,25 @@
+# The gateway's backends, as the desktop app first finds them: none.
+#
+# This file is copied into the app's data directory on first launch and is yours from then
+# on -- the app never rewrites it, never merges into it, and never replaces it on update.
+# The admin UI writes it through `config_writer.py`, which replaces it atomically and keeps
+# a `.bak`; a second writer would be a data-loss bug, so there is only ever the one.
+#
+# An empty `servers` mapping is deliberate, and the `servers` key itself is required
+# (`config.py` rejects a file without it). A first launch that started nothing cannot fail
+# at anything, which is the right first impression for an app that has not been told what
+# to connect to yet.
+#
+# Add a backend from the UI's "+ Add" button, or write one here and press Reload:
+#
+#   servers:
+#     github:
+#       command: npx
+#       args: ["-y", "@modelcontextprotocol/server-github"]
+#       env:
+#         GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+#
+# Values never live here. `${GITHUB_TOKEN}` is resolved from `gateway.env` beside this
+# file, and from nowhere else -- not from the environment the app was launched with.
+version: 1
+servers: {}
