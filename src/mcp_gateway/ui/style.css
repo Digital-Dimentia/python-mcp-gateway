@@ -809,6 +809,19 @@ a.button { text-decoration: none; display: inline-block; }
 
 .fields { display: flex; flex-direction: column; gap: 0.7rem; }
 .field { display: flex; flex-direction: column; gap: 0.2rem; }
+/* A boolean, on one line: box, then the word it means, then the help under both. The box
+ * is `order: -1` because the label still comes first in the markup -- a label before its
+ * control is the reading order, whichever side the box is drawn on. */
+.field-tick {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 0.4rem;
+  row-gap: 0.1rem;
+}
+.field-tick > input[type="checkbox"] { order: -1; margin: 0; }
+.field-tick > .field-label { cursor: pointer; }
+.field-tick > .field-help { grid-column: 1 / -1; }
 .field input:not([type="checkbox"]), .field select { width: 100%; }
 .field-label { display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
 .field-name { font-weight: 600; }
@@ -900,8 +913,35 @@ dialog {
   background: var(--panel);
   color: var(--ink);
   padding: 1.1rem;
-  width: min(34rem, 92vw);
+  width: min(62rem, 94vw);
   max-height: 86vh;
+  overflow-y: auto;
 }
 dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
 dialog form { display: flex; flex-direction: column; gap: 0.7rem; }
+
+/* The server editor lays its fields out in three groups side by side, so the whole spec
+ * fits in the dialog without scrolling. On a narrow window the columns stack, and the
+ * dialog scrolls again -- which is the only place scrolling is the right answer. */
+.editor-columns {
+  display: grid;
+  /* The third column is the narrow one: it holds two numbers and two checkboxes,
+   * while the first two hold the paths, arguments and environment lines that
+   * actually want the width. */
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(0, 0.7fr);
+  gap: 0.9rem 1.2rem;
+  align-items: start;
+}
+.editor-column { display: flex; flex-direction: column; gap: 0.7rem; min-width: 0; }
+.editor-heading {
+  margin: 0;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--rule-soft);
+}
+@media (max-width: 62rem) {
+  .editor-columns { grid-template-columns: minmax(0, 1fr); }
+}

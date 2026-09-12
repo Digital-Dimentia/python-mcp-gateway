@@ -2129,19 +2129,44 @@ $('btn-refresh').addEventListener('click', async () => { await refreshAdmin(); a
 
 // ── The server editor ──────────────────────────────────────────────────────────
 
-const EDITOR_FIELDS = [
-  ['command', 'text', 'The executable, e.g. npx or python'],
-  ['args', 'lines', 'One argument per line'],
-  ['env', 'pairs', 'KEY=${SECRET_NAME}, one per line. Values live in gateway.env, never here'],
-  ['env_passthrough', 'lines', 'Variables inherited from the daemon, one per line'],
-  ['cwd', 'text', 'Working directory (optional)'],
-  ['description', 'text', 'What this server is for'],
-  ['timeout', 'number', 'Per-request seconds'],
-  ['startup_timeout', 'number', 'Spawn + initialize + first listing, in seconds'],
-  ['enabled', 'boolean', 'Spawn this backend'],
-  ['required', 'boolean', 'A failure here is fatal to the daemon'],
-];
+//: The daemon's own timeouts, from `config.py`. Mirrored rather than fetched because
+//: `admin.config.get` reports each spec with its defaults already folded in and never
+//: reports the file's `defaults:` block, so there is nothing to read them from -- see
+//: python-mcp-gateway-cw4. They are shown as placeholders only, so a drift here misleads
+//: about an unset field and cannot write a wrong value.
+const DEFAULT_TIMEOUT = 30;
+const DEFAULT_STARTUP_TIMEOUT = 20;
 
+// Three columns, so the whole spec is visible at once rather than scrolled past: what
+// the daemon runs, what it runs it with, and how it treats the result. The `name` field
+// only exists when adding, and is prepended to the first column there.
+//
+// The fourth entry is a placeholder -- what the field means when you leave it alone. For
+// the two timeouts that is the daemon's own default, which `config.py` applies to any spec
+// that omits the key; for the rest it is a worked example of the shape the field wants.
+// Placeholders and not values, deliberately: a prefilled `30` is a `30` *written to
+// servers.yaml*, which would quietly override the file's own `defaults:` block. Left blank
+// the key is omitted (see `collectEditor`) and the fallback chain still runs.
+const EDITOR_GROUPS = [
+  ['Process', [
+    ['command', 'text', 'The executable, e.g. npx or python', 'npx'],
+    ['description', 'text', 'What this server is for', 'Read-only files under /srv'],
+    ['args', 'lines', 'One argument per line', '-y\n@modelcontextprotocol/server-filesystem\n/srv'],
+    ['cwd', 'text', 'Working directory (optional)', "the daemon's own"],
+  ]],
+  ['Environment', [
+    ['env', 'pairs', 'KEY=${SECRET_NAME}, one per line. Values live in gateway.env, never here',
+      'API_KEY=${FILES_API_KEY}'],
+    ['env_passthrough', 'lines', 'Variables inherited from the daemon, one per line', 'PATH\nHOME'],
+  ]],
+  ['Behaviour', [
+    ['timeout', 'number', 'Per-request seconds', String(DEFAULT_TIMEOUT)],
+    ['startup_timeout', 'number', 'Spawn + initialize + first listing, in seconds',
+      String(DEFAULT_STARTUP_TIMEOUT)],
+    ['enabled', 'boolean', 'Spawn this backend'],
+    ['required', 'boolean', 'A failure here is fatal to the daemon'],
+  ]],
+];
 function openEditor(name) {
   const existing = name ? (state.config.servers?.[name] || {}) : {};
   const dialog = $('server-dialog');
@@ -2157,30 +2182,24 @@ function openEditor(name) {
   }));
 
   const inputs = new Map();
-  if (!name) {
-    const input = el('input', { type: 'text', required: true, spellcheck: false });
-    inputs.set('name', { kind: 'text', input });
-    form.append(field('name', input, 'The namespace its tools appear under. No "__", "/" or ":".'));
-  }
-
-  for (const [key, kind, help] of EDITOR_FIELDS) {
-    let input;
-    const value = existing[key];
-    if (kind === 'lines') {
-      input = el('textarea', { rows: 3, spellcheck: false, value: (value || []).join('\n') });
-    } else if (kind === 'pairs') {
-      const pairs = Object.entries(value || {}).map(([k, v]) => `${k}=${v}`);
-      input = el('textarea', { rows: 3, spellcheck: false, value: pairs.join('\n') });
-    } else if (kind === 'boolean') {
-      input = el('input', { type: 'checkbox', checked: value ?? (key === 'enabled') });
-    } else if (kind === 'number') {
-      input = el('input', { type: 'number', step: '0.5', min: '0', value: value ?? '' });
-    } else {
-      input = el('input', { type: 'text', spellcheck: false, value: value ?? '' });
+  const columns = [];
+  for (const [heading, fields] of EDITOR_GROUPS) {
+    const column = el('section', { class: 'editor-column' }, [
+      el('h3', { class: 'editor-heading', text: heading }),
+    ]);
+    if (!name && columns.length === 0) {
+      const input = el('input', {
+        type: 'text', required: true, spellcheck: false, placeholder: 'files',
+      });
+      inputs.set('name', { kind: 'text', input });
+      column.append(field('name', input, 'The namespace its tools appear under. No "__", "/" or ":".'));
     }
-    inputs.set(key, { kind, input });
-    form.append(field(key, input, help));
+    for (const [key, kind, help, placeholder] of fields) {
+      column.append(field(key, editorInput(key, kind, existing[key], placeholder, inputs), help));
+    }
+    columns.push(column);
   }
+  form.append(el('div', { class: 'editor-columns' }, columns));
 
   const problems = el('p', { class: 'banner banner-fail', hidden: true });
   const save = el('button', { type: 'button', class: 'primary', text: name ? 'Save' : 'Add' });
@@ -2208,9 +2227,40 @@ function openEditor(name) {
   dialog.showModal();
 }
 
+// Builds the control for one spec key and registers it for collectEditor().
+function editorInput(key, kind, value, placeholder, inputs) {
+  let input;
+  if (kind === 'lines') {
+    input = el('textarea', { rows: 3, spellcheck: false, placeholder, value: (value || []).join('\n') });
+  } else if (kind === 'pairs') {
+    const pairs = Object.entries(value || {}).map(([k, v]) => `${k}=${v}`);
+    input = el('textarea', { rows: 3, spellcheck: false, placeholder, value: pairs.join('\n') });
+  } else if (kind === 'boolean') {
+    input = el('input', { type: 'checkbox', checked: value ?? (key === 'enabled') });
+  } else if (kind === 'number') {
+    input = el('input', { type: 'number', step: '0.5', min: '0', placeholder, value: value ?? '' });
+  } else {
+    input = el('input', { type: 'text', spellcheck: false, placeholder, value: value ?? '' });
+  }
+  inputs.set(key, { kind, input });
+  return input;
+}
+
+// A tickbox and the word naming it belong on one line: the word is not a caption over a
+// control, it is what ticking the box *means*. So a boolean field lays its label beside the
+// box rather than above it, and wires the two together -- which is also what makes the word
+// clickable, something the stacked version never was.
+let fieldSeq = 0;
+
 function field(key, input, help) {
-  return el('div', { class: 'field' }, [
-    el('label', { class: 'field-label' }, [el('span', { class: 'field-name', text: key })]),
+  const tickbox = input.type === 'checkbox';
+  if (tickbox && !input.id) input.id = `field-${key}-${++fieldSeq}`;
+  const label = el('label', {
+    class: 'field-label',
+    htmlFor: tickbox ? input.id : undefined,
+  }, [el('span', { class: 'field-name', text: key })]);
+  return el('div', { class: tickbox ? 'field field-tick' : 'field' }, [
+    label,
     input,
     el('p', { class: 'field-help', text: help }),
   ]);
@@ -2314,6 +2364,8 @@ connect();
 // in being looked at.
 export {
   state,
+  EDITOR_GROUPS,
+  openEditor,
   refreshing,
   vocabularies,
   picks,
