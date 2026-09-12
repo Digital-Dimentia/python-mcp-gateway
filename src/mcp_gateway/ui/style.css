@@ -610,13 +610,28 @@ a.button { text-decoration: none; display: inline-block; }
 }
 .badge-danger { background: var(--danger-soft); color: var(--danger); }
 
-.detail { flex: 1; overflow-y: auto; padding: 0.7rem 0.75rem 2rem; border-top: 1px solid var(--rule); min-height: 0; }
+.detail { flex: 1; overflow-y: auto; padding: 0.7rem 0.75rem 0; border-top: 1px solid var(--rule); min-height: 0; }
 .detail-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
 .detail-id { font-size: 0.72rem; color: var(--muted); overflow-wrap: anywhere; }
 /* A template fanned out over six values expands six times, one per line. */
 .expansions { display: block; white-space: pre-line; }
 .detail-desc { color: var(--ink-soft); margin: 0.3rem 0 0.6rem; }
-.detail-actions { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.8rem; flex-wrap: wrap; }
+/* The send button is pinned to the foot of the panel rather than parked after the form.
+ * The panel scrolls, and a form one field taller than it would otherwise push the only
+ * button that does anything out of sight -- which reads, exactly, as a form with no way to
+ * send it. The background is what the rest of the form scrolls under. */
+.detail-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+  padding: 0.5rem 0 0.7rem;
+  background: var(--panel);
+  border-top: 1px solid var(--rule-soft);
+}
 
 /* ── Fields ──────────────────────────────────────────────────────────────── */
 

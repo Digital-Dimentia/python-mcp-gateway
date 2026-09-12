@@ -88,6 +88,11 @@ in it is byte-identical to what the model gets — same `tools/list`, same names
 and [`catalogue.md`](catalogue.md) for what it publishes. `admin.*` now answers only the
 header and the footer.
 
+The detail panel's send button is pinned to the foot of the panel rather than parked after
+the form. The panel scrolls, and a form one field taller than it would otherwise push the
+one button that does anything out of sight — which reads, exactly, as a form with no way to
+send it.
+
 ## The variables column
 
 A server that publishes `zoo://animals/{id}` usually publishes `zoo://animals` beside it: a
