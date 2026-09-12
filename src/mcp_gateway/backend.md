@@ -65,6 +65,42 @@ decision in [`config.md`](config.md). A `Backend` object exists for **every** ca
 entry, including disabled and failed ones, precisely so `gateway__list_backends` can say
 *why* a backend is not serving; an object that only existed while healthy could not.
 
+## A failed start puts a floor under the next one
+
+`consecutive_failures` was counted long before anything read it, which left nothing between
+a caller and a spawn-per-request loop. The caller is not hypothetical: a model holding
+`gateway__restart_backend` is exactly the sort of thing that retries a failing tool as fast
+as it can, and each turn buys a process spawn plus a whole `startup_timeout` at a backend
+that was never going to come up.
+
+So `restart_backoff_seconds` — **0, 0, 1, 2, 4, 8, … capped at a minute.**
+
+- **The first retry is free.** A failed start is usually followed by a human fixing what
+  broke — a missing token, a command not on `PATH` — and then asking for a restart. Making
+  *that* attempt wait punishes the one caller who already knows the answer. Repetition is
+  what is being damped, so the delay starts on the second attempt.
+- **It stops doubling.** A ceiling, not an ever-growing delay: the point is to make a loop
+  cost nothing measurable, not to eventually give up on a backend. A minute is also short
+  enough that an operator who fixed the problem is not left staring at a backend that
+  refuses to come up.
+- **A refusal is not an attempt.** Nothing about the backend changes: `status` and `error`
+  keep saying why it is actually down rather than being overwritten with a complaint about
+  timing, the failure count does not grow, and the floor does not move out — otherwise a
+  caller in a tight loop would extend its own punishment indefinitely.
+- **`restart` checks before it tears anything down**, rather than leaving it to `start`.
+  A cooling-off backend has already failed, so `stop` has nothing to kill — but it would
+  still set `status` to `STOPPED`, which reads as "somebody turned this off" rather than
+  "this is broken and waiting to be retried".
+
+`retry_after_seconds` is reported by `admin.health` and `gateway__backend_health`, because
+down-and-not-being-retried-yet is a different situation from simply down, and an operator
+watching a restart button do nothing deserves to see which. It is `0` whenever an attempt is
+allowed, which is the ordinary case.
+
+A config change clears all of this for free: `spawn_identity` changes, so
+[`supervisor.md`](supervisor.md)'s reload replaces the `Backend` object outright and the new
+one starts from zero failures.
+
 ## `startup_timeout` covers spawn and handshake together
 
 Not two budgets. A backend that spawns instantly and then never answers `initialize` is as

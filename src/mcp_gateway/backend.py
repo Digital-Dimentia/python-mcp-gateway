@@ -46,6 +46,28 @@ from mcp_gateway.secrets import MissingSecret, SecretStore, expand_path, interpo
 
 logger = logging.getLogger(__name__)
 
+#: The longest a backend is made to wait between one failed start and the next attempt.
+#:
+#: A ceiling rather than an ever-doubling delay, because the thing being protected against
+#: is a caller in a loop, not a caller who is wrong forever. A minute is long enough that a
+#: hot loop costs nothing measurable and short enough that an operator who fixed the problem
+#: is not left staring at a backend that refuses to come up.
+RESTART_BACKOFF_CAP_SECONDS = 60.0
+
+
+def restart_backoff_seconds(consecutive_failures: int) -> float:
+    """How long after a failed start the next attempt may be made.
+
+    **Zero for the first retry, and deliberately.** A failed start is usually followed by a
+    human fixing the thing that broke -- a missing token, a command not on PATH -- and then
+    asking for a restart; making *that* attempt wait would be punishing the one caller who
+    already knows what was wrong. Repetition is what is being damped, so the delay starts on
+    the second attempt and doubles from there: 0, 1, 2, 4, 8, ... up to the cap.
+    """
+    if consecutive_failures < 2:
+        return 0.0
+    return min(2.0 ** (consecutive_failures - 2), RESTART_BACKOFF_CAP_SECONDS)
+
 #: Variables every child gets under `curated`. Nothing here is a credential, and a backend
 #: genuinely cannot run without most of them.
 #:
@@ -166,6 +188,9 @@ class Backend:
     started_at: float | None = None
     restart_count: int = 0
     consecutive_failures: int = 0
+    #: Monotonic time before which another `start` is refused, or `None` for no floor. Set
+    #: by `_fail` and cleared by a start that works; see `restart_backoff_seconds`.
+    _retry_at: float | None = None
     last_call_at: float | None = None
     skipped_tools: list[str] = field(default_factory=list)
     #: Sessions with a call in flight on this backend, with a count each (one session can
@@ -188,6 +213,23 @@ class Backend:
     @property
     def uptime_seconds(self) -> float | None:
         return None if self.started_at is None else time.monotonic() - self.started_at
+
+    @property
+    def retry_after_seconds(self) -> float:
+        """Seconds until another start attempt is allowed. `0.0` when one is.
+
+        Reported by `admin.status` and `gateway__backend_health` rather than kept private: a
+        backend that is down *and not being retried yet* is a different situation from one
+        that is simply down, and an operator watching a restart do nothing deserves to see
+        which.
+        """
+        if self._retry_at is None:
+            return 0.0
+        return max(0.0, self._retry_at - time.monotonic())
+
+    @property
+    def cooling_off(self) -> bool:
+        return self.retry_after_seconds > 0.0
 
     @property
     def protocol_version(self) -> str | None:
@@ -243,6 +285,9 @@ class Backend:
             self.status = BackendStatus.DISABLED
             return False
 
+        if self._refused_for_backoff():
+            return False
+
         self.status = BackendStatus.STARTING
         self.error = None
 
@@ -282,6 +327,7 @@ class Backend:
         self.status = BackendStatus.RUNNING
         self.started_at = time.monotonic()
         self.consecutive_failures = 0
+        self._retry_at = None
         logger.info(
             "backend %r running (pid %s, MCP %s)", self.name, self.pid, client.protocol_version
         )
@@ -303,12 +349,36 @@ class Backend:
         except Exception as exc:  # pragma: no cover - teardown of an already-broken child
             logger.debug("backend %r: error stopping a failed client: %s", self.name, exc)
 
+    def _refused_for_backoff(self) -> bool:
+        """Whether the backoff floor has yet to pass, logging the refusal if so.
+
+        Refused, not queued, and **nothing about the backend changes**: `status` and `error`
+        are left saying why it is actually down rather than being overwritten with a
+        complaint about timing, the failure count does not grow, and the floor does not move.
+        A refusal is not an attempt.
+
+        What this is for is a caller in a loop -- a model holding `gateway__restart_backend`,
+        a script, a finger on the UI's button -- which would otherwise buy a process spawn
+        and a whole `startup_timeout` per turn. See `restart_backoff_seconds`.
+        """
+        waiting = self.retry_after_seconds
+        if waiting <= 0.0:
+            return False
+        logger.warning(
+            "backend %r not restarted: %d consecutive failures, next attempt in %.1fs",
+            self.name,
+            self.consecutive_failures,
+            waiting,
+        )
+        return True
+
     def _fail(self, reason: str) -> bool:
         self.status = BackendStatus.FAILED
         self.error = reason
         self.client = None
         self.started_at = None
         self.consecutive_failures += 1
+        self._retry_at = time.monotonic() + restart_backoff_seconds(self.consecutive_failures)
         logger.error("backend %r not started: %s", self.name, reason)
         return False
 
@@ -322,6 +392,12 @@ class Backend:
             self.status = BackendStatus.STOPPED
 
     async def restart(self) -> bool:
+        # Checked before anything is torn down, rather than being left to `start`. A backend
+        # that is cooling off is a backend that already failed, so `stop` would have nothing
+        # to kill -- but it would still set `status` to STOPPED, which reads as "somebody
+        # turned this off" rather than "this is broken and waiting to be retried".
+        if self._refused_for_backoff():
+            return False
         self.status = BackendStatus.RESTARTING
         await self.stop()
         self.restart_count += 1

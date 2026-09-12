@@ -155,6 +155,10 @@ async def describe_health(
             "uptime_seconds": backend.uptime_seconds,
             "restart_count": backend.restart_count,
             "consecutive_failures": backend.consecutive_failures,
+            # Down and *not being retried yet* is a different situation from simply down,
+            # and an operator watching a restart button do nothing deserves to see which.
+            # `0` whenever an attempt is allowed, which is the ordinary case.
+            "retry_after_seconds": round(backend.retry_after_seconds, 1),
             "last_error": backend.error,
             "last_call_at": backend.last_call_at,
             "skipped_tools": list(backend.skipped_tools),
