@@ -1004,22 +1004,6 @@ function gatewayUri(local) {
 }
 
 /**
- * Every group to draw, roots first and each child directly after its parent.
- *
- * A vocabulary whose body carries `narrows` does not publish its values: it publishes the
- * *template* of the listing that does, and which listing that is depends on what you picked
- * here. So this walks. A root comes from the pairing above; each deeper group is the parent
- * body's `narrows`, expanded with everything the chain has bound so far.
- *
- * The rule that makes the walk safe is the one the column already had: a listing is only
- * ever read at a URI something handed us. A root is named by a template's fixed prefix, and
- * a child by its parent's own body — so the column still never goes looking through a live
- * backend's resource space for something that might be a vocabulary.
- *
- * A child whose parent has no single pick is emitted `pending`: it is drawn, so you can see
- * that picking a continent is what will fill it, and it is neither read nor given a pick.
- */
-/**
  * The variable one group's values fill.
  *
  * Read off the body once there is one, because the body is the only thing that knows: a
@@ -1721,10 +1705,17 @@ function controlFor(name, { strict = false } = {}) {
 /** Put `value` in `control`, the way a keystroke would. Returns why not, or null. */
 function putValue(control, value) {
   if (control.tagName === 'SELECT') {
-    if (![...control.options].some((option) => option.value === value)) {
+    // Matched on either spelling. A boolean or a `null` select wears its value directly; a
+    // schema `enum` wears the choice's *index*, because `{"enum": [0, 1, 3, 5]}` has to
+    // come back as the number 3 rather than the string "3" -- so `schema_form.js` carries
+    // the choice's own spelling on `dataset.value` for exactly this comparison. Matching
+    // only `option.value` rejected every enum field, about values it plainly offered.
+    const option = [...control.options]
+      .find((candidate) => candidate.value === value || candidate.dataset.value === value);
+    if (!option) {
       return `${value} is not one of the choices this field offers.`;
     }
-    control.value = value;
+    control.value = option.value;
   } else if (control.type === 'checkbox') {
     return 'That field is a checkbox, so a value cannot be put in it.';
   } else {
@@ -2266,3 +2257,45 @@ showTheme(window.__theme.get());
 
 state.key = initialKey();
 connect();
+
+// ── The test seam ──────────────────────────────────────────────────────────────
+//
+// Inert in the browser: this module is the page's entry point, nothing imports it, and an
+// `export` an importer never reads costs the page nothing. What it buys is `tests/ui/` --
+// the same source the page runs, run against a jsdom document, because the two bugs that
+// made the variables column worth testing were both logic no Python test can reach. See
+// `src/mcp_gateway/webui.md` and python-mcp-gateway-6cm.
+//
+// Deliberately narrow. What is here is the resolver -- which vocabularies pair, which
+// groups the cascade produces, which picks survive -- and the two directions of the fill
+// path. Rendering, styling and the sockets are not here and are not tested: their value is
+// in being looked at.
+export {
+  state,
+  refreshing,
+  vocabularies,
+  picks,
+  opened,
+  liveKeys,
+  vocabularyPairs,
+  vocabularyGroups,
+  variableFor,
+  valuesFrom,
+  readVocabulary,
+  refreshVariables,
+  renderVariables,
+  openVocabulary,
+  closeVocabulary,
+  pickFor,
+  fillPick,
+  applyPicks,
+  livePicks,
+  buryField,
+  fannedFields,
+  spread,
+  controlFor,
+  putValue,
+  fillField,
+  openItem,
+  gatewayUri,
+};

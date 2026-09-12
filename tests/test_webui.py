@@ -183,12 +183,9 @@ def test_the_wheel_carries_the_assets() -> None:
 def test_the_modules_parse() -> None:
     """`node --check` on each ES module, when node is around.
 
-    The one automated thing worth saying about six files no Python test can exercise: they
-    are syntactically valid ES modules. Skipped rather than required, because this project
-    has no Node toolchain and is not acquiring one to run a parser.
-
-    What this does *not* check is behaviour. That is what `examples/zoo_server.py` is for --
-    one tool per JSON Schema construct, looked at in a browser. See webui.md.
+    The cheapest of the three layers, and the only one that needs nothing installed: they are
+    syntactically valid ES modules. `tests/test_webui_js.py` is the layer that runs them, and
+    `examples/zoo_server.py` in a browser is the one that says they render. See webui.md.
     """
     node = shutil.which("node")
     if node is None:

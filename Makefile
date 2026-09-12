@@ -94,7 +94,7 @@ endif
 OFFLINE ?=
 VENV_FLAGS := $(if $(strip $(OFFLINE)),--offline,)
 
-.PHONY: venv sync install lint docs-check test check build wheel sdist container-image \
+.PHONY: venv sync install lint docs-check test ui-deps check build wheel sdist container-image \
         print-release-platforms package run run-dev connect clean clean-outputs clean-venv distclean
 
 venv: $(VENV_STAMP)
@@ -121,8 +121,17 @@ lint: venv
 docs-check: venv
 	$(PYTHON_BIN) scripts/check_docs.py
 
+## The whole suite, JavaScript included. tests/test_webui_js.py runs `node --test` over
+## tests/ui/ and *skips* when node or jsdom is absent, so this works on a checkout that has
+## never seen npm; `make ui-deps` is what turns that skip into a run.
 test: venv
 	$(PYTHON_BIN) -m pytest tests
+
+## jsdom, for the UI suite. Dev-only and deliberately not a prerequisite of `test`: the
+## daemon ships no Node anything, and a green `make test` must not depend on a second
+## language's package manager being reachable. See src/mcp_gateway/webui.md.
+ui-deps:
+	npm install --prefix tests/ui
 
 ## Validate servers.yaml and gateway.env without binding a port or spawning a backend.
 ## Reports every problem it finds rather than the first, and exits 2 if there is one --
@@ -255,5 +264,8 @@ clean-outputs:
 clean-venv:
 	rm -rf $(VENV_DIR)
 
-## Everything `clean` removes, plus the venv -- the GNU convention name.
+## Everything `clean` removes, plus the venv -- the GNU convention name. tests/ui's installed
+## tree goes with it, for the same reason the venv does: both need the network to rebuild,
+## which is why neither is in `clean`.
 distclean: clean-outputs clean-venv
+	rm -rf tests/ui/node_modules

@@ -238,3 +238,7 @@ artifacts/
 # Left beside servers.yaml by config_writer.py before every admin UI edit. Useful locally,
 # never worth committing.
 *.yaml.bak
+
+# Dev-only, for tests/ui: jsdom and what it pulls in. The lockfile *is* committed -- it is
+# what makes the UI suite reproducible -- but the tree it installs is not.
+tests/ui/node_modules/

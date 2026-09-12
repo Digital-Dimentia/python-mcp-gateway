@@ -342,7 +342,12 @@ function buildControl(name, schema, { choices, type, depth, onChange, required }
   if (choices) {
     const select = el('select', {}, [el('option', { value: '', text: '(omit)' })]);
     for (const [i, choice] of choices.entries()) {
-      select.append(el('option', { value: String(i), text: choice.label }));
+      // `dataset.value` beside the index: the index is what `collect` needs (see below) and
+      // the choice's own spelling is what anything *outside* the form has to match against.
+      // The variables column offers values, not positions, so `putValue` looks here.
+      select.append(el('option', {
+        value: String(i), text: choice.label, dataset: { value: format(choice.value) },
+      }));
     }
     if (schema.default !== undefined) {
       const at = choices.findIndex((c) => JSON.stringify(c.value) === JSON.stringify(schema.default));

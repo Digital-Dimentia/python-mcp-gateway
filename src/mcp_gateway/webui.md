@@ -382,11 +382,56 @@ exactly, so the failure mode is a red test rather than a 404 nobody can explain.
 ## Assets are read on every request
 
 Caching them would save microseconds and cost the ability to edit `app.js` and press reload,
-which is the entire development loop for the six files in this package that no Python test
-can cover. `Cache-Control: no-store` says the same thing to the browser.
+which is most of the development loop for the six files in this package.
+`Cache-Control: no-store` says the same thing to the browser.
 
 `importlib.resources` rather than `__file__` arithmetic, so a wheel install works the same
 as a checkout — the assets ship as package data, declared in `pyproject.toml`.
+
+## How the JavaScript is tested
+
+Three layers, and the reason there are three is that each one is cheap where the next is
+not.
+
+1. **`node --check` on every module**, from
+   [`tests/test_webui.py`](../../tests/test_webui.py). Says they are valid ES modules, and
+   nothing more.
+2. **`node --test` over [`tests/ui/`](../../tests/ui/)**, driven from
+   [`tests/test_webui_js.py`](../../tests/test_webui_js.py). jsdom, so the real modules run
+   against a real `index.html`. What is covered is the variables column's resolver — which
+   listings pair, which groups a cascade produces, which picks survive a change upstream —
+   and both directions of the fill path: a value picked into an open form, and a form opened
+   onto picks already made.
+3. **A browser**, against [`examples/zoo_server.py`](../../examples/zoo_server.py), one tool
+   per JSON Schema construct. Still the only thing that says the page *renders*.
+
+**This reverses the position this document used to take**, which was that the UI has no
+Node toolchain, is not acquiring one, and that what the modules do is verified by eye. What
+changed is that the variables column stopped being a renderer of listings and acquired
+state — opened sets, chains, picks with lifetimes. Two logic bugs landed in one sitting,
+both in code no Python test can reach: a cascade child inherited its parent's variable and
+built `zoo://continents/congo/countries//animals`, and a form opened onto picks already made
+came up empty. The second shipped, and a person found it in a browser. Both took about
+thirty lines of harness to catch once there was a DOM to run against. A third — a pick that
+could never be put in a schema-`enum` field, because `putValue` was matching values against
+option *indices* — fell out of writing the suite.
+
+The cost is paid in three deliberately small ways:
+
+- **jsdom is dev-only**, in [`tests/ui/package.json`](../../tests/ui/package.json). Not a
+  runtime dependency, not in `pyproject.toml`, not in the wheel. The daemon still ships no
+  Node anything and the CSP argument below is untouched.
+- **The suite skips rather than fails** when node or jsdom is absent, so a checkout that has
+  never run `npm install` stays green on `make test`. `make ui-deps` is what turns the skip
+  into a run. One test command, one CI toolchain.
+- **The seam is narrow.** `app.js` exports its internals at the foot of the file — inert in
+  the browser, since nothing imports the page's entry module — and what is exported is the
+  resolver and the fill path. Rendering, styling and the sockets are not tested: their value
+  is in being looked at, which is what layer 3 is for.
+
+And the honest limit: **jsdom is not a browser.** It has no layout, so `scrollIntoView` and
+`setPointerCapture` are stubs in the harness, and a test that passes there can still be
+wrong in Chrome. Layer 3 does not go away.
 
 ## The Content-Security-Policy is a promise being kept
 

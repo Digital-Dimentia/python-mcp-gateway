@@ -1,0 +1,9 @@
+{
+  "name": "mcp-gateway-ui-tests",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only. jsdom, so the UI modules in src/mcp_gateway/ui/ can be run rather than only parsed. Nothing the daemon ships depends on this; see ../../src/mcp_gateway/webui.md.",
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}
