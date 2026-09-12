@@ -3,12 +3,12 @@
 
 **Vendored** from `tests/fixtures/mock_mcp_server.py` in
 https://github.com/Digital-Dimentia/python-acp (Apache-2.0, same author) at `c6624f4`,
-verbatim apart from this header. Pure stdlib, no dependencies, stdio like any other
+verbatim apart from this header and `zoo-prompt-animal`, which was added here. Pure stdlib, no dependencies, stdio like any other
 backend.
 
 With `MOCK_MCP_SCHEMA_ZOO=1` -- which `servers.dev.yaml` sets, because `env_mode: curated`
 means this child inherits nothing the file does not name -- it publishes thirteen tools,
-four prompts, seven resources and two URI templates. One per construct rather than one
+five prompts, seven resources and two URI templates. One per construct rather than one
 kitchen sink, so a renderer that gets one wrong fails visibly on that one:
 
     zoo-types      every JSON type bare, plus an untyped and a union-typed property
@@ -551,6 +551,21 @@ ZOO_PROMPTS = [
         # same `to_content_block` mapping, and nothing exercised them through it.
         "arguments": [],
     },
+    {
+        "name": "zoo-prompt-animal",
+        "description": "A brief filled from one animal; `id` comes from zoo://animals",
+        # The prompt end of the pair `zoo://animals` and `zoo://animals/{id}` already make:
+        # one listing, spent three ways. The argument is named `id` on purpose -- that is
+        # the name the template gives the same value, and a client that offers the listing
+        # as a picker can fill this form from it without being told how.
+        "arguments": [
+            {
+                "name": "id",
+                "description": "An animal id, from the zoo://animals listing",
+                "required": True,
+            },
+        ],
+    },
 ]
 
 ZOO_RESOURCES = [
@@ -717,6 +732,31 @@ ZOO_ANIMALS = {
 }
 
 
+# The brief `zoo-prompt-animal` expands to. A prompt *is* a template -- the server holds
+# the text and the caller sends the values -- and this one is written out here rather than
+# built inline so the substitution is a thing you can read: every field of one ZOO_ANIMALS
+# record lands somewhere in it.
+ZOO_ANIMAL_BRIEF = """Write an exhibit label for the {name} ({scientificName}).
+
+Habitat: {habitat}
+Diet: {diet}
+Conservation status: {conservationStatus}
+Worth knowing: {fact}
+
+Under sixty words, and end on the last of those."""
+
+
+class ZooUnknownAnimal(Exception):
+    """`zoo-prompt-animal` with an id that is not in the vocabulary.
+
+    Answered `-32602`, not the fixture's usual `-32000`: the request was well-formed and
+    understood, and one argument was simply not a member of the set `zoo://animals`
+    publishes. A client that built its picker from that listing cannot send this by
+    accident -- which is what makes the case worth answering precisely on the rare
+    occasions it does.
+    """
+
+
 class ZooResourceNotFound(Exception):
     """`zoo://animals/<unknown>`: a URI shaped correctly for a resource that is not here.
 
@@ -774,6 +814,23 @@ def zoo_prompt_result(name, arguments):
                         "type": "text",
                         "text": "Write about %s in a %s tone." % (subject, tone),
                     },
+                }
+            ],
+        }
+    if name == "zoo-prompt-animal":
+        # The id is required, so a client validated it before this was called -- but only
+        # against "is it filled in", never against the vocabulary, which lives in a
+        # resource no prompt form has to have read.
+        key = arguments.get("id", "")
+        animal = ZOO_ANIMALS.get(key)
+        if animal is None:
+            raise ZooUnknownAnimal(key)
+        return {
+            "description": "An exhibit label brief for the %s" % animal["name"],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {"type": "text", "text": ZOO_ANIMAL_BRIEF.format(**animal)},
                 }
             ],
         }
@@ -1334,7 +1391,23 @@ while True:
         # Only reachable with MOCK_MCP_SCHEMA_ZOO=1, because nothing else lists them --
         # but answered whenever asked, on the same principle as the capability block: a
         # client that asks for something unlisted must be caught by its own check.
-        zoo_prompt = zoo_prompt_result(params.get("name"), params.get("arguments", {}))
+        try:
+            zoo_prompt = zoo_prompt_result(params.get("name"), params.get("arguments", {}))
+        except ZooUnknownAnimal as unknown:
+            # `-32602` with the id and the vocabulary in `data`: an argument error should
+            # say what was sent *and* what would have worked. See ZooUnknownAnimal.
+            write(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32602,
+                        "message": "Unknown animal: %s" % (unknown.args[0] or "<empty>"),
+                        "data": {"id": unknown.args[0], "known": sorted(ZOO_ANIMALS)},
+                    },
+                }
+            )
+            continue
         if zoo_prompt is not None:
             write({"jsonrpc": "2.0", "id": req_id, "result": zoo_prompt})
         elif params.get("name") == "greeting":

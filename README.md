@@ -140,8 +140,10 @@ make run-dev        # starts examples/zoo_server.py, then open the URL it prints
 ```
 
 That is a local MCP server whose only purpose is to be rendered: thirteen tools covering
-every JSON Schema construct a form can meet, four prompts, seven resources and two URI
-templates.
+every JSON Schema construct a form can meet, five prompts, seven resources and two URI
+templates. One of those prompts, `zoo-prompt-animal`, takes an `id` from the `zoo://animals`
+listing and expands to a brief filled with that animal — which is what the UI's Variables
+column is for.
 
 ## Rotating a credential
 

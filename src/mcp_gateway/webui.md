@@ -125,6 +125,12 @@ names its own template: `readOne` is not a JSON Schema keyword, it is the listin
 where one of its values is spent. When it is present it wins over the pairing found by
 prefix — the server knows where its values go better than the URIs do.
 
+**A template is how a vocabulary is found, not where it can be spent.** `zoo://animals`
+pairs with `zoo://animals/{id}`, and that pairing is what makes it a vocabulary at all — but
+once it is one, its values fill any field named `id`. The zoo's `zoo-prompt-animal` names
+its argument `id` for exactly that reason, so the same six picks that read six resources
+will expand six briefs.
+
 **Clicking a value fills the open form.** Tools, prompts and templates all tag their fields
 with `data-field` carrying the wire name, so one lookup covers the three. The match loosens
 in steps, and stops where a wrong guess would be worse than none: the exact name, then the
