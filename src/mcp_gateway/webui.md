@@ -244,6 +244,13 @@ once it is one, its values fill any field named `id`. The zoo's `zoo-prompt-anim
 its argument `id` for exactly that reason, so the same six picks that read six resources
 will expand six briefs.
 
+**And opening a form fills it from the picks.** The two directions are the same feature seen
+from either end, and a cascade needs both: you cannot pick a country before its continent, so
+by the time the template that takes them is open, every pick is already made and clicking
+them again is exactly what nobody should have to do. Binding is strict here — a value goes
+into a field that carries its name or it goes nowhere — so opening a form can never scatter
+picks across whatever fields it happened to have.
+
 **Clicking a value fills the open form.** Tools, prompts and templates all tag their fields
 with `data-field` carrying the wire name, so one lookup covers the three. The match loosens
 in steps, and stops where a wrong guess would be worse than none: the exact name, then the

@@ -1555,10 +1555,25 @@ function livePicks() {
   return [...picks.entries()].filter(([key]) => liveKeys.has(key));
 }
 
-/** Write every `many` pick into the open form. The form is new, or the values moved. */
+/**
+ * Write every pick into the open form. The form is new, or the values moved.
+ *
+ * **Every pick, not only the fanned-out ones.** This used to write `many` picks alone, on
+ * the assumption that a single value had already gone into the form at the moment it was
+ * clicked — true when the form was open first and the value picked second.
+ *
+ * A cascade reverses that order. You cannot pick a country until you have picked its
+ * continent, so by the time the template that takes them is open, all three picks are
+ * already made and clicking them again is exactly what nobody should have to do. The whole
+ * chain is written in here instead.
+ *
+ * Safe because `fillPick` binds strictly: a value goes in a field that carries its name, or
+ * it goes nowhere. Opening a form can therefore never scatter picks into whatever fields it
+ * happened to have.
+ */
 function applyPicks() {
   for (const [, pick] of livePicks()) {
-    if (pick.multi && pick.values.size) fillPick(pick, { quiet: true });
+    if (pick.values.size) fillPick(pick, { quiet: true });
   }
   updateSendLabel();
 }
