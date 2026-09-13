@@ -2165,18 +2165,26 @@ async function invoke({ title, subtitle, method, params, render, failedIf }, but
 
 // ── The results column ─────────────────────────────────────────────────────────
 
+const RESULTS_EMPTY = 'Invoke a tool, get a prompt, or read a resource.';
+
+/** Put the column back to its empty state. One definition, three callers. */
+function clearResults() {
+  $('results').replaceChildren(el('p', { class: 'empty', text: RESULTS_EMPTY }));
+}
+
 function pushCard(options) {
   const results = $('results');
   const empty = results.querySelector('.empty');
   if (empty) empty.remove();
-  results.prepend(resultCard(options));
+  // A card deletes itself; what it cannot know is that it was the last one, and a column
+  // left with nothing in it at all reads as broken rather than as empty.
+  results.prepend(resultCard({
+    ...options,
+    onRemove: () => { if (!results.querySelector('.card')) clearResults(); },
+  }));
 }
 
-$('btn-clear-results').addEventListener('click', () => {
-  $('results').replaceChildren(el('p', {
-    class: 'empty', text: 'Invoke a tool, get a prompt, or read a resource.',
-  }));
-});
+$('btn-clear-results').addEventListener('click', clearResults);
 
 $('btn-reload').addEventListener('click', () => admin('admin.reload', {}));
 $('btn-refresh').addEventListener('click', async () => { await refreshAdmin(); await refreshListings(); });
@@ -2464,4 +2472,6 @@ export {
   fillField,
   openItem,
   gatewayUri,
+  pushCard,
+  clearResults,
 };

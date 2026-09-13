@@ -880,6 +880,10 @@ a.button { text-decoration: none; display: inline-block; }
 .card-head h3 { font-family: var(--mono); font-size: 0.82rem; overflow-wrap: anywhere; }
 .card-sub { color: var(--muted); font-size: 0.72rem; font-family: var(--mono); }
 .card-meta { display: flex; align-items: center; gap: 0.3rem; flex: none; }
+/* An icon button, so it is squared off rather than wearing a label's padding. The
+   `display: flex` is what stops the inline SVG sitting on the text baseline and
+   leaving a few stray pixels under it. */
+.card-del { display: flex; align-items: center; padding: 0.2rem; }
 
 .tag {
   font-family: var(--mono);
