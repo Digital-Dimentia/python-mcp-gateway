@@ -24,13 +24,17 @@
   <button type="button" id="btn-theme" class="ghost theme"><span id="theme-icon" aria-hidden="true"></span></button>
 </header>
 
-<!-- Shown until both sockets are up, or when the key is wrong. -->
-<section id="gate" class="gate" hidden>
+<!-- Shown until both sockets are up, and again if they go. `data-mode` is what it is
+     saying: `connecting` is a splash and claims nothing, `blocked` asks for a key, `failed`
+     reports. It starts visible and connecting, because the first paint happens before any
+     socket has had a chance to answer -- see `showGate` for why that matters. -->
+<section id="gate" class="gate" data-mode="connecting">
   <form id="gate-form">
-    <h2>Access key required</h2>
-    <p id="gate-message">This gateway is protected by an access key.</p>
-    <label>Key <input type="password" id="gate-key" autocomplete="off" spellcheck="false"></label>
-    <button type="submit">Connect</button>
+    <span class="gate-spinner" id="gate-spinner" aria-hidden="true"></span>
+    <h2 id="gate-title">Starting…</h2>
+    <p id="gate-message">Waiting for the gateway.</p>
+    <label id="gate-key-field">Key <input type="password" id="gate-key" autocomplete="off" spellcheck="false"></label>
+    <button type="submit" id="gate-submit">Connect</button>
   </form>
 </section>
 

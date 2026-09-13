@@ -7,7 +7,7 @@
 // what you exercise here is byte-identical to what the model gets.
 
 import { AdminSocket, McpSocket, RpcError } from './rpc.js';
-import { inShell, onGatewayState } from './tauri-transport.js';
+import { gatewayStatus, inShell, onGatewayState } from './tauri-transport.js';
 import { buildForm, buildPromptForm, templateVariables, expandTemplate } from './schema_form.js';
 import {
   renderToolResult, renderPromptResult, renderResourceResult, renderError, resultCard, pretty,
@@ -85,20 +85,59 @@ function initialKey() {
   try { return localStorage.getItem(KEY_STORAGE) || null; } catch { return null; }
 }
 
-function showGate(message) {
+// What the overlay is currently saying. Three modes, and the distinction between the first
+// two is the whole point:
+//
+//   connecting  a splash. Nothing is wrong; the gateway has not answered *yet*.
+//   blocked     the key is missing or wrong, and there is a field to fix it.
+//   failed      it will not start, and here is what it said.
+//
+// The bug this replaced: the page painted, the shell's first `gw_open` answered "the
+// gateway is not listening yet" because a cold interpreter takes a second to import, and
+// the socket's `closed` handler wrote "This gateway may require an access key" over a
+// window that was simply still starting. Then it connected and the message vanished. Every
+// launch looked like a failure that fixed itself.
+//
+// So the modes are ranked, and `showGate` will not let a lower-ranked writer overwrite a
+// higher-ranked one. A socket closing is only ever evidence of `connecting` until the
+// retries run out; the shell's own supervisor is the only thing that can say `failed`.
+const GATE_RANK = { connecting: 0, blocked: 1, failed: 2 };
+
+const GATE_TITLES = {
+  connecting: 'Starting…',
+  blocked: 'Access key required',
+  failed: 'The gateway could not start',
+};
+
+let gateMode = 'connecting';
+
+function showGate(message, mode = 'blocked') {
+  const gate = $('gate');
+  // A late socket close must not drag a `failed` panel back to a splash. Equal ranks do
+  // update, so a second `restarting` can refresh its attempt count.
+  if (!gate.hidden && GATE_RANK[mode] < GATE_RANK[gateMode]) return;
+  gateMode = mode;
+  gate.dataset.mode = mode;
+  gate.hidden = false;
+  $('gate-title').textContent = GATE_TITLES[mode];
   $('gate-message').textContent = message;
-  $('gate').hidden = false;
-  // Under the shell the gate is a status panel, not a prompt. There is no key to ask a
-  // human for -- a socket that will not open means the gateway is down or still starting,
-  // which is the host's problem and not the user's -- so the field goes and the button
-  // becomes a retry. The heading says what is actually true.
-  if (inShell) {
-    $('gate').querySelector('h2').textContent = 'Gateway not connected';
-    $('gate-key').closest('label').hidden = true;
-    $('gate-form').querySelector('button[type="submit"]').textContent = 'Retry';
-    return;
-  }
-  $('gate-key').focus();
+
+  // The key field exists for exactly one mode. Under the shell it never appears at all:
+  // there is no key to ask a human for -- the host mints one and spends it itself -- so a
+  // socket that will not open is the host's problem and not the user's.
+  const asking = mode === 'blocked' && !inShell;
+  $('gate-key-field').hidden = !asking;
+  const submit = $('gate-submit');
+  submit.textContent = asking ? 'Connect' : 'Retry';
+  // Nothing to retry while it is still coming up, and a button that does nothing is worse
+  // than no button.
+  submit.hidden = mode === 'connecting';
+  if (asking) $('gate-key').focus();
+}
+
+function hideGate() {
+  $('gate').hidden = true;
+  gateMode = 'connecting';
 }
 
 $('gate-form').addEventListener('submit', (event) => {
@@ -109,7 +148,11 @@ $('gate-form').addEventListener('submit', (event) => {
     if (value) localStorage.setItem(KEY_STORAGE, value);
     else localStorage.removeItem(KEY_STORAGE);
   } catch { /* private window */ }
-  $('gate').hidden = true;
+  // Back to a splash rather than straight to the page. The sockets have not answered yet,
+  // and the rank guard would otherwise keep a stale `blocked` or `failed` panel pinned in
+  // front of a retry that is working.
+  hideGate();
+  showGate('Waiting for the gateway.', 'connecting');
   connect();
 });
 
@@ -152,16 +195,27 @@ function wire(socket, name, pill, onReady) {
     pill.title = reason ? `${socket.path}: ${reason}` : socket.path;
     if (next === 'ready') {
       state.everConnected[name] = true;
-      $('gate').hidden = true;
+      hideGate();
       onReady();
     } else if (next === 'closed' && !state.everConnected[name]) {
       // A browser will not say *why* a socket failed — a 401 and a refused connection are
       // the same event here. So this cannot claim the key is wrong. It offers the field on
       // a failure that happened before any successful connection, which is the closest
       // honest thing to do.
-      showGate(state.key
-        ? 'Could not open a socket. The access key may be wrong, or the daemon may be down.'
-        : 'Could not open a socket. This gateway may require an access key.');
+      //
+      // But not on the first close, and never in the shell. A daemon that is still starting
+      // refuses connections for a second or two, which is indistinguishable from a wrong
+      // key at this level and is overwhelmingly the commoner case at page load. So the
+      // early closes are a splash, and only an exhausted retry budget is allowed to accuse
+      // the key. In the shell the question never arises: the host holds the key, and its
+      // own state events say what is really happening.
+      if (inShell || socket.attempt < RETRIES_BEFORE_GATE) {
+        showGate('Waiting for the gateway.', 'connecting');
+      } else {
+        showGate(state.key
+          ? 'Could not open a socket. The access key may be wrong, or the daemon may be down.'
+          : 'Could not open a socket. This gateway may require an access key.', 'blocked');
+      }
       // ...and then stop trying. A socket that has never once connected is not waiting out
       // a blip, it is being refused, and a page left open on the gate would otherwise
       // reconnect on a backoff forever — a 401 every few seconds against the daemon, and a
@@ -2344,16 +2398,26 @@ state.key = initialKey();
 // and a `servers.yaml` the daemon refuses is a window that says "connecting" forever with
 // the reason sitting unread in the host's log buffer.
 if (inShell) {
-  onGatewayState((status) => {
-    if (status.state === 'listening') return;      // the sockets speak for themselves
-    const last = status.log.length ? status.log[status.log.length - 1] : '';
+  const paint = (status) => {
+    if (!status || status.state === 'listening') return;  // the sockets speak for themselves
+    const last = status.log?.length ? status.log[status.log.length - 1] : '';
+    if (status.state === 'failed') {
+      showGate(status.reason || last || 'The gateway exited before it could serve.', 'failed');
+      return;
+    }
     showGate({
-      idle: 'Starting the gateway…',
+      idle: 'Waiting for the gateway.',
       starting: 'Starting the gateway…',
       restarting: `The gateway stopped; restarting (attempt ${status.attempt})…`,
-      failed: `The gateway could not start. ${status.reason || last}`,
-    }[status.state] || last);
-  });
+    }[status.state] || last || 'Waiting for the gateway.', 'connecting');
+  };
+
+  onGatewayState(paint);
+  // Asked once as well as subscribed. An event only fires on a *change*, so a window that
+  // finished loading after the supervisor's last transition would otherwise sit on the
+  // generic splash with the host's real answer -- "on attempt 4", or why it failed --
+  // already emitted and gone.
+  gatewayStatus().then(paint).catch(() => {});
 }
 
 connect();
