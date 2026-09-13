@@ -18,7 +18,16 @@
 //! The `launchd` plist at `scripts/com.dbuschman7.mcp-gateway.plist` hit the same problem
 //! and solved it with a hard-coded list. That list is [`FALLBACK`] below. Two copies of it
 //! is exactly how one of them ends up missing `/opt/homebrew/bin`, so each names the other.
+//!
+//! **None of this applies on Windows, and the no-op is deliberate.** Windows takes `PATH`
+//! from the registry, and a process started from Explorer gets the same one a console
+//! process does -- there is no launchd-shaped hole to repair. Running the repair anyway
+//! would be actively wrong rather than merely useless: the separator is `;` there, so
+//! `looks_inherited` would be splitting a path list on its drive letters, and [`FALLBACK`]
+//! is a list of Unix directories that exist on no Windows machine. So [`resolve`] returns
+//! the inherited `PATH` untouched.
 
+#[cfg(unix)]
 use std::time::Duration;
 
 /// Where to look when the login shell cannot be asked.
@@ -34,6 +43,9 @@ const MINIMAL: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
 /// How long the login shell gets. An interactive shell sources the user's rc files, which
 /// is where the `PATH` actually is -- and also where a `read` at startup could hang
 /// forever. Three seconds is far more than a shell needs and far less than a person waits.
+///
+/// Unix only, with the probe it belongs to: there is no login shell to ask on Windows.
+#[cfg(unix)]
 const SHELL_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Whether a `PATH` looks like one a GUI launch inherited rather than one a user configured.
@@ -73,7 +85,9 @@ pub fn accept(reported: &str, inherited: &str) -> Option<String> {
 /// The `PATH` to give the gateway, asking the login shell if the inherited one looks bare.
 pub fn resolve() -> String {
     let inherited = std::env::var("PATH").unwrap_or_default();
-    if !looks_inherited(&inherited) {
+    // `cfg!` rather than `#[cfg]`, so both branches are type-checked everywhere and the
+    // Windows case cannot rot unseen. See the module docs for why it is a no-op there.
+    if cfg!(windows) || !looks_inherited(&inherited) {
         return inherited;
     }
     match ask_login_shell() {
@@ -134,11 +148,10 @@ fn ask_login_shell() -> Option<String> {
     Some(out)
 }
 
+/// Unreachable on Windows -- [`resolve`] returns before it -- and present so the module
+/// compiles there. See the module docs.
 #[cfg(not(unix))]
 fn ask_login_shell() -> Option<String> {
-    // Windows takes its PATH from the registry and a GUI process gets the same one a
-    // console process does, so there is nothing to repair. Cross-platform support is its
-    // own bead; this is here so the module compiles when that bead starts.
     None
 }
 
@@ -206,6 +219,15 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(entries.len(), unique.len(), "{widened}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_keeps_the_path_it_was_given() {
+        // The registry already answered this question. A repair here would split a `;`-
+        // separated list on its drive letters and then prepend `/opt/homebrew/bin`.
+        std::env::set_var("PATH", r"C:\Windows\system32;C:\Program Files\nodejs");
+        assert_eq!(resolve(), r"C:\Windows\system32;C:\Program Files\nodejs");
     }
 
     #[test]

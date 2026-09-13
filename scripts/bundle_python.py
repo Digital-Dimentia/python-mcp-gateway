@@ -35,6 +35,17 @@ Two edits are made to what uv hands over:
   `cpython-3.13.15-macos-aarch64-none/`; the bundle wants `python/`, so that the Rust side
   names one path that does not move when a patch release lands.
 
+## Three platforms, one script
+
+The interpreter is the only per-target artifact in the bundle, and `uv python install`
+already knows every triple, so the platform differences here are all *shape*: Unix is
+`bin/python3` beside `lib/python3.13/`, Windows is `python.exe` beside `Lib/` and `DLLs/`.
+`interpreter_path`, `stdlib_path` and the two strip lists are the whole of it; the policy --
+what is removed, what is verified, what the manifest records -- is identical everywhere.
+
+`interpreter_path` is twinned with `Layout::interpreter` in `supervisor.rs`, which names the
+same two paths from Rust.
+
 ## Bytecode
 
 Compiled here, and `supervisor.rs` runs the child with `PYTHONDONTWRITEBYTECODE=1`. The
@@ -92,8 +103,14 @@ REQUIRED_MODULES = (
 #: either a developer tool, a build-time artifact, or a GUI toolkit -- nothing here is
 #: reachable from a daemon that serves WebSockets and spawns subprocesses.
 #:
-#: `lib/libpython3.*.dylib` is deliberately **absent**: `bin/python3` links against it.
-STRIP_GLOBS = (
+#: Two lists because the trees are two different shapes, not because the *policy* differs:
+#: python-build-standalone lays Unix out as `bin/python3` + `lib/python3.13/`, and Windows
+#: as `python.exe` + `Lib/` + `DLLs/` at the root. Every entry below has a counterpart in
+#: the other list, and a comment is written once, above the pair.
+#:
+#: `lib/libpython3.*.dylib` (and `python3*.dll` on Windows) is deliberately **absent**:
+#: the interpreter links against it.
+UNIX_STRIP_GLOBS = (
     # Developer tools and the REPL's furniture.
     "lib/python3.*/idlelib",
     "lib/python3.*/turtledemo",
@@ -131,6 +148,62 @@ STRIP_GLOBS = (
     "share/man",
 )
 
+WINDOWS_STRIP_GLOBS = (
+    # Developer tools and the REPL's furniture.
+    "Lib/idlelib",
+    "Lib/turtledemo",
+    "Lib/pydoc_data",
+    "Lib/test",
+    "Lib/lib2to3",
+    "Scripts/idle*",
+    "Scripts/pydoc*",
+    "Scripts/2to3*",
+    # Tk.
+    "Lib/tkinter",
+    "DLLs/_tkinter.pyd",
+    "DLLs/tcl*.dll",
+    "DLLs/tk*.dll",
+    "tcl",
+    # Installers.
+    "Lib/ensurepip",
+    "Lib/site-packages/pip",
+    "Lib/site-packages/pip-*",
+    "Lib/site-packages/setuptools",
+    "Lib/site-packages/setuptools-*",
+    "Lib/site-packages/pkg_resources",
+    "Lib/site-packages/_distutils_hack",
+    "Scripts/pip*",
+    # Build-time support for linking *against* this interpreter. `libs/` is the import
+    # library an extension would build against; `python.exe` does not need it to run.
+    "include",
+    "libs",
+)
+
+
+def is_windows() -> bool:
+    """Whether this build targets Windows. Host-only, like everything else here."""
+    return os.name == "nt"
+
+
+def strip_globs() -> tuple[str, ...]:
+    return WINDOWS_STRIP_GLOBS if is_windows() else UNIX_STRIP_GLOBS
+
+
+def interpreter_path(root: Path) -> Path:
+    """The interpreter inside a bundle.
+
+    **Twinned with `Layout::interpreter` in `desktop/src-tauri/src/supervisor.rs`**, which
+    has to name the same two paths from the other side. If one of them is wrong the app
+    starts nothing at all, with a dialog that says nothing useful -- which is why the Rust
+    side has a unit test asserting both spellings and this script verifies the real file.
+    """
+    return root / "python.exe" if is_windows() else root / "bin" / "python3"
+
+
+def stdlib_path(root: Path) -> Path:
+    """The standard library directory: `Lib/` on Windows, `lib/python3.N/` elsewhere."""
+    return root / "Lib" if is_windows() else next(root.glob("lib/python3.*"))
+
 
 def log(message: str) -> None:
     """Progress on stderr, so stdout stays free for a future `--print-path`."""
@@ -159,11 +232,22 @@ def uv_environment() -> dict[str, str]:
 def uv_python_tag(version: str) -> str:
     """The python-build-standalone triple for this machine.
 
-    Host-only, deliberately: a cross-built bundle needs a cross-built Tauri binary to sit
-    beside it, and that is the cross-platform-CI bead, not this one.
+    Host-only, deliberately. A cross-built bundle would need a cross-built Tauri binary to
+    sit beside it, and Tauri is happiest building for the machine it is on -- so
+    `publish-artifacts.yml` runs one runner per platform and each builds its own, rather
+    than one runner trying to produce four.
     """
     machine = platform.machine()
-    arch = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64"}.get(machine)
+    # Case-folded, and `AMD64` spelled out: that is what `platform.machine()` returns on
+    # 64-bit Windows, and `ARM64` on Windows on ARM -- neither of which is how any other
+    # platform spells the same processor. Getting this wrong is not a subtle failure, it is
+    # every Windows build refusing to start.
+    arch = {
+        "arm64": "aarch64",
+        "aarch64": "aarch64",
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+    }.get(machine.lower())
     if arch is None:
         raise SystemExit(f"bundle_python: unsupported architecture {machine!r}")
     system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system())
@@ -229,14 +313,16 @@ def fetch_interpreter(out: Path, version: str) -> Path:
 
 def unmanage(root: Path) -> None:
     """Drop the marker that stops anything installing here. See the module docstring."""
-    for marker in root.glob("lib/python3.*/EXTERNALLY-MANAGED"):
+    # `rglob` rather than the stdlib path, because the marker sits in the stdlib directory
+    # on Unix and beside it on Windows, and there is only ever one of them in the tree.
+    for marker in root.rglob("EXTERNALLY-MANAGED"):
         marker.unlink()
         log(f"removed {marker.relative_to(root)}")
 
 
 def install_gateway(root: Path, wheel: Path) -> None:
     """Install the wheel and its two pinned dependencies into the bundled interpreter."""
-    interpreter = root / "bin" / "python3"
+    interpreter = interpreter_path(root)
     argv = ["uv", "pip", "install", "--python", str(interpreter), "--system", str(wheel)]
 
     # Mirrors the escape hatch the Makefile documents for pip: behind a TLS-intercepting
@@ -252,7 +338,7 @@ def install_gateway(root: Path, wheel: Path) -> None:
 def strip(root: Path) -> list[str]:
     """Remove what a daemon never reaches. Returns what was actually removed."""
     removed: list[str] = []
-    for pattern in STRIP_GLOBS:
+    for pattern in strip_globs():
         for path in sorted(root.glob(pattern)):
             removed.append(str(path.relative_to(root)))
             if path.is_dir() and not path.is_symlink():
@@ -271,10 +357,10 @@ def strip(root: Path) -> list[str]:
 
 def compile_bytecode(root: Path) -> None:
     """Pre-compile, so a read-only bundle is not also a slow one. See the module docstring."""
-    lib = next(root.glob("lib/python3.*"))
+    lib = stdlib_path(root)
     run(
         [
-            str(root / "bin" / "python3"), "-m", "compileall",
+            str(interpreter_path(root)), "-m", "compileall",
             "-q", "-f", "--invalidation-mode", "unchecked-hash", str(lib),
         ],
         # compileall exits non-zero when *any* file fails to compile, and a standalone
@@ -292,7 +378,7 @@ def verify(root: Path, config: Path) -> None:
     plausible way to break: a strip that went one directory too far, a wheel that did not
     install, an interpreter that did not survive being moved.
     """
-    interpreter = root / "bin" / "python3"
+    interpreter = interpreter_path(root)
     if not interpreter.exists():
         raise SystemExit(f"bundle_python: no interpreter at {interpreter}")
 
@@ -321,7 +407,7 @@ def write_manifest(root: Path, wheel: Path, version: str, removed: list[str]) ->
     The shell logs this at startup. "Which Python, which wheel" is the first question about
     a bundle that misbehaves, and the answer must not require unpacking the `.app`.
     """
-    interpreter = root / "bin" / "python3"
+    interpreter = interpreter_path(root)
     reported = subprocess.run(
         [str(interpreter), "-c", "import sys; print(sys.version.split()[0])"],
         capture_output=True, text=True, check=True,

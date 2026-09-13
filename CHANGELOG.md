@@ -31,6 +31,27 @@ when it was captured and how long ago that was. Every quoted payload is backend 
 the preamble says so in as many words — a model reading a tool result as an instruction is
 the one failure this document would otherwise invite.
 
+**The desktop app on Linux and Windows.**
+
+`publish-artifacts.yml` now builds the shell on four runners — Apple Silicon, Intel Mac,
+Linux and Windows — and attaches a bundle from each to the release: a `.app.tar.gz`, a
+`.deb` and an AppImage, and an NSIS installer that installs for the current user and needs
+no administrator. Every leg runs the Rust suite before it builds, so the platform-specific
+half is compiled and tested somewhere rather than only written down.
+
+That half is orphan control, which is the one thing that cannot be written once. A gateway
+that outlives its window still holds every credential in `gateway.env`, and each platform
+has a different primitive for making sure it does not: macOS keeps its three layers, Linux
+adds `PR_SET_PDEATHSIG` so the kernel signals the daemon even when the app is `SIGKILL`ed,
+and Windows uses a Job Object whose `KILL_ON_JOB_CLOSE` limit does the pidfile's job in the
+kernel. Two portability bugs came out of writing it down: `ps -o comm=` returns a truncated
+*name* on Linux where it returns a path on macOS, which would have turned the reaper silently
+off, and `platform.machine()` says `AMD64` on Windows, which no triple in the project knew.
+
+Nothing cross-compiles — each runner builds for itself — so the only platform differences in
+`bundle_python.py` are the shape of the interpreter tree, and the two strip lists are checked
+against each other on every platform rather than only on the one that ships them.
+
 **A desktop app: the daemon, its backends and the admin UI in one window, with no terminal
 and no key to copy.**
 

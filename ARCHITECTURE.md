@@ -192,6 +192,13 @@ already allowed — that branch exists for the bridge and for Claude Desktop, an
 WebSocket client falls into it. What a browser-hosted page could not do, a host process
 simply does.
 
+It is built on macOS, Linux and Windows, one runner each, and nothing cross-compiles. The
+only part that cannot be written once is orphan control — a gateway that outlives its window
+still holds every credential in `gateway.env` — so macOS uses a process group and a pidfile,
+Linux adds `PR_SET_PDEATHSIG`, and Windows uses a Job Object whose `KILL_ON_JOB_CLOSE` limit
+does the pidfile's job in the kernel. `.github/workflows/desktop.yml` compiles and tests all
+three on every push, because a macOS developer can reach none of the other two.
+
 Two couplings came out of it, both pinned by `tests/test_desktop_contract.py`: the host
 learns which port `--port 0` chose from the file `--port-file` names, and the `Origin`-less
 branch is now load-bearing. The port started out as a scrape of the daemon's `listening on

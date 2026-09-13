@@ -32,19 +32,20 @@ use crate::supervisor::{self, Layout};
 fn layout(scratch: &str) -> Option<(Layout, PathBuf)> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let python_root = root.join("resources").join("python");
-    if !python_root.join("bin").join("python3").exists() {
+    let data_dir = std::env::temp_dir().join(format!("mcp-gateway-it-{scratch}"));
+    let _ = std::fs::remove_dir_all(&data_dir);
+    let layout = Layout {
+        python_root,
+        data_dir,
+    };
+    // Asked through `Layout`, not by joining `bin/python3` here: the interpreter is at the
+    // root of the tree on Windows, and a second spelling of that path is a second thing to
+    // get wrong -- one that would silently skip the only tests that run the real thing.
+    if !layout.interpreter().exists() {
         eprintln!("skipping: no bundled interpreter -- run `make tauri-python`");
         return None;
     }
-    let data_dir = std::env::temp_dir().join(format!("mcp-gateway-it-{scratch}"));
-    let _ = std::fs::remove_dir_all(&data_dir);
-    Some((
-        Layout {
-            python_root,
-            data_dir,
-        },
-        root.join("seed"),
-    ))
+    Some((layout, root.join("seed")))
 }
 
 /// Start the gateway and wait for the port file it writes.

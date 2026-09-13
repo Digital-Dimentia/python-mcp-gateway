@@ -82,7 +82,8 @@ browser it looks for Tauri, does not find it, and returns having done nothing.
 ```bash
 make tauri-python     # the bundled interpreter — needs the network, takes a minute
 make tauri-dev        # run from source, UI symlinked, edits live
-make tauri-bundle     # MCP-Gateway.app under desktop/src-tauri/target/release/bundle/macos/
+make tauri-bundle     # the installable bundle, under desktop/src-tauri/target/release/bundle/
+make tauri-artifacts  # what tauri-bundle produced, renamed for this platform, in artifacts/
 make tauri-check      # cargo fmt --check, clippy -D warnings, cargo test
 ```
 
@@ -127,11 +128,38 @@ documented feature of the daemon.
 
 ## Not leaving processes behind
 
-A gateway that outlives its window still holds every credential in `gateway.env`. macOS has
-no `PDEATHSIG`, so there are three layers: the child gets its own process group and teardown
-signals the *group* (taking the `npx` backends with it even if the daemon is wedged);
-`kill_on_drop` covers the panic path; and a pidfile, checked at startup against the running
-process's executable, covers the app itself being Force Quit.
+A gateway that outlives its window still holds every credential in `gateway.env`. Every
+platform has to answer the same two questions — kill the whole tree rather than just the
+daemon, and survive the app itself being killed — and each answers them differently.
+
+| | the group kill | the app is killed outright |
+| --- | --- | --- |
+| macOS | `setpgid` + `kill(-pid)` | pidfile, checked at startup |
+| Linux | the same | `PR_SET_PDEATHSIG`, in the kernel |
+| Windows | `TerminateJobObject` | `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` |
+
+macOS is the platform with the least help, which is why it has three layers: the child gets
+its own process group and teardown signals the *group* (taking the `npx` backends with it
+even if the daemon is wedged); `kill_on_drop` covers the panic path; and a pidfile, checked
+at startup against the running process's executable, covers Force Quit.
+
+Linux keeps all three and adds `prctl(PR_SET_PDEATHSIG, SIGTERM)`, which is better than any
+of them: the kernel signals the daemon when this process goes, including by the `SIGKILL` no
+handler of ours survives. `SIGTERM` rather than `SIGKILL`, so the daemon's own handler still
+takes its backends down cleanly. The `prctl` is not atomic with the fork, so the child also
+checks that it has not already been reparented — a gateway whose death signal was missed is
+exactly the orphan holding credentials this section is about.
+
+Windows has neither process groups nor `PDEATHSIG`, and gets both properties from one Job
+Object: every gateway is assigned to it, `TerminateJobObject` is the group kill, and the
+`KILL_ON_JOB_CLOSE` limit means the kernel reaps the whole job when this process's last
+handle to it closes — however this process died. That is the pidfile layer done by the OS,
+which is why `appdata::reap_previous` is a no-op there.
+
+`is_ours`, the check that stops a reused pid getting signalled, differs too: macOS reads the
+full executable path out of `ps -o comm=`, and Linux reads `/proc/<pid>/exe`, because `comm`
+on Linux is a truncated *name* and comparing it against a path would never match — turning
+the reaper silently off rather than loudly wrong.
 
 ## What the tests cover, and what they cannot
 
@@ -189,10 +217,52 @@ validation wants one Team ID. It does not break here, and the reason is worth kn
 gateway is a **subprocess**, so it is governed by its own signature rather than by the
 host's. Verified by running the in-bundle interpreter's `ctypes` and `ssl` imports directly.
 
+## Three platforms
+
+`publish-artifacts.yml` builds the shell on four runners — Apple Silicon, Intel Mac, Linux
+and Windows — and every leg runs `make tauri-check` before `make tauri-bundle`, so the
+Windows Job Object and the Linux `PDEATHSIG` are compiled and tested somewhere. A macOS
+developer cannot reach either of them locally, and code no machine ever builds is code that
+does not work.
+
+Nothing cross-compiles. The bundle carries a python-build-standalone interpreter *and* a
+Tauri binary; each is happier built natively than cross-built against a webview SDK that is
+not the host's, and `uv python install` already knows every triple. So each leg builds for
+the machine it is on, and the platform differences in `bundle_python.py` are all *shape* —
+Unix is `bin/python3` beside `lib/python3.13/`, Windows is `python.exe` beside `Lib/` and
+`DLLs/`. `interpreter_path` there is twinned with `Layout::interpreter` in `supervisor.rs`,
+and both are asserted from both sides, because a disagreement is an app that starts nothing
+with a dialog that says nothing.
+
+Each platform picks its bundle formats in an overlay Tauri merges over `tauri.conf.json`:
+
+| | targets | why |
+| --- | --- | --- |
+| macOS | `app` | `tauri.conf.json` |
+| Linux | `deb`, `appimage` | `tauri.linux.conf.json` |
+| Windows | `nsis` | `tauri.windows.conf.json`, `installMode: currentUser` |
+
+The overlays carry bundle targets and nothing else. The base config is where the design is
+written down — the CSP that keeps the window off the network, the resources, the frontend
+path — and a platform file that restated any of it would be a second copy able to disagree
+with the first, on one platform only. `tests/test_collect_desktop_bundle.py` holds them to
+that, and to the other half of the deal: every target built is one
+`scripts/collect_desktop_bundle.py` knows how to publish, under a name that says which
+platform it is for.
+
+The Linux leg is pinned to the oldest supported runner image rather than `ubuntu-latest`:
+the `.deb` and the AppImage carry whatever glibc they were linked against, and a bundle
+built on the newest runner will not start on a two-year-old desktop.
+
+**The Windows NSIS installer and the Linux packages have not been installed and launched by
+a person.** Everything under the window is covered by `make tauri-check` on each platform in
+CI, but the same manual checklist above is unwalked on both — see
+`python-mcp-gateway-e6o`.
+
 ## Not done yet
 
-The bundle is ad-hoc signed and un-notarised, and the icons are a generated placeholder. `dmg` is
-not a bundle target because `bundle_dmg.sh` drives Finder through AppleScript; it belongs with
-the signing work, which has to sign every Mach-O inside the bundled interpreter. Linux and
-Windows are a separate piece of work — Windows has no `setpgid` and wants a Job Object, Linux
-gets `PR_SET_PDEATHSIG`, which is better than any of this.
+The bundle is ad-hoc signed and un-notarised, and the icons are a generated placeholder.
+`dmg` is not a bundle target because `bundle_dmg.sh` drives Finder through AppleScript; it
+belongs with the signing work, which has to sign every Mach-O inside the bundled
+interpreter. The Windows installer is unsigned too, which means SmartScreen warns on it.
+See `python-mcp-gateway-c1q`.
