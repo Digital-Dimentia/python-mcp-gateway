@@ -14,6 +14,12 @@
 // that were only taken on a button press would make the tool report whatever the bench
 // looked like the last time somebody happened to press it — which is the kind of staleness
 // nothing on screen would explain. See `src/mcp_gateway/clipboard.md`.
+//
+// The Preview toggle does not weaken that. It renders the text that is already in the box
+// -- `markdown.js`, read-only, nodes not markup -- so there is still exactly one author of
+// this document and the rendering is a view of the copy, never the copy itself.
+
+import { renderMarkdown } from './markdown.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -38,6 +44,14 @@ let open = false;
 //: to throw away what somebody wrote.
 let edited = false;
 
+//: Which of the two views is up. The modal opens on the rendering, because the first thing
+//: a person does with this document is read it -- editing is the second thing, and only
+//: sometimes. Sticky after that: somebody who switched to the text is working on the text,
+//: and a toggle that reset itself every time would be a preference the page kept forgetting.
+//: `index.html` starts its two panes in this state, so nothing flashes before the first
+//: `showView`.
+let previewing = true;
+
 /**
  * Wire the button, the modal and the publisher up.
  *
@@ -52,6 +66,7 @@ export function installClipboard({ gather: gatherFn, send: sendFn }) {
   $('btn-clipboard').addEventListener('click', openClipboard);
   $('btn-clip-copy').addEventListener('click', copyDocument);
   $('btn-clip-regen').addEventListener('click', () => { edited = false; refresh(); });
+  $('btn-clip-preview').addEventListener('click', () => { previewing = !previewing; showView(); });
   $('clip-text').addEventListener('input', () => { edited = true; note('Edited — the copy button takes what is in the box.'); });
   $('clipboard-dialog').addEventListener('close', () => { open = false; });
 }
@@ -81,6 +96,7 @@ async function openClipboard() {
   open = true;
   edited = false;
   $('clip-text').value = '';
+  showView();
   note('Generating…');
   if (!dialog.open) dialog.showModal();
   await refresh();
@@ -98,14 +114,44 @@ async function refresh() {
     // thing an editor must never do. `tests/ui/clipboard.test.mjs` found it.
     if (!open || edited) return;
     box.value = text;
+    if (previewing) drawPreview();
     // Said in the modal rather than only in the preamble: the person is about to paste
     // this somewhere, and how much of it there is decides whether they trim it first.
     const lines = box.value ? box.value.split('\n').length : 0;
-    note(`${lines} lines, ${box.value.length.toLocaleString()} characters. Edit freely — `
-      + 'copying takes what is in the box.');
+    note(`${lines} lines, ${box.value.length.toLocaleString()} characters. `
+      + (previewing
+        ? 'Preview — press Edit to change it. Copying takes the text, not the rendering.'
+        : 'Edit freely — copying takes what is in the box.'));
   } catch (err) {
     note(`Could not generate the document: ${err.message || err}`);
   }
+}
+
+/**
+ * Swap the editor for the rendering, or back.
+ *
+ * The textarea stays the one source: preview reads its value, and Copy takes its value
+ * whichever view is showing. So the rendering can never be what gets pasted, and an edit
+ * made before previewing is still there to come back to.
+ */
+function showView() {
+  const box = $('clip-text');
+  const pane = $('clip-preview');
+  box.hidden = previewing;
+  pane.hidden = !previewing;
+  const button = $('btn-clip-preview');
+  button.textContent = previewing ? 'Edit' : 'Preview';
+  button.title = previewing
+    ? 'Go back to the editable text'
+    : 'Show the document as rendered Markdown';
+  button.setAttribute('aria-pressed', String(previewing));
+  if (previewing) drawPreview();
+}
+
+/** Render what is in the box into the preview pane, replacing whatever was there. */
+function drawPreview() {
+  const pane = $('clip-preview');
+  pane.replaceChildren(renderMarkdown($('clip-text').value));
 }
 
 /** A card arrived, or a pick changed, while the modal was up. */

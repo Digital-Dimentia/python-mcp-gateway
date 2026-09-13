@@ -150,14 +150,26 @@
      (`clipboard.py`) rather than assembled here, because the same document is what
      `gateway__clipboard` hands the model -- one renderer, two surfaces. The textarea is a
      plain editor on purpose: what is wanted before pasting is a trim or a note, and a rich
-     editor would put markup into a document whose entire job is to be plain text. -->
+     editor would put markup into a document whose entire job is to be plain text. Preview
+     is a separate read-only view for the same reason -- it is a window onto the text, never
+     a second place the text can be written. -->
 <dialog id="clipboard-dialog">
   <form method="dialog" class="clip">
     <div class="clip-head">
-      <h2>Clipboard</h2>
-      <p class="clip-sub">Every result in this column and every injectable value, written for an AI agent.</p>
+      <div>
+        <h2>Clipboard</h2>
+        <p class="clip-sub">Every result in this column and every injectable value, written for an AI agent.</p>
+      </div>
+      <!-- Up here rather than in the action row: this switches what the panel shows, and
+           the buttons at the foot decide what leaves the modal. -->
+      <button type="button" id="btn-clip-preview" class="ghost" title="Go back to the editable text">Edit</button>
     </div>
-    <textarea id="clip-text" class="clip-text" spellcheck="false" aria-label="The generated document"></textarea>
+    <textarea id="clip-text" class="clip-text" spellcheck="false" hidden aria-label="The generated document"></textarea>
+    <!-- The view the modal opens on, and built by `markdown.js` out of DOM nodes rather
+         than markup -- what is quoted in here came off a backend, so nothing in it is ever
+         parsed as HTML. The markup starts in the same state `clipboard.js` does, so the
+         panel does not flash the editor before the first render. -->
+    <div id="clip-preview" class="clip-preview" aria-label="The document, rendered"></div>
     <p class="clip-note" id="clip-note"></p>
     <div class="clip-actions">
       <button type="button" id="btn-clip-regen" class="ghost" title="Throw away edits and regenerate from the columns">Regenerate</button>

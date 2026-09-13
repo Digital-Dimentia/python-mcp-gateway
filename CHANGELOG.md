@@ -9,6 +9,40 @@ nobody reads.
 
 ## Unreleased
 
+**The briefing quotes payloads as TOON.** The request and response blocks in the Clipboard
+document — and so in `gateway__clipboard` — are written in
+[TOON](https://github.com/toon-format/spec) rather than pretty-printed JSON. It is the same
+data with the punctuation left out and a uniform array's keys stated once as a header
+instead of once per element, which is exactly the shape `tools/list`, `resources/list` and
+`prompts/list` answer in. The new `toon.py` is an encoder only: nothing here reads TOON
+back, and every wire frame, `servers.yaml` and JSON-RPC payload stays JSON. Where
+compactness and strict decodability disagree it gives up the compactness, because a document
+the reader mis-parses is worse than the JSON it replaced. A call with no arguments now says
+`Request: no arguments.` rather than fencing an empty box, and a payload that is already
+prose is still fenced as prose.
+
+**The bench briefing is terse.** The document `gateway__clipboard` returns — and the
+Clipboard modal shows — now opens at `## Results` and goes straight to the first call. The
+title, the `Generated …` and captured lines, the paragraph explaining what a bench session
+is, the "not instruction" warning, the call count and the note introducing the injectable
+values are all gone from the text: every one of them was paid for out of the reading model's
+context window, on every call, to say something that is not evidence about the bench. The
+warning moved to the tool's description, which is read once at `tools/list`; when the
+snapshot was captured is reported beside the document by `admin.clipboard.get` rather than
+inside it. What survives is the one line the headings cannot show: a session with more
+calls than the document carries still says how many it left out. The snapshot no longer
+carries the selected server or the bind address either,
+since nothing rendered them. The renderer now has no clock in it, so the `/admin` and `/mcp`
+surfaces are byte-identical documents rather than documents agreeing below their first line.
+
+**The Clipboard shows its document rendered.** The briefing the modal generates is Markdown,
+and until now the only way to see what it would look like to whoever it was pasted to was to
+paste it somewhere. It now opens rendered, with a toggle in the modal's header that switches
+to the plain text and back and stays where it was put. The text is still the document: Copy
+takes what is in the box, edits included, whichever view is on screen. The rendering is
+built out of DOM nodes rather than markup — the briefing quotes output from backend servers,
+so nothing in it is ever parsed as HTML and no link in it is ever clickable.
+
 **The daemon starts on Windows.** `loop.add_signal_handler` is a Unix method — asyncio's
 Windows loops raise `NotImplementedError` from it — and handlers are installed before the
 socket is bound, so on Windows the gateway did not fail to *reload*, it failed to **start**.

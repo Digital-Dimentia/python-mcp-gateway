@@ -2323,9 +2323,10 @@ $('btn-clear-results').addEventListener('click', () => { clearResults(); clipboa
 
 /** The Results column and the Injectable values column, in the order they are on screen. */
 function clipboardSnapshot() {
+  // Neither the selected server nor the bind address is in here: `clipboard.py` renders
+  // neither, and the document is kept to evidence about the calls. The server name is in
+  // every entry regardless -- tool names are `server__tool`.
   return {
-    server: state.selected,
-    bind: state.status?.bind || null,
     results: [...$('results').querySelectorAll('.card')]
       .map((card) => resultRecords.get(card))
       .filter(Boolean),
