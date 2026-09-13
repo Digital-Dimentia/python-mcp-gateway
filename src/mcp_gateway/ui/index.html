@@ -91,6 +91,11 @@
 
 </main>
 
+<!-- One tooltip for the whole page, parked here rather than inside a column: the columns
+     scroll, and anything positioned inside one is clipped by its own `overflow`. It is
+     `position: fixed` and placed by hand -- see `placeTooltip` in app.js. -->
+<div id="tooltip" role="tooltip" hidden></div>
+
 <!-- The log, parked behind the footer. The tab at the footer's left edge raises it. -->
 <div id="log-drawer" class="drawer" role="region" aria-label="Log">
   <div class="drawer-head">

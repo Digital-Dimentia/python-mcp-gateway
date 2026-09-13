@@ -478,7 +478,12 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || openMenu === null) return;
+  if (event.key !== 'Escape') return;
+  // Escape dismisses the tooltip whether or not a menu is open, and without swallowing the
+  // key: WAI-ARIA asks that a tooltip be dismissible without moving focus, which matters
+  // most to the person who cannot simply look past it.
+  hideTooltip();
+  if (openMenu === null) return;
   openMenu = null;
   renderBackends();
 });
@@ -878,6 +883,8 @@ function select(name) {
 }
 
 function renderPrimitives() {
+  // Every row below is about to be replaced, the hovered one included.
+  hideTooltip();
   $('primitives-title').textContent = state.selected || 'Primitives';
   for (const kind of Object.keys(state.listings)) {
     const count = state.selected
@@ -907,11 +914,92 @@ function renderPrimitives() {
       el('span', { class: 'primitive-note', text: entry.description || entry.title || '' }),
     ]);
     for (const badge of annotationBadges(entry)) button.append(badge);
+    tooltipOn(button, entry.description || entry.title || '');
     button.addEventListener('click', () => openItem(state.kind, entry));
     row.append(button);
     list.append(row);
   }
 }
+
+// ── The primitive tooltip ──────────────────────────────────────────────────────
+//
+// A row ellipsizes its description to one line, which on most servers is the first few
+// words of a paragraph. The rest of it lives in the detail pane, which is behind a click --
+// no help at all to someone still deciding *which* row to click, which is exactly when the
+// description is worth reading. So it also pops on hover.
+//
+// `position: fixed`, and placed by hand, for the same reason the server menu is: the column
+// scrolls, and `overflow-y: auto` clips anything positioned inside it. See `placeMenu`.
+//
+// One node for the page, not one per row. The list is rebuilt on every refresh and on every
+// tab switch, so a per-row tooltip would outlive the row it was about -- and would put a
+// hundred hidden nodes in the document to say one thing at a time.
+
+//: Long enough that running the pointer down the list does not strobe, short enough not to
+//: feel like a wait. Focus skips it: arriving by keyboard is already a deliberate act.
+const TOOLTIP_DELAY = 250;
+let tooltipTimer = null;
+
+function showTooltip(anchor, text) {
+  const tip = $('tooltip');
+  tip.textContent = text;
+  tip.hidden = false;
+  // The button, not the tooltip, is what a screen reader is on; this is what tells it there
+  // is a description to read, and `hideTooltip` is what takes the claim back.
+  anchor.setAttribute('aria-describedby', 'tooltip');
+  placeTooltip(anchor);
+}
+
+function hideTooltip() {
+  clearTimeout(tooltipTimer);
+  tooltipTimer = null;
+  const tip = $('tooltip');
+  tip.hidden = true;
+  //: Every describer, not just the one we think is current: a row removed mid-hover takes
+  //: its own attribute with it, but a rebuild that happened between show and hide would
+  //: otherwise leave one pointing at a hidden node.
+  for (const stale of document.querySelectorAll('[aria-describedby="tooltip"]')) {
+    stale.removeAttribute('aria-describedby');
+  }
+}
+
+/** Below the row, left-aligned to it, and inside the window on all four sides. */
+function placeTooltip(anchor) {
+  const tip = $('tooltip');
+  const row = anchor.getBoundingClientRect();
+  // Measured only once it is unhidden and unpinned: a `hidden` element has no box, and one
+  // still wearing the last anchor's coordinates would be measured against the wrong edge.
+  tip.style.left = '0px';
+  tip.style.top = '0px';
+  const box = tip.getBoundingClientRect();
+  const below = row.bottom + 6;
+  // Flipped above rather than squeezed: a tooltip clamped against the bottom edge covers
+  // the row it is describing, which is the one thing it must not do.
+  const top = below + box.height > window.innerHeight - 8
+    ? Math.max(8, row.top - box.height - 6)
+    : below;
+  tip.style.left = `${Math.max(8, Math.min(row.left, window.innerWidth - box.width - 8))}px`;
+  tip.style.top = `${top}px`;
+}
+
+/** Wire one row's button to the tooltip. Does nothing when there is nothing to say. */
+function tooltipOn(button, text) {
+  if (!text) return;
+  button.addEventListener('mouseenter', () => {
+    clearTimeout(tooltipTimer);
+    tooltipTimer = setTimeout(() => showTooltip(button, text), TOOLTIP_DELAY);
+  });
+  button.addEventListener('focus', () => showTooltip(button, text));
+  button.addEventListener('mouseleave', hideTooltip);
+  button.addEventListener('blur', hideTooltip);
+  // The click rebuilds the list, so the anchor is about to stop existing.
+  button.addEventListener('click', hideTooltip);
+}
+
+// A fixed tooltip does not follow its row, and there is no sensible place for it to be
+// once the thing it points at has moved. Dismissed rather than chased.
+$('primitives').addEventListener('scroll', hideTooltip);
+window.addEventListener('resize', hideTooltip);
 
 const itemId = (entry) => entry.name || entry.uri || entry.uriTemplate;
 
@@ -2480,4 +2568,6 @@ export {
   gatewayUri,
   pushCard,
   clearResults,
+  renderPrimitives,
+  hideTooltip,
 };
