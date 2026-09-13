@@ -9,10 +9,14 @@ nobody reads.
 
 ## Unreleased
 
-**The desktop shell builds on Windows.** `tauri_build::build()` compiles `icons/icon.ico`
-into a Windows Resource file, and the icon set shipped only PNGs — so the Windows leg of the
-desktop workflow failed at the crate, before anything of the app was exercised. The `.ico`
-and the macOS `.icns` are generated from the same placeholder `icon.png` and committed;
+**The desktop shell builds on Windows.** Two things stood between the Windows runner and the
+Job Object code it exists to compile. `tauri_build::build()` compiles `icons/icon.ico` into a
+Windows Resource file, and the icon set shipped only PNGs — so the build failed at the crate,
+before anything of the app was exercised. Behind that, `windows-sys` gates *functions* on
+every feature their signature reaches into, and `CreateJobObjectW` takes a
+`SECURITY_ATTRIBUTES`: without `Win32_Security` the symbol is not absent-with-an-explanation,
+it is absent, and the compiler suggests `CreateJobSet`. The `.ico` and the macOS `.icns` are
+generated from the same placeholder `icon.png` and committed;
 `scripts/bundle_python.py` joined that workflow's path filter in the same breath, because it
 is what `make tauri-python` runs and a fix to its Windows half had already merged without the
 workflow ever running.
