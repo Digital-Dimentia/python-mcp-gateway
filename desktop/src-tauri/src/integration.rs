@@ -54,7 +54,7 @@ fn layout(scratch: &str) -> Option<(Layout, PathBuf)> {
 /// uses it: stderr keeps arriving while the socket is being used. It no longer carries the
 /// port -- that comes from `wait_for_port` -- but it is still what a failure is explained
 /// with, so it is collected and printed when the wait times out.
-async fn start(layout: &Layout, key: &str) -> (tokio::process::Child, u16) {
+async fn start(layout: &Layout, key: &str) -> (tokio::process::Child, u16, Daemon) {
     let port_file = layout.portfile();
     let _ = std::fs::remove_file(&port_file);
 
@@ -69,12 +69,43 @@ async fn start(layout: &Layout, key: &str) -> (tokio::process::Child, u16) {
     }));
 
     match supervisor::wait_for_port(&port_file, supervisor::STARTUP_TIMEOUT).await {
-        Some(port) => (child, port),
+        Some(port) => (child, port, Daemon { seen }),
         None => panic!(
             "no port file at {}; the daemon said:\n{}",
             port_file.display(),
             seen.lock().unwrap().join("\n")
         ),
+    }
+}
+
+/// What the daemon has said so far, for explaining a failure that is not a timeout.
+///
+/// This exists because of a failure that cost a CI round trip to read. The two tests that
+/// dial the socket failed with a bare `os error 10061` -- the connect was refused -- and
+/// the stderr that would have said whether the daemon was even alive was being collected
+/// and then dropped on the floor, because only `wait_for_port` printed it. The cause was a
+/// sibling test's teardown killing this daemon through a shared Job Object (see
+/// `supervisor::job`), which the log below states plainly and the bare `10061` did not.
+struct Daemon {
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+impl Daemon {
+    /// `context`, plus whether the process is still running and everything it has said.
+    ///
+    /// `try_wait` is the question worth asking first: a refused connection means one of
+    /// two very different things, and "the daemon exited with status 1" and "the daemon is
+    /// running and did not accept" send you to opposite ends of the codebase.
+    fn explain(&self, child: &mut tokio::process::Child, context: &str) -> String {
+        let alive = match child.try_wait() {
+            Ok(None) => "still running".to_string(),
+            Ok(Some(status)) => format!("ALREADY EXITED ({status})"),
+            Err(err) => format!("could not be waited on: {err}"),
+        };
+        format!(
+            "{context}\n  daemon: {alive}\n  stderr:\n{}",
+            self.seen.lock().unwrap().join("\n")
+        )
     }
 }
 
@@ -86,7 +117,7 @@ async fn the_bundled_gateway_starts_and_answers_the_shell() {
     appdata::ensure(&layout.data_dir, &seed).expect("first-run seeding");
 
     let key = AccessKey::mint();
-    let (mut child, port) = start(&layout, key.as_env()).await;
+    let (mut child, port, daemon) = start(&layout, key.as_env()).await;
     assert_ne!(
         port, 8765,
         "`--port 0` must not land on the daemon's default"
@@ -95,11 +126,20 @@ async fn the_bundled_gateway_starts_and_answers_the_shell() {
     // Exactly what `gw_open` does, including the header and the absence of an `Origin`.
     let frames: Arc<Mutex<Vec<Frame>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = frames.clone();
-    let outbound = proxy::open(port, "/admin", key.header(), move |frame| {
+    let outbound = match proxy::open(port, "/admin", key.header(), move |frame| {
         sink.lock().unwrap().push(frame)
     })
     .await
-    .expect("a Bearer client with no Origin should be admitted");
+    {
+        Ok(socket) => socket,
+        Err(err) => panic!(
+            "{}",
+            daemon.explain(
+                &mut child,
+                &format!("a Bearer client with no Origin should be admitted, got: {err}")
+            )
+        ),
+    };
 
     outbound
         .send(r#"{"jsonrpc":"2.0","id":1,"method":"admin.status"}"#.to_string())
@@ -142,15 +182,22 @@ async fn the_key_is_required_and_the_window_cannot_name_another_path() {
     appdata::ensure(&layout.data_dir, &seed).expect("first-run seeding");
 
     let key = AccessKey::mint();
-    let (mut child, port) = start(&layout, key.as_env()).await;
+    let (mut child, port, daemon) = start(&layout, key.as_env()).await;
 
     // Without the header: the daemon refuses. If this ever passes, the app is handing the
     // machine's whole credential store to anything that can reach loopback.
     let refused = proxy::open(port, "/admin", "Bearer not-the-key".into(), |_| {}).await;
     assert!(refused.is_err(), "a wrong key must not get in");
+    let reason = refused.unwrap_err();
+    // A refusal is only evidence if it came from the daemon. A dead daemon refuses every
+    // connection, including this one, and would let a broken key check pass as a pass.
     assert!(
-        refused.unwrap_err().contains("401"),
-        "and the reason should be legible"
+        reason.contains("401"),
+        "{}",
+        daemon.explain(
+            &mut child,
+            &format!("the refusal should be a 401 from the daemon, got: {reason}")
+        )
     );
 
     // The path allowlist is enforced before anything is dialled.
@@ -168,7 +215,7 @@ async fn stopping_the_app_stops_the_gateway() {
     appdata::ensure(&layout.data_dir, &seed).expect("first-run seeding");
 
     let key = AccessKey::mint();
-    let (mut child, port) = start(&layout, key.as_env()).await;
+    let (mut child, port, _daemon) = start(&layout, key.as_env()).await;
     let pid = child.id().expect("a running child has a pid");
 
     supervisor::terminate(&mut child).await;

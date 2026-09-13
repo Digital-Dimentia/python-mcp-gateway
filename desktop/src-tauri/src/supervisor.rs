@@ -49,11 +49,15 @@
 //! still needs the group kill.
 //!
 //! **Windows.** No process groups and no `PDEATHSIG`. The equivalent is a Job Object with
-//! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: every gateway this process starts is assigned to
-//! one job owned by the app, `TerminateJobObject` is the group kill, and the *close* limit
-//! is the Force Quit answer -- when this process dies by any means, the last handle to the
-//! job closes and the kernel kills everything still in it. That is the pidfile layer done
-//! by the OS, which is why `appdata::reap_previous` is a no-op there.
+//! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: every gateway this process starts gets a job of
+//! its own, `TerminateJobObject` on that job is the group kill, and the *close* limit is
+//! the Force Quit answer -- when this process dies by any means, its handles close and the
+//! kernel kills everything still in those jobs. That is the pidfile layer done by the OS,
+//! which is why `appdata::reap_previous` is a no-op there.
+//!
+//! One job **per child**, so that `terminate(child)` names the same blast radius on both
+//! platforms: that daemon and its descendants. The app spawns one gateway and could not
+//! tell the difference; the integration tests spawn three from one process and could.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -303,14 +307,23 @@ pub fn spawn(layout: &Layout, key: &str, path: &str) -> std::io::Result<Child> {
     Ok(child)
 }
 
-/// The app's Job Object: what Windows has instead of a process group *and* instead of the
+/// A child's Job Object: what Windows has instead of a process group *and* instead of the
 /// pidfile. See the module docs.
 ///
-/// One job for the life of the process, rather than one per spawn, because the property
-/// that matters is tied to the handle: the kernel kills the job's members when its last
-/// handle closes, so the handle must outlive every child and is deliberately never closed.
-/// A job that has been terminated still accepts new members, which is what makes one job
-/// enough for a supervisor that restarts.
+/// **One job per spawned child**, which is what makes `terminate` mean on Windows what it
+/// means on Unix: that child and its descendants, and nothing else. It used to be one job
+/// for the whole process, and the difference is invisible in the app -- which spawns one
+/// gateway -- but not under `cargo test`, where the three integration tests run as threads
+/// of a single binary. There, `terminate_all` in the teardown test reached into the other
+/// two and killed the daemons they were about to connect to; both failed with a connection
+/// refused whose cause was three stack frames away in another test. A supervisor primitive
+/// whose blast radius is "every child this process ever started" is one that can only be
+/// used once per process, and nothing said so.
+///
+/// The handle is kept in `JOBS` for the child's lifetime rather than closed after the
+/// assignment, because the property that matters is tied to it: `KILL_ON_JOB_CLOSE` means
+/// the kernel kills the job's members when its last handle closes, so holding the handle is
+/// how an app that dies without running its teardown still takes its gateway with it.
 ///
 /// The assignment happens just after `CreateProcess` rather than as part of it -- tokio
 /// does not expose `CREATE_SUSPENDED` -- so there is a window, measured in the time it
@@ -319,7 +332,8 @@ pub fn spawn(layout: &Layout, key: &str, path: &str) -> std::io::Result<Child> {
 /// without spawning the process by hand.
 #[cfg(windows)]
 mod job {
-    use std::sync::OnceLock;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
@@ -328,17 +342,29 @@ mod job {
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
 
-    /// The job, created on first use. `None` if the OS refused to make one, which is not
-    /// fatal: `kill_on_drop` and the explicit `terminate` still run, and a shell that can
-    /// start the gateway is more use than one that refuses to because a handle failed.
-    fn handle() -> Option<HANDLE> {
-        // Stored as `isize` because a raw handle is a pointer and `OnceLock` wants `Send`.
-        static JOB: OnceLock<isize> = OnceLock::new();
+    /// Live jobs, by the pid of the child each one was made for. Handles are stored as
+    /// `isize` because a raw handle is a pointer and the map has to be `Send`.
+    ///
+    /// A child that exits on its own without `terminate` leaves its entry here: the handle
+    /// is a few bytes and the app spawns one gateway, so a reaper would be more moving
+    /// parts than the leak it prevents.
+    fn jobs() -> &'static Mutex<HashMap<u32, isize>> {
+        // `OnceLock` rather than a plain `static`: `HashMap::new` is not a `const fn`, so
+        // it cannot initialise one.
+        static JOBS: OnceLock<Mutex<HashMap<u32, isize>>> = OnceLock::new();
+        JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
 
-        let raw = *JOB.get_or_init(|| unsafe {
+    /// A fresh job with the kill-on-close limit set, or `None` if the OS refused.
+    ///
+    /// Not fatal when it fails: `kill_on_drop` and the explicit `child.kill()` still run,
+    /// and a shell that can start the gateway is more use than one that refuses to because
+    /// a handle failed.
+    fn create() -> Option<HANDLE> {
+        unsafe {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {
-                return 0;
+                return None;
             }
             let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -352,30 +378,43 @@ mod job {
                 // Without the limit the job buys nothing the explicit kill does not, and a
                 // handle that is never closed is worth closing here.
                 CloseHandle(job);
-                return 0;
+                return None;
             }
-            job as isize
-        });
-
-        (raw != 0).then_some(raw as HANDLE)
-    }
-
-    /// Put a freshly spawned child in the job, with everything it goes on to spawn.
-    pub fn adopt(child: &tokio::process::Child) {
-        let (Some(job), Some(process)) = (handle(), child.raw_handle()) else {
-            return;
-        };
-        unsafe {
-            AssignProcessToJobObject(job, process as HANDLE);
+            Some(job)
         }
     }
 
-    /// Kill every process in the job: the daemon and every backend under it.
-    pub fn terminate_all() {
-        if let Some(job) = handle() {
-            unsafe {
-                TerminateJobObject(job, 1);
+    /// Put a freshly spawned child in a job of its own, with everything it goes on to spawn.
+    pub fn adopt(child: &tokio::process::Child) {
+        let (Some(pid), Some(process)) = (child.id(), child.raw_handle()) else {
+            return;
+        };
+        let Some(job) = create() else { return };
+        unsafe {
+            if AssignProcessToJobObject(job, process as HANDLE) == 0 {
+                CloseHandle(job);
+                return;
             }
+        }
+        // Replacing an entry would strand the old handle, and a stranded handle with
+        // `KILL_ON_JOB_CLOSE` set is not a leak -- closing it kills whatever is still in
+        // that job. Windows reuses pids, so close it deliberately rather than assume the
+        // collision cannot happen.
+        if let Some(stale) = jobs().lock().unwrap().insert(pid, job as isize) {
+            unsafe {
+                CloseHandle(stale as HANDLE);
+            }
+        }
+    }
+
+    /// Kill one child's job: that daemon and every backend under it, and nothing else.
+    pub fn terminate_for(pid: u32) {
+        let Some(job) = jobs().lock().unwrap().remove(&pid) else {
+            return;
+        };
+        unsafe {
+            TerminateJobObject(job as HANDLE, 1);
+            CloseHandle(job as HANDLE);
         }
     }
 }
@@ -430,11 +469,17 @@ pub async fn terminate(child: &mut Child) {
 /// daemon and every backend under it, where `child.kill()` alone would reach only the
 /// daemon and leave the `npx` processes holding credentials.
 ///
+/// `this` child's job, not every job: see the `job` module on why that distinction is the
+/// whole of the difference between the two platforms behaving alike and the integration
+/// tests killing each other's daemons.
+///
 /// No grace period, because there is nothing to be polite with: Windows has no `SIGTERM`,
 /// and the daemon's clean-shutdown handler is not reachable from another process.
 #[cfg(windows)]
 pub async fn terminate(child: &mut Child) {
-    job::terminate_all();
+    if let Some(pid) = child.id() {
+        job::terminate_for(pid);
+    }
     let _ = child.kill().await;
     let _ = child.wait().await;
 }
@@ -615,5 +660,48 @@ mod tests {
         assert!(layout.interpreter().ends_with("python\\python.exe"));
         assert!(layout.config().ends_with("servers.yaml"));
         assert!(layout.pidfile().ends_with("gateway.pid"));
+    }
+
+    /// The property the integration tests lost when the job was process-wide.
+    ///
+    /// Windows-only because there is nothing to test elsewhere: `terminate` on Unix has
+    /// always been scoped to one process group. It needs no bundled interpreter, so it runs
+    /// in every Windows leg rather than only the ones that ran `make tauri-python` -- which
+    /// matters, because this is a bug that neither a Mac nor a Linux developer can reproduce
+    /// and CI is therefore the only place it can ever be caught.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn terminating_one_child_does_not_reach_another() {
+        use std::time::Duration;
+
+        // `ping` as a sleep: every Windows install has it, and a child that outlives the
+        // assertions by 20 seconds is a child whose survival means something.
+        fn sleeper() -> Child {
+            tokio::process::Command::new("cmd")
+                .args(["/c", "ping", "-n", "20", "127.0.0.1"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .expect("cmd.exe should start")
+        }
+
+        let mut doomed = sleeper();
+        let mut bystander = sleeper();
+        job::adopt(&doomed);
+        job::adopt(&bystander);
+
+        terminate(&mut doomed).await;
+        // A moment, so that "still running" is a statement about the kernel having had the
+        // chance to kill it rather than about this thread being quick.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        assert!(
+            bystander.try_wait().expect("wait should work").is_none(),
+            "terminating one child killed another: the job is shared again, and the \
+             integration tests will kill each other's daemons"
+        );
+
+        terminate(&mut bystander).await;
     }
 }
