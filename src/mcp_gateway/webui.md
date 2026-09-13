@@ -24,10 +24,10 @@ The Tauri window's content security policy is *narrower* than the one below: its
 form of "that page opens no sockets". `tests/test_desktop_layout.py` asserts it.
 
 
-The UI is eight files: [`index.html`](ui/index.html), [`style.css`](ui/style.css),
+The UI is nine files: [`index.html`](ui/index.html), [`style.css`](ui/style.css),
 [`app.js`](ui/app.js), [`rpc.js`](ui/rpc.js), [`schema_form.js`](ui/schema_form.js),
-[`render.js`](ui/render.js), [`theme.js`](ui/theme.js) and
-[`tauri-transport.js`](ui/tauri-transport.js). No build step, no bundler, no
+[`render.js`](ui/render.js), [`clipboard.js`](ui/clipboard.js), [`theme.js`](ui/theme.js)
+and [`tauri-transport.js`](ui/tauri-transport.js). No build step, no bundler, no
 dependency — ES modules the browser loads directly. This module answers a GET for one of
 them.
 
@@ -138,7 +138,7 @@ and it would move every time a server is added or removed.
 | Column | Source | What it is for |
 |---|---|---|
 | Primitives | `/mcp` | The selected server's tools, prompts, resources and templates, with a form built from each one's own schema |
-| Results | `/mcp` | What came back, rendered, with the raw payload one click away |
+| Results | `/mcp` | What came back, rendered, with the raw payload one click away — and the Clipboard, which writes the lot out for an agent |
 | Variables | `/mcp` | The values that server publishes for its own parameters, each one a button that fills the open form |
 
 **All three columns speak MCP, not `admin.*`.** That is the design decision the rest
@@ -148,6 +148,24 @@ in it is byte-identical to what the model gets — same `tools/list`, same names
 `tools/call`, same `isError` semantics. See [`session.md`](session.md) for that method table
 and [`catalogue.md`](catalogue.md) for what it publishes. `admin.*` now answers only the
 header and the footer.
+
+## The Clipboard
+
+The Results column's second button turns the session into one text document — every call
+with its request and its answer, then every value the right-hand column is offering and
+which of them are picked — for pasting into an agent.
+
+**The page does not write that document.** It posts a *snapshot* of its two right-hand
+columns with `admin.clipboard.put`, and the daemon renders it; the modal shows what came
+back, in a plain textarea, and the Copy button copies whatever is in the box. The reason is
+[`gateway__clipboard`](clipboard.md): the same text is a tool call on `/mcp`, so a model can
+read the bench without anyone pasting anything, and two renderers of one document would
+drift. [`clipboard.js`](ui/clipboard.js) is the modal and the publisher;
+[`clipboard.md`](clipboard.md) is the document.
+
+The snapshot is published on a debounce whenever either column changes, not only when the
+modal opens — otherwise the tool would report whatever the bench looked like the last time
+somebody happened to press a button, with nothing on screen to explain the staleness.
 
 The detail panel's send button is pinned to the foot of the panel rather than parked after
 the form. The panel scrolls, and a form one field taller than it would otherwise push the

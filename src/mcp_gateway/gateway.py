@@ -44,6 +44,7 @@ from mcp_gateway.admin import Admin, error_result, is_admin_tool, text_result, t
 from mcp_gateway.admin_channel import AdminConnection, LogStream
 from mcp_gateway.backend import Backend
 from mcp_gateway.catalogue import Catalogue
+from mcp_gateway.clipboard import Workbench
 from mcp_gateway.config import ConfigError, GatewayConfig
 from mcp_gateway.config import load as load_config
 from mcp_gateway.logging_redaction import RedactingFilter, install_redaction
@@ -87,6 +88,11 @@ class Gateway:
         self.host = host
         self.port = port
         self.admin = Admin(self)
+        #: The admin UI's two right-hand columns, as the page last published them, and
+        #: the source of both `admin.clipboard.get` and `gateway__clipboard`. One per
+        #: process rather than per connection: the point of it is that the model on
+        #: `/mcp` reads what the person did on `/admin`. See `clipboard.md`.
+        self.workbench = Workbench()
         self._server_request_handler = self.backend_request
         self.notifier = Notifier(self._broadcast)
         #: Who is watching which resource. See `notifications.md`.

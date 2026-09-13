@@ -71,6 +71,7 @@ ASSETS: dict[str, str] = {
     "tauri-transport.js": "text/javascript; charset=utf-8",
     "schema_form.js": "text/javascript; charset=utf-8",
     "render.js": "text/javascript; charset=utf-8",
+    "clipboard.js": "text/javascript; charset=utf-8",
 }
 
 

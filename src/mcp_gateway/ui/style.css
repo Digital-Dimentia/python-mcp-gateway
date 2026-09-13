@@ -995,3 +995,36 @@ dialog form { display: flex; flex-direction: column; gap: 0.7rem; }
 @media (max-width: 62rem) {
   .editor-columns { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── The clipboard modal ─────────────────────────────────────────────────────
+ *
+ * A plain editor, and it looks like one: monospace, full width, and tall enough that a
+ * session of a dozen calls is scrolled rather than peered at through a slot. The document
+ * it holds is plain text whose entire job is to be pasted somewhere else, so nothing here
+ * styles the content -- no syntax colour, no rendered Markdown. What is shown is exactly
+ * what the Copy button puts on the clipboard. */
+.clip-head h2 { margin: 0; font-size: 0.95rem; }
+.clip-sub { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.76rem; }
+
+.clip-text {
+  width: 100%;
+  min-height: min(56vh, 30rem);
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+  /* Off, deliberately: the text is full of `zoo__feed` and `mcpgw://`, and a red underline
+   * under every identifier in the document reads as an error report. */
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+.clip-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.clip-note { margin: 0; color: var(--muted); font-size: 0.74rem; min-height: 1.1em; }
+.clip-actions { display: flex; gap: 0.5rem; justify-content: flex-end; align-items: center; }
