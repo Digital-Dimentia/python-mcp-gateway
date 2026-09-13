@@ -89,6 +89,13 @@ make tauri-check      # cargo fmt --check, clippy -D warnings, cargo test
 
 `cargo tauri` comes from `cargo install tauri-cli --version "^2" --locked`.
 
+**`make tauri-python` comes first, once, and `make tauri-check` needs it too.** `tauri-build`
+validates every path in `bundle.resources` at *compile* time, so the crate does not build at
+all until the interpreter is on disk — and what it says when it is not is `resource path
+\`resources/python\` doesn't exist`, which names the symptom rather than the fix. The
+Makefile checks for it and says so instead. The UI staging, being a file copy and not a
+download, is handled for you.
+
 Neither `make test` nor `make build` depends on any of this. The daemon is the product and it
 ships without the app; a checkout with no Rust toolchain runs the entire Python suite.
 
@@ -164,10 +171,15 @@ the reaper silently off rather than loudly wrong.
 ## What the tests cover, and what they cannot
 
 `make tauri-check` runs 43 tests. Three of them are the real thing: they spawn the bundled
-interpreter, scrape its port, open `/admin` through the proxy with a Bearer header, round-trip
-`admin.status`, confirm a wrong key gets a 401 and a non-allowlisted path is refused, and
-confirm the port is free again afterwards. They skip rather than fail when
-`make tauri-python` has not been run.
+interpreter, wait for the port file it writes, open `/admin` through the proxy with a Bearer
+header, round-trip `admin.status`, confirm a wrong key gets a 401 and a non-allowlisted path
+is refused, and confirm the port is free again afterwards. They skip rather than fail when
+the interpreter tree is there but incomplete.
+
+Both CI workflows build the interpreter before checking, so those three run on all three
+platforms rather than only on whichever machine happened to have a bundle lying around. On
+Linux and Windows that is a stronger statement than `clippy` passing: it is the new orphan
+control reaping a real process tree.
 
 What no automated test here reaches is **the window**. So this stays a manual checklist:
 
