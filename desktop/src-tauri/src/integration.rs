@@ -47,39 +47,33 @@ fn layout(scratch: &str) -> Option<(Layout, PathBuf)> {
     ))
 }
 
-/// Start the gateway and wait for it to say which port it is on.
+/// Start the gateway and wait for the port file it writes.
 ///
 /// The pump runs as its own task for the life of the test, which is how the real supervisor
-/// uses it: stderr keeps arriving while the socket is being used, and the port shows up
-/// partway through rather than at the end.
+/// uses it: stderr keeps arriving while the socket is being used. It no longer carries the
+/// port -- that comes from `wait_for_port` -- but it is still what a failure is explained
+/// with, so it is collected and printed when the wait times out.
 async fn start(layout: &Layout, key: &str) -> (tokio::process::Child, u16) {
+    let port_file = layout.portfile();
+    let _ = std::fs::remove_file(&port_file);
+
     let mut child = supervisor::spawn(layout, key, &std::env::var("PATH").unwrap())
         .expect("the bundled interpreter should start");
 
-    let found: Arc<Mutex<Option<u16>>> = Arc::new(Mutex::new(None));
     let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-
     let stderr = child.stderr.take().expect("stderr is piped");
     let sink = seen.clone();
-    let port_slot = found.clone();
-    tokio::spawn(supervisor::pump_stderr(
-        stderr,
-        move |line| sink.lock().unwrap().push(line),
-        move |port| *port_slot.lock().unwrap() = Some(port),
-    ));
+    tokio::spawn(supervisor::pump_stderr(stderr, move |line| {
+        sink.lock().unwrap().push(line)
+    }));
 
-    let deadline = tokio::time::Instant::now() + supervisor::STARTUP_TIMEOUT;
-    loop {
-        if let Some(port) = *found.lock().unwrap() {
-            return (child, port);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!(
-                "no port; the daemon said:\n{}",
-                seen.lock().unwrap().join("\n")
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+    match supervisor::wait_for_port(&port_file, supervisor::STARTUP_TIMEOUT).await {
+        Some(port) => (child, port),
+        None => panic!(
+            "no port file at {}; the daemon said:\n{}",
+            port_file.display(),
+            seen.lock().unwrap().join("\n")
+        ),
     }
 }
 

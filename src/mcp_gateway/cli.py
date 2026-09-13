@@ -27,6 +27,7 @@ from mcp_gateway import __version__
 from mcp_gateway.config import ConfigError, GatewayConfig, ServerSpec, load as load_config
 from mcp_gateway.gateway import Gateway
 from mcp_gateway.logging_redaction import install_redaction
+from mcp_gateway import portfile
 from mcp_gateway.secrets import MissingSecret, SecretError, SecretStore, missing_for
 from mcp_gateway.secrets import load as load_secrets
 from mcp_gateway.transport_ws import (
@@ -142,6 +143,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--port", type=int, default=DEFAULT_PORT, help=f"Port to bind (default: {DEFAULT_PORT})."
+    )
+    parser.add_argument(
+        "--port-file",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Write the bound port to PATH once the socket is listening, and remove it on "
+            "exit. The way to learn the port chosen by --port 0 without scraping a log line."
+        ),
     )
     parser.add_argument(
         "--check",
@@ -311,6 +321,11 @@ async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) ->
         access_key=access_key,
         allow_unauthenticated=unauthenticated_bind_allowed(),
     )
+    # After `start`, never before: with `--port 0` the port does not exist until the socket
+    # is bound, and a file appearing with the wrong number in it is worse than no file. Its
+    # appearance is therefore also the readiness signal, which is the other half of what a
+    # supervisor wants and the reason this is not simply logged.
+    port_file = portfile.write(args.port_file, gateway.server.port) if args.port_file else None
     # `finally` and not a context manager: the one thing that must happen on every exit
     # path is that the backend subprocesses are reaped, and a daemon exits by signal far
     # more often than by falling off the end of a block.
@@ -322,6 +337,9 @@ async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) ->
             task.cancel()
     finally:
         logger.info("shutting down; stopping backends")
+        # Before the backends, which take a moment to drain: the file says "this daemon is
+        # serving on this port", and it stops being true the instant we begin shutting down.
+        portfile.remove(port_file)
         await gateway.stop()
 
 

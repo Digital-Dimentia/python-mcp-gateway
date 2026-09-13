@@ -120,12 +120,15 @@ is logged as the bug it is — and still answered, because a client waiting fore
 than a generic code.
 
 
-## The startup line is a contract now
+## The startup line is a log line again
 
-`listening on ws://host:port/mcp` is how the desktop shell learns which port `--port 0`
-landed on: it spawns this daemon, reads its stderr, and parses that line. So the format is no
-longer only a log line. `tests/test_desktop_contract.py` pins it, and
-`desktop/src-tauri/src/supervisor.rs` carries the twin of the parser — each names the other.
+`listening on ws://host:port/mcp` was a contract for a while: the desktop shell spawned this
+daemon, read its stderr and parsed that line to learn which port `--port 0` had landed on. A
+sentence written for a human could not be reworded without breaking an app.
+
+It is free again. The shell passes `--port-file` and reads the number out of a file, so this
+line is back to being prose — see [`portfile.md`](portfile.md), and python-mcp-gateway-9p3
+for why a file carries both the port *and* readiness where a line carries only the port.
 
 The same shell is why the `Origin` rule's "a request with no `Origin` proceeds" branch is now
 load-bearing rather than merely convenient: the shell's own client is `tokio-tungstenite`,
