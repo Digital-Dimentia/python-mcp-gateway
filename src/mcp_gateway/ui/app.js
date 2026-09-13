@@ -2178,10 +2178,16 @@ function pushCard(options) {
   if (empty) empty.remove();
   // A card deletes itself; what it cannot know is that it was the last one, and a column
   // left with nothing in it at all reads as broken rather than as empty.
-  results.prepend(resultCard({
+  results.append(resultCard({
     ...options,
     onRemove: () => { if (!results.querySelector('.card')) clearResults(); },
   }));
+  // Appended rather than prepended, so the column reads in the order the calls were made
+  // -- and then scrolled, because an answer below the fold is an answer nobody saw. The
+  // scroll is unconditional on purpose: a card arrives because a person just pressed Send,
+  // which is not the situation where being left where you were is the kindness. The log
+  // pane pins itself to the bottom the same way, for a different reason.
+  results.scrollTop = results.scrollHeight;
 }
 
 $('btn-clear-results').addEventListener('click', clearResults);
