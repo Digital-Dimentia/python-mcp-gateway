@@ -34,6 +34,7 @@ accepted can always be placed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,11 @@ from mcp_gateway.transport_ws import ClientLink, GatewayServer
 
 logger = logging.getLogger(__name__)
 
+#: How often idle backends are swept. A backend sleeps up to this long after its
+#: `idle_ttl`, which is a granularity rather than a delay: the point is reclaiming a
+#: process nobody is using, and a few seconds either way changes nothing about that.
+IDLE_SWEEP_SECONDS = 15.0
+
 class Gateway:
     """Everything the daemon owns, and the handlers a `Session` calls into."""
 
@@ -85,6 +91,7 @@ class Gateway:
         self.notifier = Notifier(self._broadcast)
         #: Who is watching which resource. See `notifications.md`.
         self.subscriptions = Subscriptions()
+        self._idle_sweeper: asyncio.Task[None] | None = None
         self.supervisor = Supervisor(
             config,
             store,
@@ -695,8 +702,43 @@ class Gateway:
 
     async def start_backends(self) -> None:
         await self.supervisor.start_all()
+        if any(b.spec.idle_ttl is not None for b in self.supervisor.all):
+            self._idle_sweeper = asyncio.create_task(self._sweep_idle_backends())
+
+    async def _sweep_idle_backends(self) -> None:
+        """Put unused backends to sleep, on a timer. See `supervisor.sweep_idle`.
+
+        Started only when some backend actually sets `idle_ttl`, so a deployment that does
+        not use the feature does not get a task waking up forever to find nothing to do.
+        """
+        try:
+            while True:
+                await asyncio.sleep(IDLE_SWEEP_SECONDS)
+                await self.supervisor.sweep_idle(exempt=self._subscribed_backends())
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - the sweeper must not take the daemon down
+            logger.exception("idle sweep failed")
+
+    def _subscribed_backends(self) -> frozenset[str]:
+        """Backends a client is watching a resource on, which must not be slept.
+
+        A sleeping process cannot send `notifications/resources/updated`, and a client
+        watching a resource cannot tell silence from nothing having changed. Reclaiming a
+        process at the cost of quietly breaking a feature the client asked for is not a
+        trade the daemon gets to make on its own.
+        """
+        return frozenset(
+            naming.decode_resource_uri(uri)[0]
+            for uri in self.subscriptions.watched_uris()
+        )
 
     async def stop(self) -> None:
+        if self._idle_sweeper is not None:
+            self._idle_sweeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._idle_sweeper
+            self._idle_sweeper = None
         await self.notifier.flush()
         if self.log_stream is not None:
             logging.getLogger().removeHandler(self.log_stream)

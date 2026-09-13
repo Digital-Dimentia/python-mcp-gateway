@@ -108,6 +108,11 @@ class BackendStatus(str, Enum):
     FAILED = "failed"
     STOPPED = "stopped"
     RESTARTING = "restarting"
+    #: Not running, and that is the plan. Distinct from STOPPED, which reads as "somebody
+    #: turned this off", and from FAILED, which reads as "this is broken" -- an operator
+    #: glancing at `gateway__list_backends` has to be able to tell the three apart, because
+    #: only one of them is a reason to go and look at something.
+    IDLE = "idle"
 
 
 @dataclass
@@ -192,6 +197,11 @@ class Backend:
     #: by `_fail` and cleared by a start that works; see `restart_backoff_seconds`.
     _retry_at: float | None = None
     last_call_at: float | None = None
+    #: The same event on the monotonic clock, which is the only one an idle measurement may
+    #: use: `last_call_at` is wall time because `admin.status` reports it to a human, and a
+    #: clock that an NTP step can move backwards would have the idle sweeper tear down a
+    #: backend that was busy a second ago. Set together by `touch`.
+    last_call_monotonic: float | None = None
     skipped_tools: list[str] = field(default_factory=list)
     #: Sessions with a call in flight on this backend, with a count each (one session can
     #: have several). This is how a backend's own `roots/list` or `elicitation/create` finds
@@ -255,6 +265,13 @@ class Backend:
             self._calls[session] -= 1
             if self._calls[session] <= 0:
                 del self._calls[session]
+
+    @property
+    def serving_anyone(self) -> bool:
+        """Whether any session has a call in flight here. The idle sweep asks before it
+        tears anything down: a `tools/call` that has been waiting on a human for ten minutes
+        is the longest-running thing this daemon does, and it is not idle."""
+        return bool(self._calls)
 
     def origin_session(self) -> Any | None:
         """The one session this backend is currently serving, or `None` if that is unclear.
@@ -393,6 +410,59 @@ class Backend:
             await self._stop_client(client)
         if self.status is not BackendStatus.DISABLED:
             self.status = BackendStatus.STOPPED
+
+    def touch(self) -> None:
+        """Record that this backend was just used, on both clocks. See `last_call_monotonic`."""
+        self.last_call_at = time.time()
+        self.last_call_monotonic = time.monotonic()
+
+    async def sleep(self) -> None:
+        """Stop the process, but say it was on purpose.
+
+        Not `stop()` with a different label. `stop` is an operator or a shutdown acting on
+        the backend; this is the daemon reclaiming a process nobody is using, and the two
+        differ in what happens next: a slept backend is woken by the next call, a stopped
+        one waits for someone to ask. The failure counters are left alone for the same
+        reason -- going to sleep is not a failure, and letting it feed the restart backoff
+        would make a quiet backend progressively slower to wake.
+        """
+        if self.status is not BackendStatus.RUNNING:
+            return
+        client, self.client = self.client, None
+        self.started_at = None
+        if client is not None:
+            await self._stop_client(client)
+        self.status = BackendStatus.IDLE
+
+    @property
+    def asleep(self) -> bool:
+        """Whether a call would have to wake this backend first."""
+        return self.status is BackendStatus.IDLE
+
+    @property
+    def wakeable(self) -> bool:
+        """Whether waiting on `supervisor.wake` could get this backend running.
+
+        `STARTING` counts, and that is the whole point of having this beside `asleep`. Six
+        calls landing on one sleeping backend at once means the first flips it to `STARTING`
+        and the other five must *wait* for that start rather than conclude it is unavailable
+        -- which is exactly what checking `asleep` alone made them do.
+        """
+        return self.status in (BackendStatus.IDLE, BackendStatus.STARTING)
+
+    def idle_for(self, now: float) -> float:
+        """Seconds since this backend last did anything, by the clock `now` came from.
+
+        Measured from the last call, or from the start if there has never been one -- a
+        backend nobody has used since it came up is idle, not exempt.
+        """
+        # `is not None`, not `or`: `time.monotonic()` is allowed to be near zero -- on Linux
+        # it counts from boot -- and a falsy check would silently measure from `started_at`
+        # on a machine that had just come up.
+        since = self.last_call_monotonic
+        if since is None:
+            since = self.started_at
+        return 0.0 if since is None else max(0.0, now - since)
 
     async def restart(self) -> bool:
         # Checked before anything is torn down, rather than being left to `start`. A backend

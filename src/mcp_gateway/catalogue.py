@@ -74,9 +74,25 @@ class Catalogue:
     async def _fetch(
         self, backend: Backend, cache: dict[str, list], capability: str, fetch
     ) -> list[dict[str, Any]]:
-        """One backend's listing, from cache or the wire. Never raises."""
+        """One backend's listing, from cache or the wire. Never raises.
+
+        The cache is consulted before anything else, which is what lets a *sleeping* backend
+        keep advertising. Its listing did not change by the process going away -- the same
+        command with the same config publishes the same tools -- so tearing the process down
+        and continuing to answer from what it last said is the whole trick that makes an
+        idle teardown invisible to a client.
+
+        The honest limit: a backend cannot tell us its listing changed while it was asleep,
+        so a `tools/call` can arrive for a tool the woken process no longer has. That call
+        fails as an unknown tool and the backend's own `list_changed` corrects the listing
+        moments later, which is the same self-correcting path a live backend's change takes.
+        """
         if backend.name in cache:
             return cache[backend.name]
+        # No cache and asleep: this is a lazy backend nobody has used yet, and there is no
+        # answer to give without asking it. Waking to list is the cost of `lazy`, paid once.
+        if backend.asleep:
+            await self.supervisor.wake(backend.name)
         if not backend.running or not backend.supports(capability):
             return []
         try:
@@ -90,8 +106,24 @@ class Catalogue:
         return items
 
     async def _gather(self, cache: dict[str, list], capability: str, fetch) -> list[tuple[Backend, list]]:
-        """Every running backend's listing, fetched concurrently."""
-        backends = [b for b in self.supervisor.running if b.supports(capability)]
+        """Every backend's listing, fetched concurrently. Sleeping ones included.
+
+        `running` alone would have been right when a backend that is not running is a
+        backend that is broken. A slept one is neither broken nor gone, and dropping it here
+        would make every idle teardown show up as tools vanishing from a client's list --
+        the exact symptom the feature exists to avoid.
+
+        `supports` is not consulted for a sleeping backend either: it answers from the
+        handshake, which a slept process no longer has. `_fetch` returns its cached listing
+        without asking, and a lazy one with no cache is woken there and checked then. Only
+        an enabled backend can be asleep -- a disabled one is `DISABLED` and never IDLE --
+        so there is no second condition to write here.
+        """
+        backends = [
+            b
+            for b in self.supervisor.all
+            if (b.running and b.supports(capability)) or b.asleep
+        ]
         results = await asyncio.gather(
             *(self._fetch(b, cache, capability, fetch) for b in backends)
         )

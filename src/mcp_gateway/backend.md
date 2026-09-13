@@ -5,6 +5,18 @@ One backend's lifetime: spec + credentials → environment → subprocess → ha
 `config.py` decides what a launch *would* look like; this module resolves credentials into
 it and performs it. `supervisor.py` owns the set of these.
 
+## `idle` is its own status
+
+Five states were about health; `idle` is about policy. It means the daemon reclaimed the
+process because nobody was using it, and the next call will bring it back — which is a
+different fact from `stopped` ("somebody turned this off") and from `failed` ("this is
+broken"). An operator reading `gateway__list_backends` has to be able to tell the three
+apart, because only one of them is a reason to go and look at something.
+
+`sleep()` is therefore not `stop()` with a different label: it leaves `consecutive_failures`
+and the restart backoff untouched, so a quiet backend does not become progressively slower
+to wake. See [`supervisor.md`](supervisor.md).
+
 ## The curated environment is the product
 
 A `Backend` builds its child's environment **from nothing** and passes it with

@@ -114,15 +114,49 @@ describe('the sockets', () => {
 });
 
 describe('the gate', () => {
-  it('has no key field, because there is no key to ask a human for', () => {
+  it('is a splash while the gateway is still starting, not an accusation', () => {
+    // The bug this pins. A cold interpreter takes a second to import, so the shell's first
+    // `gw_open` answers "not listening yet" and the socket closes -- before anything has
+    // gone wrong. That used to paint "This gateway may require an access key" over a window
+    // that was merely still starting, and then clear it a moment later, so every launch
+    // looked like a failure that fixed itself.
     ui.state.admin.dispatchEvent(
       new window.CustomEvent('state', { detail: { state: 'closed', reason: 'refused' } }),
     );
     const gate = document.getElementById('gate');
     assert.equal(gate.hidden, false, 'a closed socket should still surface something');
-    assert.equal(document.getElementById('gate-key').closest('label').hidden, true);
-    assert.equal(gate.querySelector('h2').textContent, 'Gateway not connected');
-    assert.match(gate.querySelector('button[type="submit"]').textContent, /retry/i);
+    assert.equal(gate.dataset.mode, 'connecting');
+    assert.equal(document.getElementById('gate-title').textContent, 'Starting…');
+    assert.doesNotMatch(document.getElementById('gate-message').textContent, /key/i);
+  });
+
+  it('never offers a key field, because there is no key to ask a human for', () => {
+    ui.state.admin.dispatchEvent(
+      new window.CustomEvent('state', { detail: { state: 'closed', reason: '401' } }),
+    );
+    assert.equal(document.getElementById('gate-key-field').hidden, true);
+  });
+
+  it('does not let a late socket close undo what the host said', () => {
+    // Two writers, one panel. The host knows the gateway failed to start; a socket closing
+    // afterwards knows only that it closed. Ranking the modes is what stops the second from
+    // painting a hopeful splash over the first.
+    host.emit('gateway-state', {
+      state: 'failed', attempt: 0, reason: 'servers.yaml: unknown key `comand`', log: [],
+    });
+    assert.equal(document.getElementById('gate').dataset.mode, 'failed');
+    ui.state.admin.dispatchEvent(
+      new window.CustomEvent('state', { detail: { state: 'closed', reason: 'refused' } }),
+    );
+    assert.equal(document.getElementById('gate').dataset.mode, 'failed');
+    assert.match(document.getElementById('gate-message').textContent, /unknown key/);
+  });
+
+  it('goes away once a socket is up', () => {
+    ui.state.admin.dispatchEvent(
+      new window.CustomEvent('state', { detail: { state: 'ready' } }),
+    );
+    assert.equal(document.getElementById('gate').hidden, true);
   });
 
   it('shows what the host says, which a browser could never know', () => {

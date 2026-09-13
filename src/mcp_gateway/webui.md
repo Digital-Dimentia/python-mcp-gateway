@@ -366,6 +366,30 @@ same way the prompt and resource listings are.
 A pick in the variables column arrives as a real `input` event, so picking a continent there
 re-narrows the `country` suggestions with no extra wiring.
 
+## The gate has three modes, and the first one claims nothing
+
+The overlay in front of the page is `connecting`, `blocked` or `failed`, and separating the
+first from the second is the whole of python-mcp-gateway-3vk.
+
+A daemon that is still binding refuses connections. At the level a page sees, that is
+indistinguishable from a wrong access key — and it is overwhelmingly the commoner case at
+load, because the page is usually opened *by* the thing that just started the daemon. The
+gate used to answer the first closed socket with "this gateway may require an access key",
+then connect a second later and clear it. Every launch looked like a failure that fixed
+itself. In the desktop shell it was worse: the host's first `gw_open` answers "not listening
+yet" while a cold interpreter imports, so the accusation was guaranteed rather than likely.
+
+So a closed socket is evidence of `connecting` and nothing more, until the retry budget is
+spent — and in the shell it never becomes anything more, because there is no key there to be
+wrong. The page starts *visible* in `connecting`, rather than hidden: a blank page that
+suddenly becomes an error is the same startle in a different costume.
+
+The modes are ranked, and `showGate` refuses to let a lower rank overwrite a higher one.
+Two things write to this panel — the sockets, and (in the shell) the host's supervisor
+events — and only the second can know that the gateway *failed*. Without the rank, a socket
+closing after the host reported a bad `servers.yaml` would paint a hopeful splash over the
+one message that said what was actually wrong.
+
 ## Why the same port
 
 Same origin. The page opens `ws://…/mcp` and `ws://…/admin`, and

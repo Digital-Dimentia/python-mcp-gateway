@@ -35,7 +35,6 @@ revision it had not been taught -- which is the same reason the daemon parses no
 from __future__ import annotations
 
 import logging
-import time
 from contextlib import nullcontext
 from typing import Any
 
@@ -45,6 +44,19 @@ from mcp_gateway.catalogue import Catalogue
 from mcp_gateway.mcp_stdio import MCPProtocolError
 
 logger = logging.getLogger(__name__)
+
+
+async def _awake(backend: Backend, catalogue: Catalogue) -> bool:
+    """Wake `backend` if it is asleep, and say whether it is usable now.
+
+    Every forwarding path calls this before its `running` check, so a slept backend costs
+    the first caller a spawn and nobody an error. A backend that is down for any other
+    reason -- failed, disabled, cooling off in the restart backoff -- is untouched, and the
+    `running` check after this one is what still refuses it.
+    """
+    if backend.wakeable:
+        await catalogue.supervisor.wake(backend.name)
+    return backend.running
 
 
 def _unavailable(backend: Backend) -> str:
@@ -80,11 +92,11 @@ class Router:
         if found is None:
             raise self._unknown("tool", public_name)
         backend, tool = found
-        if not backend.running:
+        if not await _awake(backend, self.catalogue):
             # A successful result with `isError`, not an exception. See the module docstring.
             return {"content": [{"type": "text", "text": _unavailable(backend)}], "isError": True}
 
-        backend.last_call_at = time.time()
+        backend.touch()
         # `serving` is what lets a `roots/list` or `elicitation/create` raised *by this call*
         # find its way back to this client. See `Backend.origin_session`.
         with backend.serving(session):
@@ -101,14 +113,14 @@ class Router:
         if found is None:
             raise self._unknown("prompt", public_name)
         backend, prompt = found
-        if not backend.running:
+        if not await _awake(backend, self.catalogue):
             # No `isError` on a prompt result, so this has to be a protocol error.
             raise errors.GatewayError(
                 _unavailable(backend),
                 data={"backend": backend.name, "gatewayStatus": backend.status.value},
             )
 
-        backend.last_call_at = time.time()
+        backend.touch()
         with backend.serving(session):
             try:
                 return await backend.client.get_prompt(prompt, arguments)
@@ -160,7 +172,7 @@ class Router:
             # is no way to tell which backend it means, so there is nowhere to send it.
             raise errors.InvalidParams(f"unknown completion ref type {kind!r}", {"ref": ref})
 
-        if not backend.running:
+        if not await _awake(backend, self.catalogue):
             # No `isError` on a completion result, so this has to be a protocol error -- the
             # `prompts/get` rule.
             raise errors.GatewayError(
@@ -185,7 +197,7 @@ class Router:
             )
             context = None
 
-        backend.last_call_at = time.time()
+        backend.touch()
         with backend.serving(session):
             try:
                 return await backend.client.complete(backend_ref, argument, context)
@@ -204,11 +216,11 @@ class Router:
                 },
             )
         backend, uri = found
-        if not backend.running:
+        if not await _awake(backend, self.catalogue):
             # MCP's dedicated code: the URI names something not currently readable.
             raise errors.ResourceNotFound(_unavailable(backend), {"backend": backend.name})
 
-        backend.last_call_at = time.time()
+        backend.touch()
         with backend.serving(session):
             try:
                 return await backend.client.read_resource(uri)
@@ -239,7 +251,7 @@ class Router:
                 },
             )
         backend, uri = found
-        if not backend.running:
+        if not await _awake(backend, self.catalogue):
             raise errors.ResourceNotFound(_unavailable(backend), {"backend": backend.name})
         if not backend.supports_option("resources", "subscribe"):
             raise errors.ResourceNotFound(
@@ -247,7 +259,7 @@ class Router:
                 {"uri": public_uri, "backend": backend.name},
             )
 
-        backend.last_call_at = time.time()
+        backend.touch()
         # `serving` is skipped for a replay, which has no session behind it. Registering
         # `None` as one would make `origin_session` see two callers and answer "unclear",
         # so a real client's elicitation racing a restart would be dropped.

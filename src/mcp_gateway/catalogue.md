@@ -5,6 +5,21 @@ Aggregates every backend's tools, prompts and resources into one namespaced list
 Process-wide and shared by every connection: the listing is a property of the backend pool,
 not of who is asking.
 
+## A sleeping backend keeps advertising
+
+`_gather` walks every backend, not only the running ones, and `_fetch` consults the cache
+before it looks at anything else. That is deliberate and it is what makes
+[`supervisor.md`](supervisor.md)'s idle teardown invisible: a listing does not change by the
+process going away, so the catalogue goes on answering from what the backend last said.
+
+`running` alone was the right filter when a backend that is not running is a backend that is
+broken. A slept one is neither broken nor gone, and dropping it here would make every
+teardown look to a client like tools disappearing.
+
+A **lazy** backend that has never run has no cache to answer from, so `_fetch` wakes it.
+That is the one-time cost of `lazy`, and it is paid on the first listing rather than at
+startup.
+
 ## Cached per backend, invalidated by `list_changed`
 
 A `tools/list` that fanned out to twelve subprocesses on every call would make the cheapest
