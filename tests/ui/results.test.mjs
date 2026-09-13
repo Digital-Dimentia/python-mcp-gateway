@@ -49,8 +49,8 @@ describe('every result card can be deleted on its own', () => {
   });
 
   it('starts with three cards and no empty state', () => {
-    // `pushCard` prepends, so the newest is first.
-    assert.deepEqual(titles(), ['third', 'second', 'first']);
+    // `pushCard` appends, so the column reads in the order the calls were made.
+    assert.deepEqual(titles(), ['first', 'second', 'third']);
     assert.equal(results().querySelector('.empty'), null);
   });
 
@@ -71,7 +71,7 @@ describe('every result card can be deleted on its own', () => {
 
   it('removes only the card whose button was clicked', () => {
     cards()[1].querySelector('.card-del').click();
-    assert.deepEqual(titles(), ['third', 'first']);
+    assert.deepEqual(titles(), ['first', 'third']);
     assert.equal(results().querySelector('.empty'), null);
   });
 
@@ -88,5 +88,20 @@ describe('every result card can be deleted on its own', () => {
     push('fourth');
     assert.deepEqual(titles(), ['fourth']);
     assert.equal(results().querySelector('.empty'), null);
+  });
+
+  it('scrolls the column down so the card it just added is the one on screen', () => {
+    // jsdom has no layout, so `scrollHeight` is 0 and the assignment cannot be observed by
+    // its effect. What is checkable is that the assignment happens at all, and that it
+    // reaches for the bottom rather than some remembered offset -- which is the whole of
+    // the bug this guards against, since an append below the fold is invisible.
+    const column = results();
+    const seen = [];
+    Object.defineProperty(column, 'scrollHeight', { configurable: true, get: () => 4321 });
+    Object.defineProperty(column, 'scrollTop', {
+      configurable: true, get: () => seen.at(-1) ?? 0, set: (value) => seen.push(value),
+    });
+    push('fifth');
+    assert.deepEqual(seen, [4321]);
   });
 });
