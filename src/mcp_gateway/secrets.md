@@ -67,8 +67,14 @@ instead of raising, so one run reports every problem rather than the first.
 
 A group- or world-readable `gateway.env` gets a WARNING naming it and suggesting
 `chmod 600`. Deliberately not fatal: refusing to start over a permission bit is hostile on
-Windows, on WSL's DrvFs where modes are synthetic, and in CI where a runner just wrote the
-file.
+WSL's DrvFs where modes are synthetic, and in CI where a runner just wrote the file.
+
+**Not checked at all off POSIX.** Windows reports `0o666` for every readable file whatever
+its ACL says, so the check there cannot distinguish a private file from an exposed one — it
+fired on every start of the bundled desktop daemon, about a file in the user's own profile,
+advising a `chmod` that machine does not have. The honest options were an unconditional
+warning or none, and a warning that is always on is one nobody reads. Privacy on Windows is
+an ACL question, and reading ACLs is not something this module does.
 
 ## A missing file is an empty store
 
