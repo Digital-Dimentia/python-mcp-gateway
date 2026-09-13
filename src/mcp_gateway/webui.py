@@ -72,6 +72,7 @@ ASSETS: dict[str, str] = {
     "schema_form.js": "text/javascript; charset=utf-8",
     "render.js": "text/javascript; charset=utf-8",
     "clipboard.js": "text/javascript; charset=utf-8",
+    "markdown.js": "text/javascript; charset=utf-8",
 }
 
 

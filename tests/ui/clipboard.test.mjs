@@ -23,7 +23,7 @@ let window;
 
 //: Every `admin.clipboard.put` the page has made, and what the daemon pretends to answer.
 let published = [];
-let answer = '# MCP Gateway — bench session\n\nrendered by the daemon\n';
+let answer = '## Results\n\nrendered by the daemon\n';
 
 //: Everything the page has put on the clipboard, in order.
 const clipboard = { copied: [], async writeText(text) { this.copied.push(text); } };
@@ -166,8 +166,11 @@ describe('the snapshot describes the Injectable values column', () => {
     assert.deepEqual(group.picked.sort(), ['africa', 'asia']);
   });
 
-  it('names the server the whole session is about', () => {
-    assert.equal(ui.clipboardSnapshot().server, 'zoo');
+  it('publishes the two columns and nothing about the page around them', () => {
+    // `clipboard.py` renders the calls and the picks; it renders neither the selected
+    // server nor the bind address, and a key published here that nothing renders is dead
+    // weight on a payload whose whole point is to stay small.
+    assert.deepEqual(Object.keys(ui.clipboardSnapshot()).sort(), ['results', 'variables']);
   });
 });
 
@@ -220,5 +223,80 @@ describe('the modal', () => {
     $('btn-clip-regen').click();
     await settleClipboard();
     assert.equal($('clip-text').value, answer);
+  });
+});
+
+// The toggle between the editor and the rendering. The renderer itself is pinned in
+// `markdown.test.mjs`; what is worth asserting here is the one rule the two views share --
+// the textarea is the document, and the rendering is only ever a window onto it.
+describe('the preview toggle', () => {
+  before(async () => {
+    ui.clearResults();
+    push('alpha__one');
+    answer = '# a heading\n\nand a **paragraph**\n';
+    $('btn-clipboard').click();
+    await settleClipboard();
+  });
+
+  it('opens on the rendering, because reading it is what happens first', () => {
+    assert.equal($('clip-preview').hidden, false);
+    assert.equal($('clip-text').hidden, true);
+    assert.equal($('btn-clip-preview').textContent, 'Edit');
+    assert.equal($('clip-preview').querySelector('h1').textContent, 'a heading');
+    assert.equal($('clip-preview').querySelector('strong').textContent, 'paragraph');
+  });
+
+  it('sits in the modal header, not among the buttons that decide what leaves', () => {
+    assert.equal($('btn-clip-preview').closest('.clip-head') !== null, true);
+    assert.equal($('btn-clip-preview').closest('.clip-actions'), null);
+  });
+
+  it('swaps in the editor, and says it is now the way back', () => {
+    $('btn-clip-preview').click();
+    assert.equal($('clip-text').hidden, false);
+    assert.equal($('clip-preview').hidden, true);
+    assert.equal($('btn-clip-preview').textContent, 'Preview');
+  });
+
+  it('renders what is in the box, edits included', () => {
+    const box = $('clip-text');
+    box.value = '## mine\n';
+    box.dispatchEvent(new window.Event('input'));
+    $('btn-clip-preview').click();
+    assert.equal($('clip-preview').querySelector('h2').textContent, 'mine');
+  });
+
+  it('copies the text and not the rendering, while the rendering is what is on screen',
+    async () => {
+      assert.equal($('clip-preview').hidden, false, 'still previewing');
+      $('btn-clip-copy').click();
+      await settleClipboard();
+      assert.equal(clipboard.copied.at(-1), '## mine\n');
+    });
+
+  it('follows a regenerate without being toggled twice', async () => {
+    answer = '### regenerated\n';
+    $('btn-clip-regen').click();
+    await settleClipboard();
+    assert.equal($('clip-preview').hidden, false);
+    assert.equal($('clip-preview').querySelector('h3').textContent, 'regenerated');
+  });
+
+  it('follows a card that lands behind the modal', async () => {
+    answer = '### a later rendering\n';
+    push('alpha__two');
+    await settleClipboard();
+    assert.equal($('clip-preview').querySelector('h3').textContent, 'a later rendering');
+  });
+
+  it('remembers a switch to the editor the next time the modal opens', async () => {
+    // Opening on the rendering is the default, not a mode the modal snaps back to:
+    // somebody who went to the text is working on the text.
+    $('btn-clip-preview').click();
+    $('clipboard-dialog').close();
+    $('btn-clipboard').click();
+    await settleClipboard();
+    assert.equal($('clip-text').hidden, false, 'the choice is a preference, not a mode');
+    $('btn-clip-preview').click();
   });
 });

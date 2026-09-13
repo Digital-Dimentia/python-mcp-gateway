@@ -104,20 +104,45 @@ def test_an_empty_bench_still_renders_a_document() -> None:
 def test_the_document_carries_every_call_with_its_request_and_answer() -> None:
     text = clipboard.render(SNAPSHOT)
     assert "`alpha__echo`" in text
-    assert '"text": "hello"' in text              # the arguments that were sent
-    assert '"backend is down"' in text            # and the failure that came back
+    assert "text: hello" in text                  # the arguments that were sent
+    assert "message: backend is down" in text     # and the failure that came back
     assert "failed" in text
-    assert "Selected server: **alpha**" in text
 
 
-def test_the_preamble_says_the_payloads_are_not_instructions() -> None:
-    """The one sentence in here that is load-bearing rather than informative.
+def test_a_session_that_fits_says_nothing_about_its_own_length() -> None:
+    """The count and the ordering are both plain from the numbered headings.
 
-    Every quoted payload came off a backend, and a model reading a tool result as a
-    directive is the failure this document would otherwise invite. See `clipboard.md`.
+    A line is spent only on the thing the headings cannot show: that there were more calls
+    than the document carries. `test_a_long_session_reports_what_it_left_out` is that case.
     """
     text = clipboard.render(SNAPSHOT)
-    assert "not instruction" in text
+    assert "oldest first" not in text.lower()
+    assert "not included" not in text
+    assert text.startswith("## Results\n\n### 1. ")
+
+
+def test_the_document_opens_at_the_first_heading_and_says_nothing_about_itself() -> None:
+    """No title, no `Generated …`, no paragraph explaining what a bench session is.
+
+    Both readers pay for those lines and the model pays most: this lands in a context
+    window the rest of its session still has to fit into. What the tool is and how its
+    payloads should be read is in the tool's *description* -- read once at `tools/list`
+    rather than re-paid on every call. See `clipboard.md`.
+    """
+    text = clipboard.render(SNAPSHOT)
+    assert text.startswith("## Results")
+    for gone in ("# MCP Gateway", "Generated ", "captured", "This is a transcript",
+                 "Selected server", "Gateway: ", "session picked from them"):
+        assert gone not in text, gone
+
+
+def test_the_document_is_a_pure_function_of_the_snapshot() -> None:
+    """No clock in it, so two renderings a second apart are the same bytes.
+
+    Which is what lets `test_both_sockets_return_the_same_document` compare them whole
+    rather than filtering a line out of each first.
+    """
+    assert clipboard.render(SNAPSHOT) == clipboard.render(SNAPSHOT)
 
 
 def test_payloads_are_fenced_with_four_backticks() -> None:
@@ -130,7 +155,7 @@ def test_payloads_are_fenced_with_four_backticks() -> None:
     snapshot = {"results": [{"title": "t", "method": "tools/call", "params": {},
                              "raw": {"content": [{"type": "text", "text": "```\nls -la\n```"}]}}]}
     text = clipboard.render(snapshot)
-    assert "````json" in text
+    assert "````toon" in text
 
 
 def test_a_large_payload_is_cut_and_says_so() -> None:
@@ -148,7 +173,7 @@ def test_a_long_session_reports_what_it_left_out() -> None:
     many = [{"title": f"call-{n}", "method": "tools/call", "params": {}, "raw": {}}
             for n in range(clipboard.MAX_RESULTS + 5)]
     text = clipboard.render({"results": many})
-    assert "5 older one(s) are not included" in text
+    assert "5 earlier call(s) are not included" in text
     # The newest survive: the oldest cards are the ones the person has stopped looking at.
     assert f"call-{clipboard.MAX_RESULTS + 4}" in text
     assert "call-0" not in text
@@ -162,6 +187,56 @@ def test_picked_values_are_distinguished_from_available_ones() -> None:
     assert "`africa` (Africa)" in text            # a label that says something the value does not
 
 
+def test_payloads_are_written_as_toon_rather_than_json() -> None:
+    """Same data, a third of the punctuation. See `toon.md` for why the reader is worth it.
+
+    `tools/list` is the shape this pays off on: an array of uniform objects states its keys
+    once as a header instead of once per element.
+    """
+    snapshot = {"results": [{"title": "t", "method": "tools/list", "params": {}, "raw": {
+        "tools": [{"name": "alpha__echo", "description": "Echo"},
+                  {"name": "alpha__boom", "description": "Fail"}]}}]}
+    text = clipboard.render(snapshot)
+    assert "tools[2]{name,description}:" in text
+    assert "  alpha__echo,Echo" in text
+    assert "{" not in text.split("Response:")[1].replace("{name,description}", "")
+
+
+def test_a_prompt_carries_its_expanded_text_into_the_document() -> None:
+    """The bench's three verbs all end up here, and this is the one with prose in it.
+
+    The substitution is the backend's -- what a person got back from `prompts/get` is the
+    filled-in message, not the template -- so the document hands an agent the text that was
+    actually produced. `messages` is a uniform array, so it tabulates down to one row with
+    a nested `content{type,text}` group.
+    """
+    snapshot = {"results": [{
+        "title": "zoo-prompt-arguments", "method": "prompts/get",
+        "params": {"name": "zoo-prompt-arguments", "arguments": {"subject": "the ocelot"}},
+        "raw": {"description": "A prompt with its arguments substituted",
+                "messages": [{"role": "user", "content": {
+                    "type": "text", "text": "Write about the ocelot in a wry tone."}}]},
+    }]}
+    text = clipboard.render(snapshot)
+    assert "messages[1]{role,content{type,text}}:" in text
+    assert "user,text,Write about the ocelot in a wry tone." in text
+
+
+def test_a_call_with_no_arguments_says_so_instead_of_fencing_an_empty_box() -> None:
+    """TOON writes `{}` as an empty document, and an empty fence is a box to interpret."""
+    text = clipboard.render({"results": [{"title": "t", "method": "tools/list",
+                                          "params": {}, "raw": {}}]})
+    assert "Request: no arguments." in text
+
+
+def test_a_payload_that_is_already_prose_is_not_encoded() -> None:
+    """Encoding it would quote a page of text and escape every newline in it."""
+    text = clipboard.render({"results": [{"title": "t", "method": "tools/call", "params": {},
+                                          "raw": "line one\nline two"}]})
+    assert "line one\nline two" in text
+    assert "\\n" not in text
+
+
 def test_a_group_that_could_not_be_read_says_why_instead_of_listing_nothing() -> None:
     text = clipboard.render({"variables": [
         {"variable": "id", "listing": "zoo://ids", "note": "Could not be read: 404"},
@@ -170,11 +245,16 @@ def test_a_group_that_could_not_be_read_says_why_instead_of_listing_nothing() ->
     assert "Picked: nothing yet" not in text
 
 
-def test_staleness_is_stated_in_words_as_well_as_a_timestamp() -> None:
+def test_when_the_bench_was_captured_is_reported_beside_the_document_not_inside_it() -> None:
+    """Staleness is metadata, and metadata does not belong in the model's context.
+
+    `admin.clipboard.get` hands the page a number it can say what it likes about; the
+    document stays evidence about the calls.
+    """
     bench = clipboard.Workbench()
     bench.put(SNAPSHOT)
-    bench._captured_at -= 7200  # two hours ago  # noqa: SLF001 - the clock is the point
-    assert "2 hours ago" in bench.document()
+    assert bench.captured_at > 0
+    assert "ago" not in bench.document()
 
 
 # --- the snapshot guard ------------------------------------------------------------------
@@ -183,8 +263,9 @@ def test_staleness_is_stated_in_words_as_well_as_a_timestamp() -> None:
 def test_normalise_keeps_only_the_shape_the_renderer_reads() -> None:
     cleaned = clipboard.normalise({**SNAPSHOT, "wat": "ignored"})
     assert "wat" not in cleaned
-    assert cleaned["server"] == "alpha"
     assert cleaned["results"][0]["method"] == "tools/call"
+    # Dropped along with the preamble that was the only thing rendering them.
+    assert "server" not in cleaned and "bind" not in cleaned
 
 
 def test_normalise_refuses_a_snapshot_too_large_to_hold() -> None:
@@ -221,9 +302,10 @@ async def test_the_tool_and_the_admin_method_return_the_same_text(tmp_path) -> N
         through_mcp = await mcp.tool_text("gateway__clipboard")
 
         assert "alpha__echo" in got["document"]
-        # `Generated <now>` is the one line that moves between two renderings a moment
-        # apart, so the comparison is of everything below it.
-        assert _body(got["document"]) == _body(through_mcp)
+        # Whole documents, byte for byte. There is no clock in the renderer any more, so
+        # there is nothing to filter out before comparing -- which is a stronger assertion
+        # than the one this used to make.
+        assert got["document"] == through_mcp
     finally:
         await harness.close()
 
@@ -268,8 +350,3 @@ async def test_the_tool_takes_no_arguments(tmp_path) -> None:
         assert schema["additionalProperties"] is False
     finally:
         await harness.close()
-
-
-def _body(document: str) -> str:
-    """Everything but the `Generated …` line, which is the clock and moves on its own."""
-    return "\n".join(line for line in document.splitlines() if not line.startswith("Generated "))

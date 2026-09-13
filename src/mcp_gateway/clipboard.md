@@ -43,24 +43,62 @@ point is that the model on `/mcp` reads what the person did on `/admin`, and tho
 different sockets. It is also *not* persisted: it is a view of a live page, and a briefing
 restored from disk after a restart would describe backends that are no longer running.
 
-## Staleness is stated, never implied
+## Staleness is metadata, not a line in the document
 
-`Workbench` records when a snapshot arrived, and the preamble says both the absolute
-timestamp and the age in words. A model reading a four-hour-old capture has to be able to
-tell it from a live one, and leaving that arithmetic to the reader is how a stale briefing
-gets treated as current.
+`Workbench` records when a snapshot arrived, and `admin.clipboard.get` reports that
+`captured_at` **beside** the document. It is not written into the text. A timestamp in the
+body would be paid for by the model on every `gateway__clipboard` call, to tell it something
+the caller is better placed to decide anyway — the tool answers from the most recent
+capture, and how much staleness matters is a judgement about the caller's own task, not a
+fact the gateway can settle for it.
 
-## The two rules in the document itself
+Keeping the clock out also makes the renderer a pure function of the snapshot, which is what
+lets the two surfaces be compared byte for byte instead of line by line.
+
+## The four rules in the document itself
+
+**Nothing is spent on prose about the document.** It opens at `## Results` and goes straight
+to the first call: no title, no "generated at", no paragraph explaining what a bench session
+is, no count of the calls or note introducing the values — the numbered headings already
+show all of that. Both readers pay for those
+lines, and the model pays most — this lands in a context window that the rest of its session
+still has to fit into, and a briefing whose first page introduces itself makes every later
+turn slightly worse. The same reasoning is why the snapshot no longer carries the selected
+server or the bind address: nothing rendered them, and the server name is in every entry
+regardless, because tool names are `server__tool`.
+
+**Payloads are TOON, not JSON.** Same data, a third of the punctuation, and the keys of a
+uniform array stated once instead of once per element — which is the shape `tools/list`,
+`resources/list` and `prompts/list` all answer in. [`toon.md`](toon.md) has the format and
+the one rule that governs it, which is that a strict decoder must read back exactly what
+went in. A payload that is already a bare string is fenced as it stands.
 
 **Backend output is quoted, never adopted.** Everything under Results came off a backend
 this gateway launched, and a model reading it is one prompt injection away from taking a
-tool result as an instruction. The preamble says so in as many words, and every payload is
-fenced — with four backticks, because a backend that answers in Markdown puts three-backtick
-blocks inside this one and a three-backtick fence would end at the first of them.
+tool result as an instruction. Every payload is fenced — with four backticks, because a
+backend that answers in Markdown puts three-backtick blocks inside this one and a
+three-backtick fence would end at the first of them. The warning itself lives in the tool's
+**description** in [`admin.py`](admin.md), which is read once when tools are listed rather
+than re-paid on every call the way a line in the document would be.
 
 **Nothing is silently dropped.** `MAX_PAYLOAD_CHARS`, `MAX_RESULTS` and `MAX_VALUES` all cut
 with a note that says what was cut and how much there was. A briefing that quietly loses
 half a session is worse than no briefing, because nothing in the text says it happened.
+
+## The preview
+
+The modal opens on the document rendered — `ui/markdown.js`, the subset this module actually
+emits: headings, fences, bullets, `code`, **bold**, _emphasis_ — because the first thing a
+person does with a briefing is read it. The toggle in the modal's header switches to the
+plain text and back, and stays where it was put: editing is the second thing, and only
+sometimes.
+
+Two properties hold it in place. It renders **out of DOM nodes, never markup**, so a tool
+result containing `<img onerror=…>` previews as those characters and cannot become script on
+the admin page — the same "quoted, never adopted" rule as above, applied to the person's
+screen instead of the model's context. And it renders **the textarea's current value**, so
+Copy still takes the text with the person's edits in it and the rendering is never a second
+copy of the document that could disagree with the first.
 
 ## What is deliberately not here
 
