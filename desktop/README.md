@@ -276,6 +276,13 @@ a person.** Everything under the window is covered by `make tauri-check` on each
 CI, but the same manual checklist above is unwalked on both — see
 `python-mcp-gateway-e6o`.
 
+`icons/` carries Tauri's default icon list, and two of the five entries are there for the
+build rather than for the eye: `icon.ico` is compiled into a **Windows Resource file by
+`tauri_build::build()`**, so a missing one is not an app with a blank icon, it is a crate
+that does not compile — on Windows only, where no developer here builds. `icon.icns` is the
+macOS half of the same list. Both are generated from `icon.png` with `cargo tauri icon`;
+regenerate them from that file rather than adding a differently-drawn one beside it.
+
 ## Not done yet
 
 The bundle is ad-hoc signed and un-notarised, and the icons are a generated placeholder.
