@@ -203,6 +203,11 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
     loop {
         announce(GatewayState::Starting);
 
+        // Any port file here is from a run that did not get to clean up after itself. Its
+        // number is worse than useless -- something else may hold that port now -- so it
+        // goes before the child that will write the real one.
+        let _ = std::fs::remove_file(layout.portfile());
+
         let mut child = match supervisor::spawn(&layout, &secret, &path) {
             Ok(child) => child,
             Err(err) => {
@@ -219,30 +224,46 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
 
         let started = Instant::now();
 
-        // Runs until the child's stderr closes, which is how this loop learns the child is
-        // going away. Every line is kept for the log buffer; the first one that names a
-        // port is the readiness signal. See `supervisor`.
-        let mut reached_listening = false;
-        if let Some(stderr) = child.stderr.take() {
-            let recorder = inner.clone();
+        // The port arrives by file, not by log line. Watched in its own task so it runs
+        // *alongside* the stderr pump: the pump only returns when the child goes away, and
+        // waiting for it first would mean nothing could connect until the daemon had died.
+        let watcher = {
             let announcer = inner.clone();
             let app = app.clone();
-            supervisor::pump_stderr(
-                stderr,
-                |line| recorder.record(line),
-                |port| {
-                    reached_listening = true;
-                    announcer.set(GatewayState::Listening { port });
-                    let _ = app.emit(STATE_EVENT, announcer.status());
-                },
-            )
-            .await;
+            let path = layout.portfile();
+            tauri::async_runtime::spawn(async move {
+                match supervisor::wait_for_port(&path, supervisor::PORT_WAIT_TIMEOUT).await {
+                    Some(port) => {
+                        announcer.set(GatewayState::Listening { port });
+                        let _ = app.emit(STATE_EVENT, announcer.status());
+                        true
+                    }
+                    None => false,
+                }
+            })
+        };
+
+        // Runs until the child's stderr closes, which is how this loop learns the child is
+        // going away. Every line is kept for the log buffer and for the failure reason.
+        if let Some(stderr) = child.stderr.take() {
+            let recorder = inner.clone();
+            supervisor::pump_stderr(stderr, |line| recorder.record(line)).await;
         }
+
+        // stderr is closed, so the child is gone and the watcher will not find a port it has
+        // not found already. Aborting rather than awaiting the full timeout is what keeps a
+        // child that dies at once from delaying its own restart by a minute.
+        watcher.abort();
+        let reached_listening = matches!(watcher.await, Ok(true));
 
         // stderr closed, so the child is on its way out. Reap it rather than leaving a
         // zombie, and take its process group with it in case a backend outlived it.
         supervisor::terminate(&mut child).await;
         appdata::clear_pidfile(&layout.pidfile());
+        // The daemon removes this itself on a clean exit. Doing it again covers the one it
+        // cannot -- a `SIGKILL` -- and a stale port would aim the next run's sockets at
+        // whatever has taken that port since.
+        let _ = std::fs::remove_file(layout.portfile());
 
         // Every socket pointed at a port that no longer exists. Dropping the registry's
         // senders ends each pump, which sends the window a close frame -- and that is what

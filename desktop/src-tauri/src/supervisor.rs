@@ -6,23 +6,23 @@
 //! app that hard-coded 8765 would collide with the `make run` daemon a developer already
 //! has open, and the second one to bind would simply fail.
 //!
-//! The port comes back out of the daemon's own startup line on stderr:
-//!
-//! ```text
-//! listening on ws://127.0.0.1:49613/mcp
-//! ```
-//!
-//! which is emitted by `transport_ws.py` *after* the backend pool is up, because
-//! `Gateway.start()` spawns backends before it binds. So one line is both the port and the
-//! readiness signal, and no new Python surface was invented for this.
+//! The child is given `--port-file <path>` and writes the bound port there once the socket
+//! exists, atomically, removing it on the way out. `wait_for_port` polls for it. The file's
+//! *appearance* is the readiness signal, so one mechanism carries both facts and there is
+//! nothing to parse beyond a decimal number.
 //!
 //! Binding an ephemeral port here and passing `--port N` was considered and rejected: it is
 //! a time-of-check-to-time-of-use race for nothing, when the daemon can just say.
 //!
-//! The cost is that a log line is now a wire format. `tests/test_desktop_contract.py` pins
-//! it from the Python side, so a change there fails a Python test rather than a dev build
-//! nobody runs in CI. Replacing this with a real handshake (`--port-file`, or an inherited
-//! socket) is filed rather than guessed at -- it is Python surface added for one consumer.
+//! This used to be a scrape of the daemon's own startup line -- `listening on
+//! ws://127.0.0.1:49613/mcp` -- which worked and was pinned from both sides, but made a
+//! sentence written for a human into a wire format nobody could reword. `--port-file` is
+//! what daemons have always offered for this, it generalises past this one caller to
+//! anything starting the gateway on `--port 0`, and it removes the twinned parser that had
+//! to be kept in step across two languages. See python-mcp-gateway-9p3.
+//!
+//! stderr is still read, because the log pane and the failure reason need it. What it is no
+//! longer responsible for is the port.
 //!
 //! ## Not leaving processes behind
 //!
@@ -44,7 +44,12 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStderr, Command};
 
 /// The marker the port is read out of. See the module docs.
-const LISTENING_MARKER: &str = "listening on ws://";
+/// How often `wait_for_port` looks for the file, and how long it looks for.
+///
+/// The timeout is generous because the thing it is waiting on is a cold Python interpreter
+/// importing the world, on a machine that may be doing a great deal else at login.
+const PORT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+pub const PORT_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How long a spawn gets to reach [`State::Listening`] before it counts as a failed start.
 ///
@@ -88,20 +93,48 @@ pub enum State {
     },
 }
 
-/// The port out of the daemon's startup line, or `None` if this is not that line.
+/// The port in a port file, or `None` if it is absent, empty or not a port.
 ///
-/// **Twinned with `parse_listening` in `tests/test_desktop_contract.py`.** If one learns
-/// something, teach the other.
+/// **Twinned with `portfile.read` in `src/mcp_gateway/portfile.py`.** If one learns
+/// something, teach the other -- though there is far less to learn than the log line it
+/// replaced: one decimal number, and every other state means "keep waiting".
 ///
-/// A substring search rather than a line anchor, because the default log format is a bare
-/// `%(message)s` but `--debug` prefixes the logger name -- and a shell that only worked
-/// without `--debug` would break exactly when someone turned logging up to find out why.
-/// `rsplit` on the colon, so an IPv6 authority like `[::1]:8765` still yields its port.
-pub fn parse_listening(line: &str) -> Option<u16> {
-    let rest = line.split_once(LISTENING_MARKER)?.1;
-    let authority = rest.split('/').next()?;
-    let (_, port) = authority.rsplit_once(':')?;
-    port.trim().parse().ok()
+/// Tolerant rather than strict, because a reader polling for this file is racing a writer.
+/// An empty read is a state to wait through, not an error to report.
+pub fn parse_port_file(contents: &str) -> Option<u16> {
+    let text = contents.trim();
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    match text.parse::<u16>() {
+        Ok(port) if port >= 1 => Some(port),
+        _ => None,
+    }
+}
+
+/// Wait for the child to publish its port, giving up after `timeout`.
+///
+/// Polled rather than watched. A filesystem notification API would save these wakeups, but
+/// it is a dependency and a per-platform behaviour difference to buy a saving measured
+/// against a file that appears within a second or two of a process starting -- and the
+/// poll has to exist anyway as the fallback for the platforms where the watch is unreliable.
+///
+/// The file is removed by the daemon on exit, so a stale one from a killed process is
+/// possible. That is why the caller deletes any existing file *before* spawning: an old
+/// number here would send the shell's sockets at whatever now owns that port.
+pub async fn wait_for_port(path: &Path, timeout: Duration) -> Option<u16> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(contents) = tokio::fs::read_to_string(path).await {
+            if let Some(port) = parse_port_file(&contents) {
+                return Some(port);
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(PORT_POLL_INTERVAL).await;
+    }
 }
 
 /// The delay before attempt `attempt` (1-based), capped at the last step.
@@ -140,6 +173,10 @@ impl Layout {
     pub fn pidfile(&self) -> PathBuf {
         self.data_dir.join("gateway.pid")
     }
+
+    pub fn portfile(&self) -> PathBuf {
+        self.data_dir.join("gateway.port")
+    }
 }
 
 /// The argv the gateway is started with.
@@ -147,7 +184,7 @@ impl Layout {
 /// A function so it is testable, and so the one place that decides `--port 0` is visible.
 /// `--env` is deliberately absent: `cli.default_env_path` resolves `gateway.env` beside the
 /// resolved config, which is where the seeding put it. One fewer path to keep in sync.
-pub fn argv(config: &Path) -> Vec<String> {
+pub fn argv(config: &Path, port_file: &Path) -> Vec<String> {
     vec![
         "-m".into(),
         "mcp_gateway.cli".into(),
@@ -155,6 +192,8 @@ pub fn argv(config: &Path) -> Vec<String> {
         "127.0.0.1".into(),
         "--port".into(),
         "0".into(),
+        "--port-file".into(),
+        port_file.to_string_lossy().into_owned(),
         "--config".into(),
         config.to_string_lossy().into_owned(),
     ]
@@ -186,7 +225,7 @@ pub fn environment(key: &str, path: &str) -> Vec<(String, String)> {
 pub fn spawn(layout: &Layout, key: &str, path: &str) -> std::io::Result<Child> {
     let mut command = Command::new(layout.interpreter());
     command
-        .args(argv(&layout.config()))
+        .args(argv(&layout.config(), &layout.portfile()))
         .envs(environment(key, path))
         // The gateway does not read stdin, and a pipe it never reads is a file descriptor
         // to leak. Null, so anything that did read gets EOF rather than blocking.
@@ -216,22 +255,16 @@ pub fn spawn(layout: &Layout, key: &str, path: &str) -> std::io::Result<Child> {
 ///
 /// Takes the handle rather than borrowing the `Child`, so it can be spawned as a task and
 /// run *alongside* waiting on the process. The borrowing form forced the two to be
-/// sequential, which meant nothing could react to the port until the child had already
-/// gone -- fine for the supervisor loop, useless for anything that wants to connect.
-pub async fn pump_stderr<L, P>(stderr: ChildStderr, mut on_line: L, mut on_port: P)
+/// sequential, which meant nothing could react until the child had already gone -- fine for
+/// the supervisor loop, useless for anything that wants to watch the log as it happens.
+///
+/// Log lines only. The port arrives by `wait_for_port` now; see the module docs.
+pub async fn pump_stderr<L>(stderr: ChildStderr, mut on_line: L)
 where
     L: FnMut(String),
-    P: FnMut(u16),
 {
     let mut lines = BufReader::new(stderr).lines();
-    let mut announced = false;
     while let Ok(Some(line)) = lines.next_line().await {
-        if !announced {
-            if let Some(port) = parse_listening(&line) {
-                announced = true;
-                on_port(port);
-            }
-        }
         on_line(line);
     }
 }
@@ -271,56 +304,56 @@ pub async fn terminate(child: &mut Child) {
 mod tests {
     use super::*;
 
-    // --- the startup line -------------------------------------------------------------
+    // --- the port file ------------------------------------------------------------------
 
     #[test]
-    fn the_port_comes_out_of_the_daemons_own_line() {
-        assert_eq!(
-            parse_listening("listening on ws://127.0.0.1:49613/mcp"),
-            Some(49613)
-        );
+    fn the_port_comes_out_of_the_file_the_daemon_wrote() {
+        assert_eq!(parse_port_file("49613\n"), Some(49613));
+        assert_eq!(parse_port_file("8765"), Some(8765));
+        assert_eq!(parse_port_file("  8765  \n"), Some(8765));
     }
 
     #[test]
-    fn debug_logging_prefixes_the_line_and_must_not_break_it() {
-        assert_eq!(
-            parse_listening("mcp_gateway.transport_ws: listening on ws://127.0.0.1:8765/mcp"),
-            Some(8765)
-        );
+    fn a_half_written_file_is_none_rather_than_a_wrong_port() {
+        // The writer renames into place so this should not happen, but a reader that is
+        // polling has no way to know that and must not turn a partial read into a port.
+        assert_eq!(parse_port_file(""), None);
+        assert_eq!(parse_port_file("   "), None);
+        assert_eq!(parse_port_file("notaport"), None);
+        assert_eq!(parse_port_file("8765x"), None);
+        assert_eq!(parse_port_file("-1"), None);
     }
 
     #[test]
-    fn an_ipv6_authority_still_yields_its_port() {
-        assert_eq!(
-            parse_listening("listening on ws://[::1]:8765/mcp"),
-            Some(8765)
-        );
+    fn a_number_that_is_not_a_port_is_refused() {
+        assert_eq!(parse_port_file("0"), None);
+        assert_eq!(parse_port_file("65536"), None);
+        assert_eq!(parse_port_file("99999999"), None);
     }
 
-    #[test]
-    fn the_other_startup_lines_are_not_mistaken_for_it() {
-        // Both of these are real lines the daemon prints, next to the one we want.
-        assert_eq!(parse_listening("server listening on 127.0.0.1:49613"), None);
-        assert_eq!(
-            parse_listening("admin UI at http://127.0.0.1:49613/ui/"),
-            None
-        );
+    #[tokio::test]
+    async fn waiting_returns_the_port_once_the_file_appears() {
+        let dir = std::env::temp_dir().join(format!("mcpgw-port-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gateway.port");
+        let _ = std::fs::remove_file(&path);
+
+        let writing = path.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            std::fs::write(&writing, "51234\n").unwrap();
+        });
+
+        let port = wait_for_port(&path, Duration::from_secs(5)).await;
+        assert_eq!(port, Some(51234));
+        let _ = std::fs::remove_file(&path);
     }
 
-    #[test]
-    fn a_malformed_line_is_none_rather_than_a_wrong_port() {
-        assert_eq!(parse_listening(""), None);
-        assert_eq!(parse_listening("listening on ws://127.0.0.1/mcp"), None);
-        assert_eq!(
-            parse_listening("listening on ws://127.0.0.1:notaport/mcp"),
-            None
-        );
-        assert_eq!(parse_listening("listening on ws://"), None);
-        // Truncated mid-write, which a line-buffered reader can genuinely hand us.
-        assert_eq!(
-            parse_listening("listening on ws://127.0.0.1:4961"),
-            Some(4961)
-        );
+    #[tokio::test]
+    async fn waiting_gives_up_rather_than_hanging_when_nothing_appears() {
+        let path = std::env::temp_dir().join("mcpgw-port-that-never-exists");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(wait_for_port(&path, Duration::from_millis(150)).await, None);
     }
 
     // --- the restart schedule ---------------------------------------------------------
@@ -354,7 +387,7 @@ mod tests {
 
     #[test]
     fn the_child_is_told_to_let_the_os_pick_the_port() {
-        let args = argv(Path::new("/data/servers.yaml"));
+        let args = argv(Path::new("/data/servers.yaml"), Path::new("/data/gateway.port"));
         let port = args.iter().position(|a| a == "--port").expect("--port");
         assert_eq!(
             args[port + 1],
@@ -365,7 +398,7 @@ mod tests {
 
     #[test]
     fn the_child_is_told_where_its_config_is_and_not_where_its_secrets_are() {
-        let args = argv(Path::new("/data/servers.yaml"));
+        let args = argv(Path::new("/data/servers.yaml"), Path::new("/data/gateway.port"));
         assert!(args.contains(&"/data/servers.yaml".to_string()));
         // `cli.default_env_path` finds `gateway.env` beside the config. Passing `--env`
         // would be a second path to keep in sync with the seeding.
@@ -375,7 +408,7 @@ mod tests {
     #[test]
     fn the_key_travels_in_the_environment_and_never_in_argv() {
         let key = "a-secret-that-must-not-be-public";
-        let args = argv(Path::new("/data/servers.yaml"));
+        let args = argv(Path::new("/data/servers.yaml"), Path::new("/data/gateway.port"));
         assert!(
             !args.iter().any(|a| a.contains(key)),
             "argv is world-readable through `ps`"

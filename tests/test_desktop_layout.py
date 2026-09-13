@@ -165,12 +165,21 @@ def test_the_global_tauri_api_is_on_because_the_ui_has_no_build_step() -> None:
 # --- the two halves of the parser stay twinned -------------------------------------------
 
 
-def test_the_rust_and_python_startup_line_parsers_are_twinned() -> None:
+def test_the_rust_and_python_port_file_readers_are_twinned() -> None:
     """Each names the other; this fails if one is moved or renamed and the note goes stale."""
     rust = (TAURI / "src" / "supervisor.rs").read_text()
     python = (REPO_ROOT / "tests" / "test_desktop_contract.py").read_text()
-    assert "test_desktop_contract.py" in rust
+    assert "portfile.py" in rust
     assert "supervisor.rs" in python
+
+
+def test_the_shell_no_longer_reads_the_port_off_a_log_line() -> None:
+    """The point of python-mcp-gateway-9p3. A log line is a sentence written for a human,
+    and the moment something parses it for a port it can never be reworded again -- so this
+    fails if the scrape comes back rather than only if the file mechanism breaks."""
+    rust = (TAURI / "src" / "supervisor.rs").read_text()
+    code = "\n".join(line for line in rust.splitlines() if not line.lstrip().startswith("//"))
+    assert "listening on ws://" not in code
 
 
 @pytest.mark.parametrize("name", ["servers.yaml", "gateway.env.template"])

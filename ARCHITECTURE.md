@@ -192,9 +192,11 @@ already allowed — that branch exists for the bridge and for Claude Desktop, an
 WebSocket client falls into it. What a browser-hosted page could not do, a host process
 simply does.
 
-Two couplings came out of it, both pinned by `tests/test_desktop_contract.py`: the daemon's
-`listening on ws://…` line is how the host learns which port `--port 0` chose, and the
-`Origin`-less branch is now load-bearing. See [`desktop/README.md`](desktop/README.md).
+Two couplings came out of it, both pinned by `tests/test_desktop_contract.py`: the host
+learns which port `--port 0` chose from the file `--port-file` names, and the `Origin`-less
+branch is now load-bearing. The port started out as a scrape of the daemon's `listening on
+ws://…` line, which worked but made a log line a wire format;
+[`portfile.md`](src/mcp_gateway/portfile.md) is what replaced it. See [`desktop/README.md`](desktop/README.md).
 
 ## Notes
 

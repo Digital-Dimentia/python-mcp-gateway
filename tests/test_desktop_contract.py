@@ -7,11 +7,12 @@ a window that never connects on somebody's machine.
 
 The four couplings are pinned here. Each one is load-bearing in a specific way:
 
-* **The startup line.** `supervisor.rs` learns the port by reading the daemon's own
-  `listening on ws://host:port/mcp` off stderr. That makes a log line a wire format. The
-  alternative -- a `--port-file` flag, or an inherited socket -- is Python surface added for
-  one consumer, and is filed rather than guessed at; until then, this test is what makes the
-  existing line safe to depend on.
+* **The port file.** `supervisor.rs` learns the port by polling the file `--port-file`
+  names. Three things have to hold and each is pinned below: the flag exists, the file
+  appears with the bound port in it once the socket is up, and it is gone again after the
+  daemon exits. This used to be a scrape of the `listening on ws://host:port/mcp` log line,
+  which worked but made a sentence written for a human into a wire format nobody could
+  reword; see python-mcp-gateway-9p3.
 * **A headerless client with a Bearer token is accepted.** `proxy.rs` dials with
   `tokio-tungstenite`, which sends no `Origin`. `origin_permitted(None, ...)` returning True
   is what lets the whole shell exist without touching `transport_ws.py` -- so it is no
@@ -27,7 +28,9 @@ The four couplings are pinned here. Each one is load-bearing in a specific way:
 
 from __future__ import annotations
 
+import contextlib
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -36,7 +39,7 @@ from pathlib import Path
 import pytest
 import websockets
 
-from mcp_gateway import transport_ws
+from mcp_gateway import portfile, transport_ws
 from mcp_gateway.cli import DEFAULT_PORT
 from mcp_gateway.config import load as load_config
 from mcp_gateway.secrets import SecretStore
@@ -50,55 +53,47 @@ SEED = REPO_ROOT / "desktop" / "src-tauri" / "seed"
 STARTUP_TIMEOUT = 30.0
 
 
-def parse_listening(line: str) -> int | None:
-    """The port out of the daemon's startup line, or None.
+@contextlib.contextmanager
+def daemon_with_port_file(tmp_path: Path, *extra: str):
+    """A real daemon as a subprocess, yielding `(port, path)` while it is still running.
 
-    **This is a twin of `parse_listening` in `desktop/src-tauri/src/supervisor.rs`.** Keep
-    the two together: if one is taught something, teach the other.
-
-    A substring search rather than a line anchor, because the default log format is a bare
-    `%(message)s` but `--debug` prefixes the logger name -- and a shell that only worked
-    without `--debug` would break exactly when someone turned logging up to find out why.
-    `rsplit` on the colon, so an IPv6 authority like `[::1]:8765` still yields the port.
+    A context manager rather than a function returning the port, because half of what is
+    being pinned here is about the daemon being *alive* -- that the port in the file is one
+    you can actually connect to -- and half is about it being gone, which the caller checks
+    after the block. A helper that terminated the child before returning could test neither.
     """
-    _, separator, rest = line.partition("listening on ws://")
-    if not separator:
-        return None
-    authority = rest.split("/", 1)[0]
-    _, colon, port = authority.rpartition(":")
-    if not colon:
-        return None
-    try:
-        return int(port.strip())
-    except ValueError:
-        return None
-
-
-def run_until_listening(tmp_path: Path, *extra: str) -> tuple[int, list[str]]:
-    """Start a real daemon as a subprocess and read its port off stderr, as Rust does."""
     config = tmp_path / "servers.yaml"
     config.write_text("version: 1\nservers: {}\n")
+    port_file = tmp_path / "gateway.port"
 
     process = subprocess.Popen(
-        [sys.executable, "-m", "mcp_gateway.cli", "--port", "0", "--config", str(config), *extra],
+        [
+            sys.executable, "-m", "mcp_gateway.cli",
+            "--port", "0",
+            "--port-file", str(port_file),
+            "--config", str(config),
+            *extra,
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
         cwd=REPO_ROOT,
     )
-    lines: list[str] = []
-    deadline = time.monotonic() + STARTUP_TIMEOUT
     try:
-        assert process.stderr is not None
+        deadline = time.monotonic() + STARTUP_TIMEOUT
+        port = None
         while time.monotonic() < deadline:
-            line = process.stderr.readline()
-            if not line:
-                break
-            lines.append(line.rstrip("\n"))
-            port = parse_listening(line)
+            port = portfile.read(port_file)
             if port is not None:
-                return port, lines
-        pytest.fail(f"no startup line within {STARTUP_TIMEOUT}s; saw:\n" + "\n".join(lines))
+                break
+            if process.poll() is not None:
+                break
+            time.sleep(0.05)
+        if port is None:
+            process.terminate()
+            said = process.stderr.read() if process.stderr else ""
+            pytest.fail(f"no port file within {STARTUP_TIMEOUT}s; the daemon said:\n{said}")
+        yield port, port_file
     finally:
         process.terminate()
         try:
@@ -108,54 +103,79 @@ def run_until_listening(tmp_path: Path, *extra: str) -> tuple[int, list[str]]:
             process.wait(timeout=10)
         if process.stderr is not None:
             process.stderr.close()
-    raise AssertionError("unreachable")        # pragma: no cover
 
 
-# --- the startup line ---------------------------------------------------------------------
+# --- the port file ---------------------------------------------------------------------------
 
 
-def test_the_startup_line_carries_a_real_port(tmp_path) -> None:
+def test_the_flag_exists_and_is_spelled_the_way_the_shell_spells_it() -> None:
+    """`supervisor.argv` passes `--port-file`. A rename here is a shell that never connects."""
+    help_text = subprocess.run(
+        [sys.executable, "-m", "mcp_gateway.cli", "--help"],
+        capture_output=True, text=True, cwd=REPO_ROOT, check=True,
+    ).stdout
+    assert "--port-file" in help_text
+
+
+def test_the_port_file_carries_a_real_port(tmp_path) -> None:
     """The port the shell dials comes from here and nowhere else."""
-    port, lines = run_until_listening(tmp_path)
-    assert 1 <= port <= 65535, lines
-    # Not the default. `--port 0` has to mean "the OS picks" -- the shell relies on that
-    # so a running `make run` daemon on 8765 and the desktop app can coexist.
-    assert port != DEFAULT_PORT, lines
+    with daemon_with_port_file(tmp_path) as (port, _):
+        assert 1 <= port <= 65535
+        # Not the default. `--port 0` has to mean "the OS picks" -- the shell relies on that
+        # so a running `make run` daemon on 8765 and the desktop app can coexist.
+        assert port != DEFAULT_PORT
 
 
-def test_the_startup_line_survives_debug_logging(tmp_path) -> None:
-    """`--debug` prefixes the logger name, which is why the parser does not anchor."""
-    port, lines = run_until_listening(tmp_path, "--debug")
-    assert 1 <= port <= 65535, lines
-    marker = next(line for line in lines if "listening on ws://" in line)
-    assert "transport_ws" in marker, f"expected a logger-name prefix under --debug: {marker!r}"
+def test_the_port_file_names_the_port_actually_bound(tmp_path) -> None:
+    """Not a number it hoped for. A file written before the bind would send the shell's
+    sockets somewhere nothing is listening."""
+    with daemon_with_port_file(tmp_path) as (port, _):
+        with socket.socket() as probe:
+            probe.settimeout(5)
+            probe.connect(("127.0.0.1", port))
+
+
+def test_the_port_file_is_removed_when_the_daemon_exits(tmp_path) -> None:
+    """A stale file names a port something else may hold by now, which is worse than none."""
+    with daemon_with_port_file(tmp_path) as (_, path):
+        assert path.exists()
+    # Outside the block the child has been terminated and reaped.
+    for _ in range(100):
+        if not path.exists():
+            break
+        time.sleep(0.05)
+    assert not path.exists()
+
+
+def test_the_port_file_survives_debug_logging(tmp_path) -> None:
+    """The old scrape broke under `--debug`, which prefixes the logger name. A file cannot
+    have that problem, and pinning it says the coupling really did move off the log."""
+    with daemon_with_port_file(tmp_path, "--debug") as (port, _):
+        assert 1 <= port <= 65535
 
 
 @pytest.mark.parametrize(
-    ("line", "expected"),
+    ("contents", "expected"),
     [
-        ("listening on ws://127.0.0.1:49613/mcp", 49613),
-        ("mcp_gateway.transport_ws: listening on ws://127.0.0.1:8765/mcp", 8765),
-        ("listening on ws://[::1]:8765/mcp", 8765),
-        ("listening on ws://localhost:1/mcp", 1),
-        # Things that must not be mistaken for it.
-        ("server listening on 127.0.0.1:49613", None),
-        ("admin UI at http://127.0.0.1:49613/ui/", None),
-        ("listening on ws://127.0.0.1/mcp", None),
-        ("listening on ws://127.0.0.1:notaport/mcp", None),
+        ("49613\n", 49613),
+        ("8765", 8765),
+        ("  8765  \n", 8765),
+        # Things a poller can genuinely read, none of which is a port.
         ("", None),
+        ("   ", None),
+        ("notaport", None),
+        ("8765x", None),
+        ("-1", None),
+        ("0", None),
+        ("65536", None),
     ],
 )
-def test_the_parser_agrees_with_its_rust_twin(line: str, expected: int | None) -> None:
-    assert parse_listening(line) == expected
-
-
-def test_the_daemon_still_spells_the_line_the_way_the_parser_reads_it() -> None:
-    """Guard the format at its source, so an edit to `transport_ws` is caught here too."""
-    source = (REPO_ROOT / "src" / "mcp_gateway" / "transport_ws.py").read_text()
-    assert re.search(r'"listening on ws://%s:%s%s"', source), (
-        "the startup line changed shape; desktop/src-tauri/src/supervisor.rs parses it"
-    )
+def test_the_reader_agrees_with_its_rust_twin(contents: str, expected: int | None, tmp_path) -> None:
+    """**Twinned with `parse_port_file` in `desktop/src-tauri/src/supervisor.rs`.** Keep the
+    two together: if one is taught something, teach the other."""
+    path = tmp_path / "gateway.port"
+    path.write_text(contents)
+    assert portfile.read(path) == expected
 
 
 # --- the proxy's client ---------------------------------------------------------------------
