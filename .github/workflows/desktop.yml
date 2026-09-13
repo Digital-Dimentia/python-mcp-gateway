@@ -12,9 +12,16 @@ name: Desktop shell
 # `appdata.rs`, the `cfg`-gated halves of `pathenv.rs`. A macOS developer cannot reach any
 # of it, and code that is never built is code that does not work.
 #
-# It builds no bundle: that is `publish-artifacts.yml`, which runs on a release and has an
-# interpreter to fetch and a webview to package. This one compiles, lints and tests, which
-# is the part worth knowing about on every push.
+# It builds no installer: that is `publish-artifacts.yml`, which runs on a release. This one
+# compiles, lints and tests, which is the part worth knowing about on every push.
+#
+# It does build the bundled interpreter, and not only because `tauri-build` validates
+# `bundle.resources` at compile time and will not build the crate without it. With the
+# interpreter present, the three integration tests run instead of skipping -- a real gateway
+# spawned from the bundle, `/admin` opened through the proxy with a Bearer header,
+# `admin.status` round-tripped, teardown confirmed. On Linux and Windows that is a far
+# stronger statement than `clippy` passing: it is the new orphan control actually reaping a
+# real process tree.
 
 # The path list is written twice because GitHub Actions does not support YAML anchors. Keep
 # the two copies identical.
@@ -72,6 +79,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      # How `bundle_python.py` fetches the standalone interpreter. Not a second dependency
+      # on a second thing -- uv's managed builds *are* python-build-standalone.
+      - uses: astral-sh/setup-uv@v6
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -98,7 +109,11 @@ jobs:
         shell: pwsh
         run: choco install make --no-progress -y
 
-      # cargo fmt --check, clippy -D warnings, cargo test. The three integration tests skip
-      # rather than fail here: they need `make tauri-python`, which is a minute of download
-      # and belongs in the release workflow that has a bundle to build anyway.
+      # The interpreter the app ships: a python-build-standalone build with the freshly
+      # built wheel installed into it, stripped and verified. Required before the check --
+      # `tauri-build` refuses to compile a crate whose `bundle.resources` are not on disk --
+      # and what turns the three integration tests from skipped into run.
+      - run: make tauri-python
+
+      # cargo fmt --check, clippy -D warnings, cargo test.
       - run: make tauri-check

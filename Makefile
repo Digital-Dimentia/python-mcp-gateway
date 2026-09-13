@@ -309,7 +309,16 @@ tauri-artifacts:
 ## The Rust half of the test suite: the stderr parser, the restart backoff, the PATH
 ## discovery, the first-run seeding. Not part of `make test`, which must stay runnable on a
 ## machine with no Rust toolchain at all.
+## `tauri-build` validates every path in `bundle.resources` at *compile* time, so the
+## interpreter has to be on disk before `cargo test` will even build -- and what it says
+## when it is not is `resource path \`resources/python\` doesn't exist`, which names the
+## symptom and not the fix. Checked here so the answer arrives with the question.
+##
+## Not a prerequisite, unlike the UI staging above: `tauri-python` is a download and a wheel
+## install, and a check target that reaches for the network on a fresh checkout is a check
+## target people stop running.
 tauri-check: $(STAGED_UI)
+	@test -d '$(TAURI_DIR)/resources/python' || { 		printf 'tauri-check: no bundled interpreter at %s.\n' '$(TAURI_DIR)/resources/python' >&2; 		printf '  Run `make tauri-python` first -- the Tauri build validates bundle.resources\n' >&2; 		printf '  at compile time, so the crate will not build without it.\n' >&2; 		exit 1; 	}
 	cd '$(TAURI_DIR)' && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 
 ## Build outputs and tool caches. **Leaves the virtual environment alone.** Deleting it

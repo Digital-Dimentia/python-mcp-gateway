@@ -134,17 +134,25 @@ jobs:
         shell: pwsh
         run: choco install make --no-progress -y
 
+      # First, because `tauri-build` validates `bundle.resources` at compile time and the
+      # check below will not build without the interpreter on disk. It fetches the
+      # interpreter, installs the freshly built wheel into it, strips it and then *verifies*
+      # it: a bundle that cannot import the gateway or find its own UI assets fails here
+      # rather than in front of a user.
+      - name: Build the bundled interpreter
+        run: make tauri-python
+
       # The Rust half of the suite: the stderr parser, the restart backoff, the PATH
       # discovery, the seeding, the orphan control. This is the leg where the Windows Job
       # Object and the Linux `PDEATHSIG` are compiled and run at all -- a macOS developer
-      # cannot reach either of them locally.
+      # cannot reach either of them locally. With the interpreter built above, the three
+      # integration tests run rather than skip.
       - name: Check the Rust half
         run: make tauri-check
 
-      # `tauri-bundle` runs `tauri-python` first, which fetches the interpreter, installs
-      # the freshly built wheel into it, strips it and then *verifies* it: a bundle that
-      # cannot import the gateway or find its own UI assets fails here rather than in front
-      # of a user.
+      # Runs `tauri-python` again on purpose, so the shipped interpreter is never quietly
+      # older than the wheel beside it. uv has the download cached by now, so the repeat is
+      # an install and a strip rather than a second trip to the network.
       - name: Build the bundle
         run: make tauri-bundle
 
