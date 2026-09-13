@@ -15,6 +15,7 @@ on.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 from mcp_gateway.backend import BackendStatus
@@ -24,6 +25,24 @@ from tests.fixtures.ws_client import daemon
 
 FIXTURE = Path(__file__).parent / "fixtures" / "mock_backend.py"
 PY = sys.executable
+
+
+#: `napper`'s ttl, named so the backdating helper can be sure it clears it.
+IDLE_TTL = 3600
+
+
+def idle_since_long_ago(supervisor, *, seconds: float = 2 * IDLE_TTL) -> None:
+    """Backdate every backend's last call far enough that the sweep must act on it.
+
+    **Relative to `time.monotonic()`, never an absolute `0.0`.** That clock counts from boot
+    on Linux, so on a CI runner that has been up for two minutes `0.0` does not mean "long
+    ago", it means "two minutes ago" -- which is inside a 3600-second ttl, and the sweep
+    correctly does nothing. `Backend.idle_for` documents exactly this hazard; a test that
+    fabricates a zero walks into it, and does so only on a freshly booted machine.
+    """
+    now = time.monotonic()
+    for backend in supervisor.all:
+        backend.last_call_monotonic = now - seconds
 
 
 def entry(name: str, *, extra: str = "", **env: str) -> str:
@@ -37,7 +56,7 @@ def entry(name: str, *, extra: str = "", **env: str) -> str:
 
 
 SERVERS = "servers:\n" + entry("eager", MOCK_NAME="eager") + entry(
-    "napper", extra="idle_ttl: 3600", MOCK_NAME="napper", MOCK_RESOURCES="file:///a.md",
+    "napper", extra=f"idle_ttl: {IDLE_TTL}", MOCK_NAME="napper", MOCK_RESOURCES="file:///a.md",
     MOCK_SUBSCRIBE="1",
 ) + entry("sleepy", extra="lazy: true", MOCK_NAME="sleepy")
 
@@ -172,8 +191,7 @@ async def test_the_sweep_sleeps_a_backend_past_its_ttl_and_leaves_the_others(tmp
         supervisor = harness.gateway.supervisor
         await supervisor.wake("sleepy")
         # `eager` and `sleepy` set no ttl, so no amount of idleness applies to them.
-        for backend in supervisor.all:
-            backend.last_call_monotonic = 0.0
+        idle_since_long_ago(supervisor)
         slept = await supervisor.sweep_idle()
         assert slept == ["napper"]
         assert supervisor.get("eager").running
@@ -201,8 +219,7 @@ async def test_a_subscribed_backend_is_never_slept(tmp_path) -> None:
         client = await harness.connect()
         uri = encode_resource_uri("napper", "file:///a.md")
         await client.call("resources/subscribe", {"uri": uri})
-        for backend in harness.gateway.supervisor.all:
-            backend.last_call_monotonic = 0.0
+        idle_since_long_ago(harness.gateway.supervisor)
 
         exempt = harness.gateway._subscribed_backends()
         assert exempt == frozenset({"napper"})
@@ -218,8 +235,7 @@ async def test_a_backend_with_a_call_in_flight_is_not_idle(tmp_path) -> None:
     try:
         supervisor = harness.gateway.supervisor
         napper = supervisor.get("napper")
-        for backend in supervisor.all:
-            backend.last_call_monotonic = 0.0
+        idle_since_long_ago(supervisor)
         with napper.serving(object()):
             assert await supervisor.sweep_idle() == []
             assert napper.running
