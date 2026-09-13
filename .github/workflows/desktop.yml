@@ -23,6 +23,11 @@ name: Desktop shell
 # stronger statement than `clippy` passing: it is the new orphan control actually reaping a
 # real process tree.
 
+# `scripts/bundle_python.py` is on the list because `make tauri-python` *is* that script, and
+# it is the one file here whose platform branches only ever execute on a runner. A fix to its
+# Windows half once merged without this workflow running at all, so the only Windows evidence
+# on record was the failure it fixed.
+#
 # The path list is written twice because GitHub Actions does not support YAML anchors. Keep
 # the two copies identical.
 on:
@@ -31,6 +36,7 @@ on:
     paths:
       - "desktop/**"
       - "scripts/stage_ui.py"
+      - "scripts/bundle_python.py"
       - "src/mcp_gateway/ui/**"
       - "Makefile"
       - ".github/workflows/desktop.yml"
@@ -38,6 +44,7 @@ on:
     paths:
       - "desktop/**"
       - "scripts/stage_ui.py"
+      - "scripts/bundle_python.py"
       - "src/mcp_gateway/ui/**"
       - "Makefile"
       - ".github/workflows/desktop.yml"
