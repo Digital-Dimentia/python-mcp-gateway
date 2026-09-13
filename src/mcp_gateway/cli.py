@@ -22,6 +22,7 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Callable
 
 from mcp_gateway import __version__
 from mcp_gateway.config import ConfigError, GatewayConfig, ServerSpec, load as load_config
@@ -288,14 +289,40 @@ def _install_signal_handlers(gateway: Gateway) -> None:
         loop.create_task(gateway.reload())
 
     if hasattr(signal, "SIGHUP"):  # not on Windows
-        loop.add_signal_handler(signal.SIGHUP, _reload)
+        _handle(loop, signal.SIGHUP, _reload)
 
     stop = asyncio.Event()
-    for name in ("SIGTERM", "SIGINT"):
+    # SIGBREAK is Windows' Ctrl-Break, and the only console signal there that is not SIGINT.
+    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):
         sig = getattr(signal, name, None)
         if sig is not None:
-            loop.add_signal_handler(sig, stop.set)
+            _handle(loop, sig, stop.set)
     gateway.shutdown_requested = stop
+
+
+def _handle(loop: asyncio.AbstractEventLoop, sig: int, action: Callable[[], None]) -> None:
+    """Run `action` in the loop when `sig` arrives, by whichever mechanism this OS has.
+
+    `loop.add_signal_handler` is a Unix method. asyncio's Windows loops raise
+    `NotImplementedError` from it, and because handlers are installed *before* the socket
+    is bound, that exception was not a missing convenience -- it was the bundled daemon
+    failing to start at all, reported to the desktop shell as `no port file`.
+
+    Windows gets `signal.signal` instead. That runs the handler in the interpreter's main
+    thread rather than in the loop, so what it does is wake the loop through
+    `call_soon_threadsafe` rather than touch the `Event` from under it.
+    """
+    try:
+        loop.add_signal_handler(sig, action)
+        return
+    except NotImplementedError:
+        pass
+    try:
+        signal.signal(sig, lambda *_: loop.call_soon_threadsafe(action))
+    except ValueError:
+        # `signal.signal` is main-thread only, and the daemon is embeddable: a caller
+        # running it in a worker thread gets no handlers rather than no daemon.
+        logger.debug("no handler for signal %s: not the main thread", sig)
 
 
 async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) -> None:

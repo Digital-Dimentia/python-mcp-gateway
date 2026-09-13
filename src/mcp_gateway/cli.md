@@ -45,8 +45,22 @@ no access key — matching argparse's own code for "you asked for something I wi
 `KeyboardInterrupt` is caught and swallowed. Ctrl+C is how a foreground daemon is stopped;
 printing a traceback for it tells the operator something went wrong when nothing did.
 
-## Not yet wired
+## Signals, and the platform that has none of them
 
-`_run` currently raises `NotImplementedError`. The daemon lands across phases 1–3 of
-`python-mcp-gateway-vew`; the parser is complete now because its shape is what the
-Makefile banner, the README, and the launchd plist all quote.
+SIGHUP reloads the configuration. It is the **primary operator interface** for a daemon
+nobody may have a client attached to — the person rotating a credential is at a shell, not
+in the admin UI — so it is not an afterthought behind `gateway__reload_config`. SIGTERM,
+SIGINT and Windows' SIGBREAK set the shutdown event.
+
+Installing them is where the platform split is. `loop.add_signal_handler` is a Unix method:
+asyncio's Windows loops raise `NotImplementedError` from it. Handlers go in *before* the
+socket is bound, so on Windows that exception was not a missing convenience — it was the
+daemon failing to start, which the desktop shell reported as `no port file` and a traceback
+about `add_signal_handler` three frames deep. `_handle` falls back to `signal.signal`, whose
+handler runs in the interpreter's main thread rather than in the loop, and therefore wakes
+the loop with `call_soon_threadsafe` instead of touching the `Event` directly. A caller
+running the daemon off the main thread gets no handlers rather than no daemon.
+
+What Windows does *not* get from this is a graceful stop from outside the process: nothing
+delivers SIGTERM there. The desktop shell does not rely on one either — its Job Object
+terminates the tree, which is the same guarantee by a different route.

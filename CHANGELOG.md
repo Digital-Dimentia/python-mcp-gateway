@@ -9,6 +9,19 @@ nobody reads.
 
 ## Unreleased
 
+**The daemon starts on Windows.** `loop.add_signal_handler` is a Unix method — asyncio's
+Windows loops raise `NotImplementedError` from it — and handlers are installed before the
+socket is bound, so on Windows the gateway did not fail to *reload*, it failed to **start**.
+The desktop shell reported that as `no port file`. Signals now install through whichever
+mechanism the platform has: `add_signal_handler` where it exists, `signal.signal` plus
+`call_soon_threadsafe` where it does not, and Ctrl-Break joins SIGINT and SIGTERM in
+stopping the daemon. Nothing delivers SIGTERM on Windows anyway; what the desktop app relies
+on there is its Job Object, which is the same guarantee by another route.
+
+The `gateway.env` permission warning is now POSIX-only. Windows synthesises `0o666` for
+every readable file whatever its ACL says, so the check fired on every start, about a file
+in the user's own profile, advising a `chmod` that machine does not have.
+
 **The desktop shell builds on Windows.** Two things stood between the Windows runner and the
 Job Object code it exists to compile. `tauri_build::build()` compiles `icons/icon.ico` into a
 Windows Resource file, and the icon set shipped only PNGs — so the build failed at the crate,

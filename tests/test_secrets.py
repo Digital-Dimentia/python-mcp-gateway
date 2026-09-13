@@ -99,6 +99,22 @@ def test_a_readable_by_others_file_warns_but_loads(tmp_path, caplog) -> None:
     assert "chmod 600" in caplog.text
 
 
+def test_the_mode_warning_is_posix_only(tmp_path, caplog, monkeypatch) -> None:
+    """Windows reports 0o666 for every file, so the check there is always wrong.
+
+    It fired on every start of the bundled desktop daemon, about a file inside the user's
+    own profile, telling them to run a `chmod` their machine does not have.
+    """
+    path = tmp_path / "gateway.env"
+    path.write_text("TOKEN=x\n")
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+    monkeypatch.setattr(secrets.os, "name", "nt")
+    with caplog.at_level(logging.WARNING):
+        store = secrets.load(path)
+    assert store.get("TOKEN") == "x"
+    assert "chmod" not in caplog.text
+
+
 def test_loading_never_logs_a_value(tmp_path, caplog) -> None:
     """The window before `install_redaction` runs has to be safe on its own.
 

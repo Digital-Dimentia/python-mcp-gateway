@@ -217,7 +217,11 @@ def load(path: Path, *, required: bool = False) -> SecretStore:
         mode = path.stat().st_mode
     except OSError:  # pragma: no cover - the read above just succeeded
         mode = 0
-    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+    # POSIX only. Windows synthesises `0o666` for every readable file no matter what its
+    # ACL says, so this check there fires always, on a file that may be perfectly private,
+    # and tells the operator to run a program their machine does not have. A warning that
+    # is unconditional is a warning nobody reads.
+    if os.name == "posix" and mode & (stat.S_IRWXG | stat.S_IRWXO):
         logger.warning(
             "%s is readable by other accounts on this machine (mode %o); run `chmod 600 %s`",
             path,
