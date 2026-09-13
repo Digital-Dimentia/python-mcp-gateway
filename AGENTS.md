@@ -126,3 +126,48 @@ bd prime                # Refresh Beads context
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
+
+## Build & Test
+
+```bash
+make venv        # repo-local .venv, stamped -- re-running is free
+make lint        # ruff over src tests scripts
+make docs-check  # relative links, mermaid edges, and the co-located .md rule
+make test        # pytest over tests/ (the JS suite skips without node + jsdom)
+make build       # wheel + sdist
+```
+
+`make lint docs-check test build`, in that order, is the CI gate. `make ui-deps` installs
+jsdom and turns the skipped JavaScript suite into a running one. `make check` validates
+`servers.yaml` and `gateway.env` without binding a port or spawning a backend, and
+`make run-dev` starts the daemon against the schema zoo, which needs no credentials.
+
+Behind a TLS-intercepting proxy, pass `PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"`.
+
+## Architecture Overview
+
+A long-lived daemon serving **MCP over WebSocket and Streamable HTTP** to any number of
+clients, fanning out to N backend MCP servers that are stdio subprocesses it owns. Every
+credential lives in one gitignored `gateway.env`; each backend's environment is built from
+nothing but an allowlist plus its own `env` and `env_passthrough`. `servers.yaml` is
+committed and holds only `${NAME}` references. The same port serves the admin UI, which is
+static ES modules with no build step, and `desktop/` wraps the lot in a Tauri window.
+
+[ARCHITECTURE.md](ARCHITECTURE.md) is the module map, [GET_STARTED.md](GET_STARTED.md) is
+the user-facing walkthrough, and every module under `src/mcp_gateway/` has a sibling `.md`
+carrying its reasoning.
+
+## Conventions & Patterns
+
+- **Every module has a sibling `.md`**, and `make docs-check` fails if one goes missing or a
+  relative link stops resolving. The reasoning goes there — *why this shape, and what the
+  alternative cost* — not in a header comment restating the code.
+- **Nothing writes a credential.** No admin method returns a value, and `gateway.env` is
+  read-only to the whole program. The UI edits `servers.yaml` and only through
+  `config_writer.py`.
+- **`${VAR}` never resolves from `os.environ`**, and is refused outright in `command` and
+  `args` — argv is world-readable through `ps`.
+- **The admin UI's columns speak MCP, not `admin.*`.** A test bench is only worth having if
+  what you exercise in it is byte-identical to what the model gets.
+- **A user-visible change is a CHANGELOG entry** under `## Unreleased`, written as what the
+  change is *for* rather than as a list of edits.

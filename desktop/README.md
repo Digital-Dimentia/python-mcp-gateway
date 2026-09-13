@@ -4,6 +4,11 @@ A Tauri app that is the gateway and its admin UI in one window: a Rust host that
 access key, supervises a bundled-CPython gateway as a child process, and opens that
 gateway's two WebSockets itself.
 
+This file is how the shell is built and why it is shaped this way. For what to do once it
+opens — configuring backends, attaching a client, working the admin UI — see
+[GET_STARTED.md](../GET_STARTED.md); everything there applies unchanged, minus the terminal
+and the access key.
+
 ```
 MCP-Gateway.app
 ├── the window ── the admin UI, the same files webui.py serves

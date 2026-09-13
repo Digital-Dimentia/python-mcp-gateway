@@ -77,12 +77,19 @@ RUN_LOG_FLAG := $(if $(strip $(LOG)),$(if $(filter 1,$(strip $(LOG))),--log,--lo
 DEBUG ?=
 DEBUG_FLAG := $(if $(strip $(DEBUG)),--debug,)
 
-# NO_KEY=1 runs `run` with no access key at all. The default is to reuse WS_ACCESS_KEY
-# from gateway.env, or mint a fresh one, so the URL the banner prints is a complete,
-# working example rather than something to be edited before it can be pasted. On loopback
-# a key is optional -- the daemon only *refuses* a keyless bind off loopback -- but it
-# costs nothing and it stops another local account from opening a connection, which would
-# hand them every credential in gateway.env by way of the backends that hold them.
+# NO_KEY=1 runs `run` with no access key at all. The default is to reuse
+# MCP_GATEWAY_WS_KEY when the environment already carries one, and otherwise to mint a
+# fresh key for this run, so the URL the banner prints is a complete, working example
+# rather than something to be edited before it can be pasted. On loopback a key is
+# optional -- the daemon only *refuses* a keyless bind off loopback -- but it costs
+# nothing and it stops another local account from opening a connection, which would hand
+# them every credential in gateway.env by way of the backends that hold them.
+#
+# WS_ACCESS_KEY in gateway.env is **not** what this reuses, and the difference is worth
+# stating because the daemon does read it: `resolve_access_key` takes the environment
+# first and gateway.env second, and this recipe always exports MCP_GATEWAY_WS_KEY -- so
+# under `make run` the file's key never wins. It is for a daemon started directly, under
+# launchd or in a container, where there is no banner to read a minted key off.
 NO_KEY ?=
 
 ## `run-dev`'s own default for NO_KEY. Separate so `make run-dev DEV_NO_KEY=` can ask for

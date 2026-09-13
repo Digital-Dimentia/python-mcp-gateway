@@ -1,5 +1,9 @@
 # Architecture
 
+This file is the map: what each module owns, and the handful of decisions the shape turns
+on. For running the thing — install, configure a backend, attach a client, work the admin
+UI, publish vocabularies from your own MCP server — see [GET_STARTED.md](GET_STARTED.md).
+
 The gateway is a long-lived daemon. It serves **MCP over WebSocket** to any number of
 clients, and fans out to N backend MCP servers, each a **stdio subprocess** whose lifecycle
 it owns. Every credential lives in one gitignored file, and each backend receives only its
@@ -135,27 +139,30 @@ drop in-flight work on the other eleven. See [`supervisor.md`](src/mcp_gateway/s
 
 ## The UI
 
-`/ui` serves eight static files -- HTML, CSS and six ES modules -- from the same port as the
-two sockets. No build step and no dependency; `webui.py` answers the GET.
+`/ui` serves nine static files -- HTML, CSS and seven ES modules -- from the same port as
+the two sockets. No build step and no dependency; `webui.py` answers the GET.
 
 ```mermaid
 flowchart LR
     page["the page"]
-    left["left column: backends and config"]
-    mid["middle: tools, prompts, resources"]
-    right["right: what came back"]
+    header["header: the backends, and the config editor"]
+    left["left column: tools, prompts, resources, templates"]
+    mid["middle: what came back"]
+    right["right: injectable values"]
     adminpath["ws /admin"]
     mcppath["ws /mcp"]
 
+    page --> header
     page --> left
     page --> mid
     page --> right
-    left --> adminpath
+    header --> adminpath
+    left --> mcppath
     mid --> mcppath
     right --> mcppath
 ```
 
-**The middle and right columns speak MCP, not `admin.*`.** A UI that asked `/admin` for a
+**The columns speak MCP, not `admin.*`.** A UI that asked `/admin` for a
 tool listing would be showing its own rendering of the catalogue; the value of a test bench
 is that what you exercise in it is byte-identical to what the model gets. `/admin` answers
 what is *configured* -- and, since the UI landed, writes it.
@@ -165,7 +172,17 @@ contract in python-acp's `docs/tool-schema-contract.md`: a schema using `if`/`th
 `dependentSchemas`, `allOf` or a discriminated `oneOf` steps aside to a raw JSON box with a
 reason rather than rendering half a conditional schema as though it were the whole thing.
 `examples/zoo_server.py` publishes one tool per construct, which is what that code is
-answerable to. See [`webui.md`](src/mcp_gateway/webui.md).
+answerable to.
+
+The third column, **Injectable values**, is the one thing the UI asks of a *backend* rather
+than of the gateway: a resource whose URI is a template's fixed prefix is a listing of the
+values that template's variable may take, and the column turns each into a chip that fills
+the field it belongs in — or, in `many` mode, sends the open form once per value. A body may
+name `readOne` (one of my values buys a member) or `narrows` (one of my values buys another
+listing), which is how a cascade is published rather than inferred. Every rule is in
+[`webui.md`](src/mcp_gateway/webui.md); the version written for someone implementing a server
+against it is in
+[GET_STARTED.md](GET_STARTED.md#injectable-values-in-your-own-server).
 
 ## The desktop shell
 

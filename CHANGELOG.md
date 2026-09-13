@@ -9,6 +9,36 @@ nobody reads.
 
 ## Unreleased
 
+**GET_STARTED.md: the walkthrough the repository did not have.**
+
+There were two kinds of document here and neither was a path through the project. `README.md`
+is a pitch and a reference; the sibling `.md` beside each module carries the reasoning behind
+that module, written for somebody already inside. A newcomer had to assemble the order
+themselves — and one whole feature was documented only from the inside.
+
+[`GET_STARTED.md`](GET_STARTED.md) is that order: install, the two files and why they are
+split, configuring a backend by hand and through the UI's `+ Add` dialog, attaching Claude
+Code over either transport and Claude Desktop over the bridge, a tour of the admin UI, and
+day-two work — rotating a credential, reloading, running under launchd.
+
+Its longest section is the one nothing user-facing covered: **how to make your own MCP server
+light up the Injectable values column.** That column activates when a server publishes a
+listing resource whose URI is a URI template's fixed prefix, reads its values out of a JSON
+body in one of three shapes, and follows `readOne` and `narrows` in that body to build a
+cascade. Every rule for it existed in `webui.md`, written as why the UI does what it does; it
+is now also written outward, as what a server has to publish, with a checklist and the
+failure modes. `webui.md` links to it and keeps the reasoning.
+
+Three stale facts fell out of writing it and are fixed. The Makefile claimed `make run`
+reuses `WS_ACCESS_KEY` from `gateway.env`; it does not — it reuses `MCP_GATEWAY_WS_KEY` from
+the environment, else mints a fresh key for that run, and since it always exports the result
+the file's key never wins under `make run` (it is for a daemon started directly, under
+launchd or in a container). `gateway.env.example` now says so where the key is set.
+`ARCHITECTURE.md` and `webui.md` counted eight UI assets and six ES modules, where `ASSETS`
+has held nine and seven since `clipboard.js` landed. And `README.md`'s picture of the UI
+still showed backends in a left column, which they left when they became header pills, and
+no Injectable values column at all.
+
 **The Clipboard: hand a bench session to an agent.**
 
 The admin UI is where a person works a backend out by hand — press Send, read the answer,
