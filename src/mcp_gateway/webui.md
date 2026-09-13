@@ -11,7 +11,7 @@ One file exists only for the second host. [`tauri-transport.js`](ui/tauri-transp
 real `Authorization: Bearer` header, which a page cannot send. `index.html` loads it
 unconditionally and in a browser it finds no Tauri and returns, so this module serves a file
 that will never be used. That costs one small GET, and the alternative is a second copy of
-eight files that drifts.
+nine files that drifts.
 
 The transport seam in `rpc.js` is worth its own sentence, because it is not only for the
 shell: opening a socket is one replaceable function and everything else — reconnect, the
@@ -178,6 +178,10 @@ A server that publishes `zoo://animals/{id}` usually publishes `zoo://animals` b
 listing small enough to send whole, and a template for the per-member read that would not
 be. That pair is a **vocabulary** — the set of values `id` may take — and this column is
 those vocabularies, one group per variable, every value something you can spend.
+
+What follows is why the column behaves as it does. The same contract written outward, for
+somebody implementing a server against it, is in
+[GET_STARTED.md](../../GET_STARTED.md#injectable-values-in-your-own-server).
 
 **It starts as a menu, not as a column.** A select names every vocabulary the selected server
 publishes; choosing one opens it, and whatever cascades from it, beneath. Nothing is read
@@ -511,6 +515,6 @@ see. The header is what stops a future edit from quietly adding one.
 ## What is not here
 
 This module does not serve the *data* and never touches the gateway. It answers GETs for
-eight files. Everything the UI shows comes over `/admin`
+nine files. Everything the UI shows comes over `/admin`
 ([`admin_channel.md`](admin_channel.md)) or `/mcp` ([`session.md`](session.md)), which is
 why the security argument above is about files rather than about access control.

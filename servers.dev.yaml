@@ -6,8 +6,9 @@
 #
 #   make run-dev        then open the URL it prints
 #
-# See examples/zoo_server.py for what each tool is for, and src/mcp_gateway/webui.md for
-# what the UI does with them.
+# See examples/zoo_server.py for what each tool is for, src/mcp_gateway/webui.md for what the
+# UI does with them, and GET_STARTED.md for the guided tour -- including how to make your own
+# server publish the resources and templates the Injectable values column runs on.
 
 version: 1
 

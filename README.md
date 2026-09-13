@@ -25,6 +25,10 @@ mcp-gateway daemon ◄─────────┴─────────�
  github      slack      filesystem
 ```
 
+**New here?** [GET_STARTED.md](GET_STARTED.md) is the walkthrough: install, configure a
+backend, attach a client, work the admin UI — and how to make your own MCP server publish
+the resources and templates that light up the UI's *Injectable values* column.
+
 ## Desktop app
 
 `desktop/` builds **MCP-Gateway.app**: the daemon, its backends and the admin UI in one
@@ -50,6 +54,8 @@ identically. Rotating a credential restarts only the backend that uses it, while
 else keeps its process and its in-flight work.
 
 ## Setup
+
+Step by step, with the reasoning: [GET_STARTED.md](GET_STARTED.md). The short form:
 
 ```bash
 make venv
@@ -144,30 +150,40 @@ The daemon serves its own admin and test console at **`http://127.0.0.1:8765/ui`
 run` prints the URL, with the access key attached when there is one.
 
 ```
-┌ Backends ────────┬ Tools · Prompts · Resources ─┬ Results ─────────┐
-│ ● github         │ create_issue                 │ what came back,  │
-│ ● filesystem     │   title    [            ]    │ rendered, with   │
-│ ○ slack          │   body     [            ]    │ the raw payload  │
-│   SLACK_BOT_TOKEN│   labels   [+ Add item ]     │ one click away   │
-│   missing        │            [ Call tool ]     │                  │
-└──────────────────┴──────────────────────────────┴──────────────────┘
+  ● github   ● filesystem   ○ slack (SLACK_BOT_TOKEN missing)      + Add
+┌ Tools · Prompts · Resources · Templates ┬ Results ────────┬ Injectable values ┐
+│ create_issue                            │ what came back, │ assignee          │
+│   title     [                    ]      │ rendered, with  │  ● octocat        │
+│   assignee  [                    ]      │ the raw payload │  ○ hubot          │
+│   labels    [ + Add item ]              │ one click away  │  ○ monalisa       │
+│             [ Call tool ]               │  [ Clipboard ]  │  one | many       │
+└─────────────────────────────────────────┴─────────────────┴───────────────────┘
 ```
 
-Three columns: what is configured and running, what the selected backend publishes, and what
-came back from invoking it.
+The servers are the header; under it, three columns: what the selected backend publishes,
+what came back from invoking it, and — in **Injectable values** — the sets of values that
+backend publishes for its own parameters, each one a chip that fills the field it belongs in.
+That column activates for any server that pairs a listing resource with a URI template;
+[GET_STARTED.md](GET_STARTED.md#injectable-values-in-your-own-server) is how to make your own
+do it.
 
 - **The forms are generated from each tool's own `inputSchema`** — typed inputs, enum
   dropdowns, required markers, bounds and array editors. A schema using `if`/`then`/`else`,
   `allOf`, `dependentSchemas` or a discriminated `oneOf` gets a raw JSON box and a reason
   instead: a form that is confidently wrong is worse than the text box it should have fallen
   back to.
-- **The middle and right columns speak MCP**, through a real handshake on `/mcp`. What you
-  exercise in the UI is byte-identical to what the model gets.
+- **The columns speak MCP**, through a real handshake on `/mcp` — the listings, the calls,
+  and the reads behind Injectable values alike. What you exercise in the UI is
+  byte-identical to what the model gets.
 - **Editing `servers.yaml` happens on `/admin`**, which the model cannot reach. Comments in
   the file survive the edit, an invalid edit writes nothing at all, and a `.bak` is left
   beside it.
 - **Nothing in the UI can read or write a credential.** When a backend is missing one, the UI
   names the key — `SLACK_BOT_TOKEN`, say — and you add the line to `gateway.env` yourself.
+- **Clipboard** turns the whole bench session — every call with its arguments and its answer,
+  and every value offered and picked — into one document for an agent. The daemon renders it,
+  and `gateway__clipboard` serves the same text on `/mcp`, so there is one renderer and
+  nothing to drift.
 
 To try it without configuring a real integration first:
 
@@ -246,7 +262,8 @@ Behind a TLS-intercepting proxy, pass `PIP_TRUSTED_HOST="pypi.org files.pythonho
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the map. Every module has a sibling `.md` beside
+See [GET_STARTED.md](GET_STARTED.md) to use it, and [ARCHITECTURE.md](ARCHITECTURE.md) for
+the map. Every module has a sibling `.md` beside
 it carrying the reasoning, and `make docs-check` fails if one goes missing.
 
 ## License
