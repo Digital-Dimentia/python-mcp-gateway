@@ -45,6 +45,7 @@ RESOURCES_READ = "resources/read"
 RESOURCES_SUBSCRIBE = "resources/subscribe"
 RESOURCES_UNSUBSCRIBE = "resources/unsubscribe"
 COMPLETION_COMPLETE = "completion/complete"
+LOGGING_SET_LEVEL = "logging/setLevel"
 CANCELLED = "notifications/cancelled"
 PROGRESS = "notifications/progress"
 MESSAGE = "notifications/message"
@@ -55,6 +56,42 @@ RESOURCES_UPDATED = "notifications/resources/updated"
 ROOTS_LIST = "roots/list"
 SAMPLING_CREATE_MESSAGE = "sampling/createMessage"
 ELICITATION_CREATE = "elicitation/create"
+
+#: MCP's log levels, least to most severe (RFC 5424's). The order is the whole point: a
+#: client that asked for `warning` is asking for warning *and everything above it*, and a
+#: gateway serving several clients has to ask its backends for the most verbose level any
+#: of them wants and filter per client on the way up.
+LOG_LEVELS: tuple[str, ...] = (
+    "debug",
+    "info",
+    "notice",
+    "warning",
+    "error",
+    "critical",
+    "alert",
+    "emergency",
+)
+
+
+def level_admits(threshold: str, level: str) -> bool:
+    """Whether a record at `level` should reach a client that asked for `threshold`.
+
+    An unknown level from a backend is admitted rather than dropped. A later revision may
+    add one, and swallowing a message because we do not recognise its severity is the one
+    failure mode a log relay must not have.
+    """
+    if level not in LOG_LEVELS:
+        return True
+    if threshold not in LOG_LEVELS:
+        return True
+    return LOG_LEVELS.index(level) >= LOG_LEVELS.index(threshold)
+
+
+def most_verbose(levels: "list[str] | set[str]") -> str | None:
+    """The level that satisfies every one of `levels`. `None` for an empty collection."""
+    known = [level for level in levels if level in LOG_LEVELS]
+    return min(known, key=LOG_LEVELS.index) if known else None
+
 
 #: Server-to-client requests the gateway relays upward when a client declared the matching
 #: capability. Everything else a backend asks gets `-32601`.
@@ -87,6 +124,11 @@ CAPABILITY_MANIFEST: tuple[Capability, ...] = (
         "completions",
         None,
         "router.complete; empty values when the backend declares no completions",
+    ),
+    Capability(
+        "logging",
+        None,
+        "gateway.set_log_level forwards down; backend notifications/message relayed up",
     ),
 )
 

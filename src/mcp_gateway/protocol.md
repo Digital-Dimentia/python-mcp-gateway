@@ -71,6 +71,11 @@ It is advertised unconditionally for the same reason the rest of the block is. A
 that offers no subscriptions refuses that one `resources/subscribe` with `-32002`, which is
 an answer about a URI rather than a claim about the gateway's method table.
 
+`logging` is the newest row and the one whose two directions carry different levels. See
+[`notifications.md`](notifications.md): the union of every session's threshold goes down to
+the backends, each session's own threshold filters what comes back up, and a client that
+never asked is sent nothing.
+
 ## The manifest
 
 `CAPABILITY_MANIFEST` records, for each advertised key, what answers it.

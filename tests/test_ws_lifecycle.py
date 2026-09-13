@@ -20,7 +20,9 @@ async def test_initialize_negotiates_and_advertises(tmp_path) -> None:
         result = await client.initialize()
         assert result["protocolVersion"] == MCP_PROTOCOL_VERSION
         assert result["serverInfo"]["name"] == "mcp-gateway"
-        assert set(result["capabilities"]) == {"tools", "prompts", "resources", "completions"}
+        assert set(result["capabilities"]) == {
+            "tools", "prompts", "resources", "completions", "logging",
+        }
         assert result["capabilities"]["resources"]["subscribe"] is True
     finally:
         await harness.close()

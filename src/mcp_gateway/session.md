@@ -17,11 +17,17 @@ one's gates. Two clients on one daemon can legitimately negotiate different revi
 ## The method table
 
 `initialize`, `ping`, the three listings, `tools/call`, `prompts/get`,
-`resources/templates/list`, `resources/read`, and `completion/complete`. It is closed:
+`resources/templates/list`, `resources/read`, `resources/subscribe`,
+`resources/unsubscribe`, `completion/complete`, and `logging/setLevel`. It is closed:
 anything else is `-32601` before a backend is consulted, which is what makes the advertised
 capability block a promise rather than a guess. `completion/complete` resolves its `ref` the
 way `prompts/get` and `resources/read` resolve their name and URI; see
 [`router.md`](router.md).
+
+Two of these leave state on the session rather than only forwarding. `resources/subscribe`
+registers the connection against a URI, and `logging/setLevel` records the severity this
+client wants — both are per-connection, and both are what a shared backend's notification is
+filtered against on the way back up. See [`notifications.md`](notifications.md).
 
 ## What may be called before `initialize`
 

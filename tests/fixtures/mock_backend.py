@@ -29,6 +29,7 @@ mechanism it is testing.
 | `MOCK_COMPLETIONS_MANY` | Answer with 120 values plus `total`/`hasMore`, past the spec's 100 cap |
 | `MOCK_RESOURCES` | Comma-separated concrete resource URIs |
 | `MOCK_SUBSCRIBE` | Declare `resources.subscribe` and answer subscribe/unsubscribe |
+| `MOCK_LOGGING` | Declare `logging`, answer `logging/setLevel`, and publish a `log` tool that emits one `notifications/message` at a requested level |
 | `MOCK_UPDATE_ON_SUBSCRIBE` | On a subscribe, send `notifications/resources/updated` for that URI after 50ms |
 | `MOCK_TEMPLATES` | Comma-separated `uriTemplate` values |
 | `MOCK_PROMPTS` | Comma-separated prompt names |
@@ -77,6 +78,7 @@ COMPLETIONS_ERROR = _flag("MOCK_COMPLETIONS_ERROR")
 COMPLETIONS_MANY = _flag("MOCK_COMPLETIONS_MANY")
 RESOURCES = _csv("MOCK_RESOURCES")
 SUBSCRIBE = _flag("MOCK_SUBSCRIBE")
+LOGGING = _flag("MOCK_LOGGING")
 UPDATE_ON_SUBSCRIBE = _flag("MOCK_UPDATE_ON_SUBSCRIBE")
 TEMPLATES = _csv("MOCK_TEMPLATES")
 PROMPTS = _csv("MOCK_PROMPTS", "greet")
@@ -160,6 +162,8 @@ def tool_names() -> list[str]:
         names.append("env-report")
     if STALL_ON:
         names.append("cancel-report")
+    if LOGGING:
+        names.append("log")
     return names
 
 
@@ -189,6 +193,8 @@ def capabilities() -> dict:
         block["resources"] = {"listChanged": True}
         if SUBSCRIBE or UPDATE_ON_SUBSCRIBE:
             block["resources"]["subscribe"] = True
+    if LOGGING:
+        block["logging"] = {}
     if "completions" in CAPABILITIES:
         # No options to set, which is the commonest capability shape there is -- and the
         # one a gateway reading `bool(block)` rather than presence gets wrong.
@@ -267,6 +273,23 @@ def handle_tools_call(request_id, params: dict) -> None:
                 {"message": "how many?", "requestedSchema": {"type": "object"}},
             )
         result(request_id, {"content": [{"type": "text", "text": json.dumps(answers)}]})
+        return
+
+    if name == "log" and LOGGING:
+        # Emitting on demand rather than on a timer: a test needs the message to arrive
+        # *after* it has set a level, and a timer cannot promise that ordering.
+        send(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/message",
+                "params": {
+                    "level": arguments.get("level", "info"),
+                    "logger": arguments.get("logger") or None,
+                    "data": arguments.get("text", f"{NAME} says something"),
+                },
+            }
+        )
+        result(request_id, {"content": [{"type": "text", "text": f"level={_log_level}"}]})
         return
 
     if name not in tool_names():
@@ -353,6 +376,14 @@ def handle_resources_unsubscribe(request_id, params: dict) -> None:
     result(request_id, {})
 
 
+def handle_logging_set_level(request_id, params: dict) -> None:
+    """Remember the level. The `log` tool then reports it, which is how a test sees that a
+    `logging/setLevel` really reached *this* process rather than stopping at the gateway."""
+    global _log_level
+    _log_level = params.get("level", "")
+    result(request_id, {})
+
+
 def handle_completion_complete(request_id, params: dict) -> None:
     """Echo the request back as values, which is what makes forwarding observable.
 
@@ -402,6 +433,13 @@ _subscribed: set[str] = set()
 if SUBSCRIBE or UPDATE_ON_SUBSCRIBE:
     HANDLERS["resources/subscribe"] = handle_resources_subscribe
     HANDLERS["resources/unsubscribe"] = handle_resources_unsubscribe
+
+#: The level this process was last told to use, `""` until it is told. Reported by the `log`
+#: tool, so a test can tell a level that arrived from one that stopped at the gateway.
+_log_level = ""
+
+if LOGGING:
+    HANDLERS["logging/setLevel"] = handle_logging_set_level
 
 if COMPLETIONS or COMPLETIONS_ERROR or COMPLETIONS_MANY:
     HANDLERS["completion/complete"] = handle_completion_complete
