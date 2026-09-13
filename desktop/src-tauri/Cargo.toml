@@ -39,9 +39,16 @@ libc = "0.2"
 
 # A Job Object with `KILL_ON_JOB_CLOSE`, which is what Windows has instead of a process
 # group -- and which covers the Force Quit case a pidfile exists for on Unix.
+#
+# `windows-sys` gates *functions*, not only modules, and it gates them on every feature their
+# signature reaches into. `CreateJobObjectW` takes a `SECURITY_ATTRIBUTES`, so it is absent
+# from a `Win32_System_JobObjects` that was enabled without `Win32_Security` -- and absent
+# reads as a typo: the compiler suggests `CreateJobSet`. Hence the feature below that no line
+# of this crate names.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Security",
     "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }
