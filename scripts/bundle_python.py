@@ -268,13 +268,50 @@ def newest_wheel() -> Path:
     return wheels[-1]
 
 
+def choose_installed(staging: Path, tag: str) -> Path:
+    """The one real interpreter directory uv left in `staging`.
+
+    uv installs into a *versioned* directory -- `cpython-3.13.15-windows-x86_64-none` -- and
+    drops the major.minor name beside it as a link to that. Which *kind* of link is the
+    platform difference this function exists for:
+
+    * On Unix it is a symlink, and skipping symlinks is enough.
+    * **On Windows it is a directory junction**, and Python deliberately reports a junction
+      as not a symlink -- `Path.is_symlink()` is `False` for one. So the filter that works
+      everywhere else saw two directories on Windows and this step refused to guess between
+      them, which is every Windows build failing at its first minute.
+
+    So candidates are deduplicated by what they *resolve to*, which collapses a junction and
+    a symlink alike onto the directory they point at. The `tag` fallback behind it is for the
+    case neither covers -- a uv that one day copies rather than links -- where the alias is
+    still the entry named exactly what we asked for, and the real one is the entry carrying
+    the patch version.
+    """
+    by_target: dict[Path, Path] = {}
+    for entry in sorted(staging.iterdir()):
+        # uv leaves its own `.temp` and `.lock` beside what it installed.
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        by_target.setdefault(entry.resolve(), entry)
+
+    candidates = sorted(by_target)
+    if len(candidates) > 1:
+        candidates = [p for p in candidates if p.name != tag] or candidates
+    if len(candidates) != 1:
+        raise SystemExit(
+            f"bundle_python: expected one interpreter in {staging}, found {candidates}"
+        )
+    return candidates[0]
+
+
 def fetch_interpreter(out: Path, version: str) -> Path:
     """Install a standalone CPython at `out`, replacing whatever was there.
 
     uv installs into a *versioned* directory under `--install-dir` and also drops a
-    major.minor symlink beside it. Neither name is what the bundle wants, so the real
-    directory is moved to `out` and the staging area is discarded: the Rust side then names
-    `python/bin/python3` and keeps naming it across patch releases.
+    major.minor link beside it. Neither name is what the bundle wants, so the real directory
+    is moved to `out` -- see `choose_installed` for how it is picked out -- and the staging
+    area is discarded: the Rust side then names `python/bin/python3` and keeps naming it
+    across patch releases.
     """
     tag = uv_python_tag(version)
     if shutil.which("uv") is None:
@@ -295,18 +332,14 @@ def fetch_interpreter(out: Path, version: str) -> Path:
         env=uv_environment(),
     )
 
-    # uv leaves its own `.temp` and `.lock` beside what it installed, and the major.minor
-    # name is a symlink to the versioned one. What is wanted is the single real directory.
-    installed = [
-        p for p in staging.iterdir()
-        if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")
-    ]
-    if len(installed) != 1:
-        raise SystemExit(f"bundle_python: expected one interpreter in {staging}, found {installed}")
+    installed = choose_installed(staging, tag)
 
     shutil.rmtree(out, ignore_errors=True)
     out.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(installed[0]), str(out))
+    # The resolved directory, so what moves is the interpreter and not a link to it. The
+    # alias left behind dangles, and the `rmtree` below removes it -- `shutil.rmtree` does
+    # not follow a junction or a symlink, so it takes the link and nothing it pointed at.
+    shutil.move(str(installed), str(out))
     shutil.rmtree(staging, ignore_errors=True)
     return out
 

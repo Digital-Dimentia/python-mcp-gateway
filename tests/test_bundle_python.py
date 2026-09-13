@@ -256,6 +256,70 @@ def test_an_architecture_we_cannot_name_is_refused_rather_than_guessed(monkeypat
         bundle_python.uv_python_tag("3.13")
 
 
+# --- picking the interpreter out of uv's staging directory ------------------------------------
+#
+# uv installs `cpython-3.13.15-<platform>` and puts the major.minor name beside it as a link.
+# On Unix that link is a symlink; **on Windows it is a directory junction**, which Python
+# reports as not a symlink -- so the filter that worked everywhere else saw two directories
+# and refused to guess, which was every Windows build failing at its first minute.
+#
+# A symlink stands in for the junction here, because the property under test is the one both
+# share: two names, one directory, and `resolve()` collapses them.
+
+
+TAG = "cpython-3.13-linux-x86_64-gnu"
+REAL = "cpython-3.13.15-linux-x86_64-gnu"
+
+
+def staging_with_alias(tmp_path: Path, *, linked: bool) -> Path:
+    """uv's staging area: the versioned directory, the alias, and uv's own leavings."""
+    staging = tmp_path / ".python.staging"
+    real = staging / REAL
+    (real / "bin").mkdir(parents=True)
+    alias = staging / TAG
+    if linked:
+        alias.symlink_to(real, target_is_directory=True)
+    else:
+        # What a junction looks like from Python, and what a uv that copied would leave.
+        (alias / "bin").mkdir(parents=True)
+    (staging / ".lock").write_text("")
+    (staging / ".temp").mkdir()
+    return staging
+
+
+def test_the_linked_alias_is_not_a_second_interpreter(tmp_path: Path) -> None:
+    staging = staging_with_alias(tmp_path, linked=True)
+    assert bundle_python.choose_installed(staging, TAG) == (staging / REAL).resolve()
+
+
+def test_a_junction_shaped_alias_is_recognised_by_its_name(tmp_path: Path) -> None:
+    """The fallback: two directories that do not resolve to each other, one named the tag."""
+    staging = staging_with_alias(tmp_path, linked=False)
+    assert bundle_python.choose_installed(staging, TAG) == (staging / REAL).resolve()
+
+
+def test_uvs_own_lock_and_temp_are_not_mistaken_for_an_interpreter(tmp_path: Path) -> None:
+    staging = tmp_path / ".python.staging"
+    (staging / REAL / "bin").mkdir(parents=True)
+    (staging / ".temp").mkdir()
+    (staging / ".lock").write_text("")
+    assert bundle_python.choose_installed(staging, TAG) == (staging / REAL).resolve()
+
+
+def test_a_staging_area_it_cannot_read_is_refused_rather_than_guessed(tmp_path: Path) -> None:
+    """Two unrelated interpreters, or none: better to stop than to bundle a coin flip."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(SystemExit, match="expected one interpreter"):
+        bundle_python.choose_installed(empty, TAG)
+
+    two = tmp_path / "two"
+    (two / "cpython-3.12.8-linux-x86_64-gnu").mkdir(parents=True)
+    (two / REAL).mkdir()
+    with pytest.raises(SystemExit, match="expected one interpreter"):
+        bundle_python.choose_installed(two, TAG)
+
+
 # --- the version it pins -------------------------------------------------------------------
 
 
