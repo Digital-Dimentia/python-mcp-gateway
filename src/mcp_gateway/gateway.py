@@ -205,6 +205,10 @@ class Gateway:
         # is cheap, nothing is listening any more, and a shutdown that waits on a round
         # trip per subscription is a shutdown that hangs on a wedged backend.
         self.subscriptions.drop_session(session)
+        # The one client that wanted `debug` leaving is the commonest reason for the union
+        # to fall, and nothing else would recompute it.
+        if session.log_level is not None:
+            await self.apply_log_level()
 
     def resolve_client_response(self, session: Session, message: dict[str, Any]) -> None:
         """Resolve an answer to something the gateway asked this client.
@@ -380,6 +384,48 @@ class Gateway:
             await self.router.subscribe_resource(session, uri, on=False)
         return {}
 
+    async def set_log_level(self, session: Session, params: dict) -> dict[str, Any]:
+        """`logging/setLevel`: this client's threshold, and the backends' as a consequence.
+
+        Two levels, not one. The client's is remembered on its session and is what filters
+        the relay on the way up; what goes *down* to the backends is the most verbose level
+        any live session has asked for, because one backend process serves every client and
+        MCP has no per-subscriber level on the wire. A client asking for `debug` therefore
+        makes the daemon noisier for itself alone -- everyone else still sees only what
+        they asked for.
+        """
+        level = params.get("level")
+        if not isinstance(level, str) or level not in protocol.LOG_LEVELS:
+            raise errors.InvalidParams(
+                f"logging/setLevel requires a 'level' from {list(protocol.LOG_LEVELS)}"
+            )
+        session.log_level = level
+        await self.apply_log_level()
+        return {}
+
+    async def apply_log_level(self, only: str | None = None) -> None:
+        """Push the union of every session's threshold down to the backends.
+
+        `only` names one backend, for a process that has just replaced another and never
+        heard the level -- the same replay a subscription needs, and for the same reason: a
+        client that asked for `debug` an hour ago is not going to ask again.
+
+        A backend that does not declare `logging` is skipped rather than refused; a backend
+        that fails the call is logged and left alone, because a level that would not take is
+        not worth failing a client's request over.
+        """
+        level = protocol.most_verbose([s.log_level for s in self._sessions if s.log_level])
+        if level is None:
+            return
+        backends = [b for b in self.supervisor.running if b.supports("logging")]
+        for backend in backends:
+            if only is not None and backend.name != only:
+                continue
+            try:
+                await backend.client.set_log_level(level)
+            except Exception as exc:
+                logger.debug("backend %r refused logging/setLevel %s: %s", backend.name, level, exc)
+
     async def complete(self, session: Session, params: dict) -> dict[str, Any]:
         """`completion/complete`: what values one argument might take.
 
@@ -422,11 +468,37 @@ class Gateway:
             return
         if method == protocol.MESSAGE:
             self.notifier.log_backend_message(name, params)
+            await self._relay_log_message(name, params)
             return
         if method == protocol.RESOURCES_UPDATED:
             await self._resource_updated(name, params)
             return
         logger.debug("dropping %s from backend %r", method, name)
+
+    async def _relay_log_message(self, name: str, params: dict) -> None:
+        """Forward one backend `notifications/message` to the clients that asked for it.
+
+        Still logged locally first -- an operator reading the daemon's log should not have
+        to be a connected client to see a backend complain. What this adds is the client's
+        copy, filtered by the level *that* client set and tagged with which backend spoke.
+
+        The tag goes in `logger`, the field MCP already has for it, rather than an invented
+        one: a client aggregating three backends' logs needs to tell them apart, and a
+        gateway that flattened them into one stream would be lossy in a way nothing
+        downstream could undo.
+        """
+        level = str(params.get("level", "info"))
+        origin = params.get("logger")
+        payload = dict(params, logger=f"{name}/{origin}" if isinstance(origin, str) and origin else name)
+        for session in list(self._sessions):
+            if session.log_level is None:
+                continue
+            if not protocol.level_admits(session.log_level, level):
+                continue
+            try:
+                await session.link.notify(protocol.MESSAGE, payload)
+            except Exception as exc:  # pragma: no cover - a dead socket is not our problem
+                logger.debug("failed to relay a log message to a session: %s", exc)
 
     async def _resource_updated(self, name: str, params: dict) -> None:
         """Relay one `notifications/resources/updated`, rewritten and narrowly addressed.
@@ -498,6 +570,7 @@ class Gateway:
         ):
             await self.notifier.list_changed(method)
         await self.resubscribe(name)
+        await self.apply_log_level(only=name)
         return restarted
 
     async def reload(self, *, dry_run: bool = False) -> dict[str, Any]:
@@ -558,6 +631,10 @@ class Gateway:
 
             for name in plan.changed:
                 await self.resubscribe(name)
+            # `added` too, unlike the resubscribe above: nobody can have subscribed to a
+            # backend that did not exist, but a client's level predates it and applies.
+            for name in plan.changed + plan.added:
+                await self.apply_log_level(only=name)
 
             logger.info(
                 "reload: %d added, %d restarted, %d removed, %d unchanged, %d failed",

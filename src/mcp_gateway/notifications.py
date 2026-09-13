@@ -7,7 +7,7 @@ table wrong is how a daemon becomes noisy or stale, and neither symptom points a
 |---|---|
 | `notifications/{tools,prompts,resources}/list_changed` | invalidate that backend's cache; emit one upward, **debounced** |
 | `notifications/progress` | relay **to the originating connection only**, verbatim |
-| `notifications/message` (logging) | log locally, prefixed with the backend's name; do not re-emit |
+| `notifications/message` (logging) | log locally, **and** relay to each client whose level admits it |
 | `notifications/resources/updated` | rewrite the URI and relay **to the sessions subscribed to it** |
 | anything else | drop, with a debug line |
 
@@ -30,12 +30,34 @@ unchanged on the call that started the work. Broadcasting it would hand every ot
 token it never issued: noise at best, and a token collision at worst, since two clients can
 independently pick the same one.
 
-## Why `notifications/message` is not re-emitted
+## Why `notifications/message` is relayed, and how it is filtered
 
-The gateway does not advertise `logging`, and MCP says a server must not use a capability
-the client did not declare. The content is not lost -- it goes to the daemon's own log with
-the backend's name on it, which is where an operator looks, and `/admin`'s log stream
-surfaces it to the UI.
+This was a drop for as long as the gateway did not advertise `logging` -- MCP says a server
+must not use a capability the client did not declare, so re-emitting would have been a
+violation. Advertising it changed the condition, not the rule.
+
+It is still logged locally first: an operator reading the daemon's log should not have to be
+a connected client to see a backend complain, and `/admin`'s log stream is how the UI gets
+it. What the relay adds is the client's copy.
+
+Two levels are in play and they are not the same one. What goes *down* to the backends is
+the most verbose level any live session asked for, because one backend process serves every
+client and MCP has no per-subscriber level on its wire. What goes *up* is filtered per
+session against the level that session set. So a client asking for `debug` makes the daemon
+noisier for itself alone.
+
+A client that never called `logging/setLevel` is sent nothing. The spec leaves the default
+to the server, and the alternative -- picking `info` for everyone -- would start a stream
+every client that predates this feature never asked for.
+
+The backend's name goes in `logger`, the field MCP already has for it, ahead of whatever the
+backend put there (`talker/db.pool`). Three backends' logs in one stream are useless if you
+cannot tell them apart, and flattening them would be lossy in a way nothing downstream could
+undo.
+
+Nobody is told to be quiet again when the last interested client leaves: the union simply
+stops being pushed down, and a backend already at `debug` stays there. Its messages reach
+our own level-filtered log and no client, which costs a little stderr and no correctness.
 
 ## Why `resources/updated` goes to subscribers, not everyone
 

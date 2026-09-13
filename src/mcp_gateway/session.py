@@ -47,6 +47,10 @@ class Session:
         #: what the gateway declares downward to each backend; see `gateway.py`.
         self.client_capabilities: dict[str, Any] = {}
         self.client_info: dict[str, Any] = {}
+        #: The severity this client asked for with `logging/setLevel`, or `None` if it
+        #: never asked -- in which case it is sent no `notifications/message` at all. See
+        #: `notifications.md` for why silence is the default rather than `info`.
+        self.log_level: str | None = None
         #: Requests this client has in flight, by its own id, so `notifications/cancelled`
         #: can reach the right task. The cancellation then propagates down through
         #: `MCPStdioClient.request` as a `notifications/cancelled` on the backend's wire.
@@ -64,6 +68,7 @@ class Session:
             protocol.RESOURCES_SUBSCRIBE: self._resources_subscribe,
             protocol.RESOURCES_UNSUBSCRIBE: self._resources_unsubscribe,
             protocol.COMPLETION_COMPLETE: self._complete,
+            protocol.LOGGING_SET_LEVEL: self._logging_set_level,
         }
 
     # --- the transport's interface ------------------------------------------------------
@@ -198,3 +203,6 @@ class Session:
 
     async def _complete(self, params: dict) -> dict[str, Any]:
         return await self.gateway.complete(self, params)
+
+    async def _logging_set_level(self, params: dict) -> dict[str, Any]:
+        return await self.gateway.set_log_level(self, params)

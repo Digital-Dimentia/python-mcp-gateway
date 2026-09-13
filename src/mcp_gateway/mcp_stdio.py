@@ -602,6 +602,15 @@ class MCPStdioClient:
         """
         return await self.request("resources/read", {"uri": uri})
 
+    async def set_log_level(self, level: str) -> dict[str, Any]:
+        """Ask this server to send `notifications/message` at `level` and above.
+
+        The gateway sends the most verbose level *any* of its clients asked for and filters
+        per client on the way up, because one process is serving all of them and MCP has
+        no per-subscriber level on the wire.
+        """
+        return await self.request("logging/setLevel", {"level": level})
+
     async def subscribe_resource(self, uri: str) -> dict[str, Any]:
         """Ask to be told when one resource changes: `resources/subscribe`.
 
