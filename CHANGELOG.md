@@ -9,6 +9,14 @@ nobody reads.
 
 ## Unreleased
 
+**The desktop shell builds on Windows.** `tauri_build::build()` compiles `icons/icon.ico`
+into a Windows Resource file, and the icon set shipped only PNGs — so the Windows leg of the
+desktop workflow failed at the crate, before anything of the app was exercised. The `.ico`
+and the macOS `.icns` are generated from the same placeholder `icon.png` and committed;
+`scripts/bundle_python.py` joined that workflow's path filter in the same breath, because it
+is what `make tauri-python` runs and a fix to its Windows half had already merged without the
+workflow ever running.
+
 **GET_STARTED.md: the walkthrough the repository did not have.**
 
 There were two kinds of document here and neither was a path through the project. `README.md`
