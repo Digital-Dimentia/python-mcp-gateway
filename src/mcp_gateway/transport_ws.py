@@ -51,7 +51,7 @@ from urllib.parse import parse_qs, urlsplit
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.http11 import Request, Response
 
-from mcp_gateway import errors, jsonrpc, webui
+from mcp_gateway import errors, jsonrpc, transport_http, webui
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,10 @@ PING_TIMEOUT_SECONDS = 20.0
 
 MCP_PATH = "/mcp"
 ADMIN_PATH = "/admin"
+
+#: How often abandoned Streamable HTTP sessions are swept. Far shorter than the grace
+#: itself, so a session expires near its deadline rather than up to a sweep late.
+REAP_INTERVAL_SECONDS = 30.0
 
 
 class UnauthenticatedBindError(RuntimeError):
@@ -250,6 +254,20 @@ def _offered_keys(request: Request) -> list[str]:
     return offered
 
 
+def _offered_http_keys(head: transport_http.Head) -> list[str]:
+    """Every key an HTTP request offers, the same two carriers the WebSocket path accepts.
+
+    A list rather than a first match, so `?key=wrong&key=right` cannot be smuggled past a
+    check that scanned for any match -- the caller requires exactly one.
+    """
+    offered: list[str] = []
+    authorization = head.get("authorization")
+    if authorization.lower().startswith("bearer "):
+        offered.append(authorization[7:].strip())
+    offered.extend(parse_qs(urlsplit(head.target).query).get(ACCESS_KEY_QUERY_PARAM, []))
+    return offered
+
+
 def _access_check(expected: str | None, origins: Callable[[], frozenset[str]]) -> Any:
     """A `process_request` hook: serve the UI, 404 an unknown path, 401 a client without the key.
 
@@ -346,6 +364,117 @@ class ClientLink:
             await self._websocket.close()
 
 
+class DivertingConnection(ServerConnection):
+    """A `ServerConnection` that lets a plain HTTP request off the WebSocket path.
+
+    `websockets` hands every accepted connection to one of these, and it is an
+    `asyncio.Protocol`, so the first bytes arrive here before the library has committed to
+    anything. A WebSocket upgrade is passed straight to `super()` and the library owns the
+    rest of that connection -- handshake, keepalive, close, compression, every line of it
+    unchanged. A Streamable HTTP request is handed to `transport_http.HttpProtocol` instead,
+    by `set_protocol`, with the bytes we already read replayed into it.
+
+    **Why not `process_request`.** That hook is the natural place and cannot do this job. It
+    returns one complete `Response`, so it can neither stream an SSE body nor read a request
+    body -- and `websockets` has no reason to read one, because a WebSocket handshake never
+    has a body. A POST would arrive with its JSON still in the socket buffer and nowhere to
+    put it.
+
+    Only `/mcp` without an upgrade is diverted. `/ui`, `/admin`, an unknown path and a
+    WebSocket handshake all go to the library exactly as before, so the access-key check,
+    the origin check and the UI's static assets keep the single implementation they had.
+    """
+
+    #: Set by `GatewayServer.start`, because the connection factory is built by `serve()`
+    #: and there is nowhere else to hand it in.
+    divert_to: Any = None
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._sniffed = bytearray()
+        self._decided = False
+
+    def data_received(self, data: bytes) -> None:
+        if self._decided:
+            super().data_received(data)
+            return
+        self._sniffed += data
+        end = self._sniffed.find(b"\r\n\r\n")
+        if end < 0:
+            # Not the whole head yet. A WebSocket handshake is one small write in practice,
+            # so this branch is for a client that fragments -- and the cap is what stops a
+            # connection that never finishes a head from buffering forever.
+            if len(self._sniffed) > 64 * 1024:
+                self.transport.close()
+            return
+        self._decided = True
+        buffered = bytes(self._sniffed)
+        self._sniffed.clear()
+        head = transport_http.parse_head(buffered[:end])
+        if self.divert_to is None or not _is_plain_http_mcp(head):
+            super().data_received(buffered)
+            return
+        protocol = self.divert_to(self.remote_address)
+        transport = self.transport
+        transport.set_protocol(protocol)
+        self._release_the_library(transport)
+        protocol.connection_made(transport)
+        protocol.data_received(buffered)
+
+    def _release_the_library(self, transport: asyncio.Transport) -> None:
+        """Let `websockets` finish with a connection it is no longer holding.
+
+        Two things would otherwise happen ten seconds after a divert, and the second is
+        fatal rather than untidy. `handshake()` is waiting on `request_rcvd`, which nothing
+        will ever resolve now, so `open_timeout` fires -- and its handler calls
+        `connection.transport.abort()`, which is *our* socket. An SSE stream is supposed to
+        stay open for hours; it would have been cut at ten seconds.
+
+        So the future is resolved, which lets the handshake return and the handler task
+        end, and the transport it would reach for is swapped with one whose `abort` does
+        nothing. Both halves are needed: the first alone still aborts, and the second alone
+        leaks a task per request.
+        """
+        if not self.request_rcvd.done():
+            self.request_rcvd.set_result(None)
+        self.transport = _DetachedTransport(transport)  # type: ignore[assignment]
+
+
+class _DetachedTransport:
+    """Stands in for a transport `websockets` still has a reference to and must not touch.
+
+    Only what the library's own teardown reaches for. Anything else is an attribute error
+    on purpose: this is not a transport, it is a place for a shutdown path to land, and a
+    silent no-op for a method that was supposed to do something would be worse than a raise.
+    """
+
+    def __init__(self, real: asyncio.Transport) -> None:
+        self._real = real
+
+    def abort(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def is_closing(self) -> bool:
+        return self._real.is_closing()
+
+
+def _is_plain_http_mcp(head: transport_http.Head | None) -> bool:
+    """Whether this request should leave the WebSocket path for the HTTP one.
+
+    An `Upgrade: websocket` is never diverted whatever its path, so a client that
+    misspells the endpoint still gets the library's own handshake error rather than a
+    confusing HTTP one.
+    """
+    if head is None:
+        return False
+    if "websocket" in head.get("upgrade").lower():
+        return False
+    return head.path == transport_http.MCP_PATH
+
+
 class GatewayServer:
     """Serves the gateway over WebSocket: many connections, one shared everything below.
 
@@ -377,6 +506,11 @@ class GatewayServer:
         self._access_key = access_key
         self._server: Server | None = None
         self._links: set[ClientLink] = set()
+        #: The Streamable HTTP endpoint on the same path and port. Its sessions are not
+        #: connections in this set: an HTTP client exists between requests, with no socket
+        #: at all for most of its life, so `links` unions the two.
+        self._http = transport_http.StreamableHttp(connection_factory)
+        self._reaper: asyncio.Task[None] | None = None
 
     def _allowed_origins(self) -> frozenset[str]:
         """Origins a browser may open a socket from. Recomputed per request, not per bind.
@@ -396,11 +530,51 @@ class GatewayServer:
         """
         if self._server is None:
             return self._port
-        return next(iter(self._server.sockets)).getsockname()[1]
+        # `sockets` empties the moment the server begins closing, and this is read from a
+        # request handler -- so a request in flight during shutdown would otherwise raise
+        # `StopIteration` inside a coroutine, which asyncio turns into a `RuntimeError`
+        # nowhere near the cause. The configured port is the right answer then anyway.
+        bound = next(iter(self._server.sockets), None)
+        return self._port if bound is None else bound.getsockname()[1]
 
     @property
-    def links(self) -> frozenset[ClientLink]:
-        return frozenset(self._links)
+    def links(self) -> frozenset[Any]:
+        """Every attached client on either transport, for `describe_connections`."""
+        return frozenset(self._links) | self._http.links
+
+    @property
+    def http(self) -> transport_http.StreamableHttp:
+        return self._http
+
+    def _http_protocol(self, remote: Any) -> transport_http.HttpProtocol:
+        """Build the protocol object one diverted connection is handed to."""
+        return transport_http.HttpProtocol(
+            self._http, authorise=self._authorise_http, remote=remote
+        )
+
+    def _authorise_http(self, head: transport_http.Head) -> tuple[int, bytes] | None:
+        """The WebSocket path's own checks, applied to an HTTP request.
+
+        Same rules, same reasons, one implementation of each: `origin_permitted` and the
+        constant-time key comparison are shared, and only the plumbing that gets a header
+        out of a request differs. A transport with its own weaker copy of an auth rule is
+        how a gateway grows a back door.
+        """
+        origin = head.headers.get("origin")
+        if not origin_permitted(origin, self._allowed_origins()):
+            logger.warning("Rejected HTTP request: origin %r is not allowed", origin)
+            return 403, b"Origin not allowed\n"
+        if self._access_key is None:
+            return None
+        offered = _offered_http_keys(head)
+        if len(offered) == 1 and stdlib_secrets.compare_digest(
+            offered[0].encode("utf-8"), self._access_key.encode("utf-8")
+        ):
+            return None
+        logger.warning(
+            "Rejected HTTP request: %s access key", "missing" if not offered else "wrong"
+        )
+        return 401, b"Unauthorized\n"
 
     def _report_access_key(self) -> None:
         """Say at startup whether authentication is on, and never say what the key is.
@@ -443,6 +617,9 @@ class GatewayServer:
         if self._server is not None:
             return
         self._report_access_key()
+        connection_class = type(
+            "GatewayConnection", (DivertingConnection,), {"divert_to": self._http_protocol}
+        )
         self._server = await serve(
             self._handle_client,
             self._host,
@@ -451,11 +628,35 @@ class GatewayServer:
             ping_interval=PING_INTERVAL_SECONDS,
             ping_timeout=PING_TIMEOUT_SECONDS,
             process_request=_access_check(self._access_key, self._allowed_origins),
+            create_connection=connection_class,
         )
+        self._reaper = asyncio.create_task(self._reap_http_sessions())
         logger.info("listening on ws://%s:%s%s", self._host, self.port, MCP_PATH)
+        logger.info("streamable http on http://%s:%s%s", self._host, self.port, MCP_PATH)
         logger.info("admin UI at %s", webui.url(self._host, self.port))
 
+    async def _reap_http_sessions(self) -> None:
+        """Forget HTTP sessions nobody has come back to. See `transport_http.reap`."""
+        try:
+            while True:
+                await asyncio.sleep(REAP_INTERVAL_SECONDS)
+                for session_id in self._http.reap():
+                    entry = await self._http.drop(session_id)
+                    if entry is not None:
+                        await entry.connection.closed()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - the reaper must not take the daemon down
+            logger.exception("http session reaper failed")
+
     async def stop(self) -> None:
+        if self._reaper is not None:
+            self._reaper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reaper
+            self._reaper = None
+        for link in list(self._http.links):
+            await self._http.drop(link.session_id)
         if self._server is None:
             return
         self._server.close()
@@ -469,7 +670,7 @@ class GatewayServer:
 
     async def broadcast(self, method: str, params: dict | None = None, *, path: str = MCP_PATH) -> int:
         """Send one notification to every connection on `path`. Returns how many got it."""
-        targets = [link for link in self._links if link.path == path]
+        targets = [link for link in self.links if link.path == path]
         for link in targets:
             await link.notify(method, params)
         return len(targets)

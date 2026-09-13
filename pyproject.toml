@@ -35,6 +35,12 @@ classifiers = [
 # process serves one protocol on one port and needs no ASGI stack, and the `mcp` SDK's
 # dependency tree (pydantic, starlette, uvicorn, sse-starlette, httpx2, pyjwt[crypto])
 # would put two Rust-compiled per-arch extensions into a process that proxies raw dicts.
+#
+# That decision was tested when MCP's Streamable HTTP transport was added, which needs the
+# two things an ASGI stack exists to provide: a real HTTP server and an SSE writer. It held.
+# `transport_http.py` is a request reader, a response writer and an SSE writer, `websockets`
+# still owns the socket, and the dependency list is unchanged. See
+# `src/mcp_gateway/transport_http.md` for how the port is shared.
 dependencies = [
   "ruamel.yaml==0.19.1",
   "websockets==17.0.1",

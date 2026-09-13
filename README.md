@@ -95,6 +95,24 @@ claude mcp add gateway -- mcp-gateway-connect --url ws://127.0.0.1:8765/mcp
 attach to the daemon unchanged. It reconnects on its own, so restarting the daemon does not
 make your client mark the server dead.
 
+### Or attach over HTTP, with no bridge
+
+The same port also speaks MCP's Streamable HTTP transport, so a client that supports it
+natively needs nothing in between:
+
+```bash
+claude mcp add --transport http gateway http://127.0.0.1:8765/mcp
+```
+
+Same endpoint, same access key — `?key=…` or `Authorization: Bearer …`, whichever your
+client can send. `POST` carries requests and gets its answers back directly; `GET` opens the
+stream the daemon pushes notifications down, which is how `resources/updated`, log messages
+and `list_changed` reach you. Both transports can be attached at once, and a session is
+identified by the `Mcp-Session-Id` the daemon returns from `initialize`.
+
+See [`transport_http.md`](src/mcp_gateway/transport_http.md) for the shape of it, and for
+why there is no web framework underneath.
+
 ## Using it
 
 Tools, prompts and resources are namespaced by backend:
