@@ -55,6 +55,8 @@ defaults:                      # optional; each key optional
   startup_timeout: 20.0        # spawn + initialize + first listing
   env_mode: curated            # curated | inherit
   cwd: null
+  lazy: false
+  idle_ttl: null               # null means never; 0 is refused
 servers:                       # required
   github:
     command: npx               # required
@@ -68,6 +70,8 @@ servers:                       # required
     startup_timeout: 20.0
     enabled: true              # default true
     required: false            # default false
+    lazy: false                # default false; do not spawn until something needs it
+    idle_ttl: 900              # default null; sleep after this long unused
     description: "GitHub issues and PRs"
 ```
 
@@ -85,6 +89,16 @@ that exists for a reader outside it. An editor offering to *add* a server has to
 leaving a field blank will do, and the folded specs cannot say: a spec reading `timeout:
 30.0` looks identical whether the file set it, `defaults:` set it, or nothing did.
 `admin.config.get` reports both, and the admin UI uses the block for its placeholders.
+
+## `lazy` and `idle_ttl`
+
+Both are about process count rather than behaviour, and both are off by default.
+
+`lazy: true` builds the backend but does not spawn it; the first listing or call does.
+`idle_ttl` puts a running backend to sleep after that many seconds with nothing to do, and
+the next call wakes it. A slept backend keeps advertising its tools, so neither is visible
+to a client beyond the wake latency. `null` means never, and `0` is refused — see
+[`supervisor.md`](supervisor.md) for what is never slept and why.
 
 ## `enabled` and `required`
 

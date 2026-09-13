@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -90,6 +91,9 @@ class Supervisor:
         self._on_notification = on_notification
         self.ready = asyncio.Event()
         self._backends: dict[str, Backend] = {}
+        #: One lock per backend, so a burst of calls on one sleeping backend spawns one
+        #: process rather than several. Keyed by name, which outlives the `Backend`.
+        self._wake_locks: dict[str, asyncio.Lock] = {}
 
     # --- access -------------------------------------------------------------------------
 
@@ -148,9 +152,18 @@ class Supervisor:
         """
         self._backends = {name: self._build(name) for name in self.config.servers}
         enabled = [b for b in self._backends.values() if b.spec.enabled]
-        if enabled:
-            logger.info("starting %d backend(s)", len(enabled))
-            await asyncio.gather(*(self._start_one(b) for b in enabled))
+        # A `lazy` backend is built and left asleep. It is not skipped or forgotten: it
+        # appears in every listing the moment something wakes it, and `gateway__list_backends`
+        # reports it as `idle` rather than as missing.
+        eager = [b for b in enabled if not b.spec.lazy]
+        for backend in enabled:
+            if backend.spec.lazy:
+                backend.status = BackendStatus.IDLE
+        if eager:
+            logger.info("starting %d backend(s)", len(eager))
+            await asyncio.gather(*(self._start_one(b) for b in eager))
+        if len(eager) != len(enabled):
+            logger.info("%d backend(s) left asleep until first use", len(enabled) - len(eager))
         self.ready.set()
         live = [b.name for b in self.running]
         logger.info(
@@ -165,6 +178,59 @@ class Supervisor:
         started = await backend.start()
         if not started and backend.spec.required:
             raise RequiredBackendFailed(backend.name, backend.error or "did not start")
+
+    async def wake(self, name: str) -> bool:
+        """Start a backend that is asleep. `True` if it is running when this returns.
+
+        Serialised per backend, because several calls can land on one sleeping backend at
+        once and starting a subprocess twice would leave one of them orphaned with nobody
+        holding its pipes. The waiters all get the one result.
+
+        A backend that is not asleep is left alone and reported as-is, so this is safe to
+        call on the fast path without checking first -- which is what the router does.
+        """
+        backend = self._backends.get(name)
+        if backend is None:
+            return False
+        if backend.running:
+            return True
+        lock = self._wake_locks.setdefault(name, asyncio.Lock())
+        # The lock is taken before the decision, not after it. A racing caller that checked
+        # first would see `STARTING`, conclude the backend was not asleep, and answer "not
+        # running" while a perfectly good start was a few milliseconds from finishing.
+        async with lock:
+            if backend.running:
+                return True
+            if not backend.asleep:
+                # Failed, disabled, or cooling off in the restart backoff. Not ours to fix.
+                return False
+            backend.client_capabilities = self._client_capabilities()
+            logger.info("waking backend %r", name)
+            return await backend.start()
+
+    async def sweep_idle(self, *, exempt: frozenset[str] = frozenset()) -> list[str]:
+        """Put to sleep every backend past its `idle_ttl`. Returns the names.
+
+        `exempt` is how the caller keeps a backend that is doing something invisible from
+        here. A resource subscription is the case that matters: a sleeping process cannot
+        send `notifications/resources/updated`, so tearing one down under a live
+        subscription would turn a working feature into silence -- which is exactly what a
+        client watching a resource cannot distinguish from nothing having changed.
+        """
+        now = time.monotonic()
+        slept: list[str] = []
+        for backend in list(self._backends.values()):
+            ttl = backend.spec.idle_ttl
+            if ttl is None or not backend.running or backend.name in exempt:
+                continue
+            if backend.serving_anyone:
+                continue
+            if backend.idle_for(now) < ttl:
+                continue
+            logger.info("backend %r idle for %.0fs; sleeping it", backend.name, backend.idle_for(now))
+            await backend.sleep()
+            slept.append(backend.name)
+        return slept
 
     async def restart(self, name: str) -> bool:
         backend = self._backends.get(name)

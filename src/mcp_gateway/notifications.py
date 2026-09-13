@@ -251,6 +251,11 @@ class Subscriptions:
             if not uris:
                 self._by_session.pop(session, None)
 
+    def watched_uris(self) -> frozenset[str]:
+        """Every URI somebody is subscribed to. The idle sweep reads this to know which
+        backends it must leave running -- see `gateway._subscribed_backends`."""
+        return frozenset(self._by_uri)
+
     def uris_for(self, name: str) -> list[str]:
         """Every public URI subscribed against one backend, for a replay after a restart."""
         prefix = f"{naming.RESOURCE_SCHEME}://{name}/"

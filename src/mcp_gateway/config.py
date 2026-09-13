@@ -46,7 +46,7 @@ ENV_MODE_INHERIT = "inherit"
 ENV_MODES = frozenset({ENV_MODE_CURATED, ENV_MODE_INHERIT})
 
 _TOP_KEYS = frozenset({"version", "defaults", "servers"})
-_DEFAULTS_KEYS = frozenset({"timeout", "startup_timeout", "env_mode", "cwd"})
+_DEFAULTS_KEYS = frozenset({"timeout", "startup_timeout", "env_mode", "cwd", "lazy", "idle_ttl"})
 _ENTRY_KEYS = frozenset(
     {
         "command",
@@ -60,6 +60,8 @@ _ENTRY_KEYS = frozenset(
         "enabled",
         "required",
         "description",
+        "lazy",
+        "idle_ttl",
     }
 )
 
@@ -89,6 +91,11 @@ class ServerSpec:
     enabled: bool = True
     required: bool = False
     description: str = ""
+    #: Not spawned until something needs it. See `supervisor.md`.
+    lazy: bool = False
+    #: Seconds of inactivity after which the process is stopped, or `None` to keep it.
+    #: The backend's *listings* survive the teardown, which is what makes it invisible.
+    idle_ttl: float | None = None
 
     @property
     def env_keys(self) -> list[str]:
@@ -142,6 +149,18 @@ def _as_str(value: Any, *, where: str, allow_empty: bool = False) -> str:
     if not value and not allow_empty:
         raise ConfigError(f"{where}: must not be empty")
     return value
+
+
+def _as_idle_ttl(value: Any, *, where: str) -> float | None:
+    """A positive number of seconds, or `None` for "never sleep".
+
+    `None` and `0` are deliberately different: `null` means the backend is never torn down,
+    and a `0` would mean "tear it down the instant it goes idle", which is a thrash rather
+    than a policy. So zero is refused, and the way to say "do not do this" is to omit it.
+    """
+    if value is None:
+        return None
+    return _as_positive_float(value, where=where)
 
 
 def _as_str_tuple(value: Any, *, where: str) -> tuple[str, ...]:
@@ -232,6 +251,10 @@ def _parse_entry(name: str, raw: Any, defaults: dict[str, Any], *, where: str) -
         enabled=_as_bool(entry.get("enabled", True), where=f"{where}.enabled"),
         required=_as_bool(entry.get("required", False), where=f"{where}.required"),
         description=_as_str(entry.get("description", ""), where=f"{where}.description", allow_empty=True),
+        lazy=_as_bool(entry.get("lazy", defaults.get("lazy", False)), where=f"{where}.lazy"),
+        idle_ttl=_as_idle_ttl(
+            entry.get("idle_ttl", defaults.get("idle_ttl")), where=f"{where}.idle_ttl"
+        ),
     )
 
 
@@ -266,6 +289,10 @@ def parse(text: str, *, source: Path | None = None) -> GatewayConfig:
         _as_positive_float(defaults["timeout"], where=f"{label}.defaults.timeout")
     if "startup_timeout" in defaults:
         _as_positive_float(defaults["startup_timeout"], where=f"{label}.defaults.startup_timeout")
+    if "idle_ttl" in defaults:
+        _as_idle_ttl(defaults["idle_ttl"], where=f"{label}.defaults.idle_ttl")
+    if "lazy" in defaults:
+        _as_bool(defaults["lazy"], where=f"{label}.defaults.lazy")
 
     servers_raw = document.get("servers")
     if servers_raw is None:

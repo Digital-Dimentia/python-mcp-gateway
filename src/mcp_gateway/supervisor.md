@@ -23,6 +23,62 @@ A `Backend` is constructed for **every** catalogue entry, disabled ones included
 `gateway__list_backends` can say why each is not serving. An object that existed only while
 healthy could not.
 
+## Lazy spawn and idle teardown
+
+Two opt-in keys, both per-backend and both settable in `defaults:`. See
+[`config.md`](config.md) for the schema.
+
+`lazy: true` means the backend is built at startup but not spawned. It is not skipped or
+forgotten — it reports as `idle`, and the first listing or call wakes it.
+
+`idle_ttl: <seconds>` means a running backend with nothing to do for that long is put to
+sleep. Omitting it means never; a `0` is refused, because "tear it down the instant it goes
+idle" is a thrash rather than a policy.
+
+**The property the whole thing rests on: a listing does not change by the process going
+away.** The same command with the same config publishes the same tools, so
+[`catalogue.py`](catalogue.md) keeps answering from what the backend last said and a slept
+backend goes on advertising. Without that, every teardown would show up to a client as tools
+vanishing — the exact symptom the feature exists to avoid.
+
+The honest limit is the other side of the same coin: a sleeping backend cannot tell us its
+listing changed. So a `tools/call` can arrive for a tool the woken process no longer has.
+That call fails as an unknown tool and the backend's own `list_changed` corrects the listing
+moments later — the same self-correcting path a live backend's change takes, just entered
+later.
+
+### What is never slept
+
+- A backend with a **live resource subscription**. A sleeping process cannot send
+  `notifications/resources/updated`, and a client watching a resource cannot tell silence
+  from nothing having changed. Reclaiming a process at the cost of quietly breaking a
+  feature the client asked for is not a trade the daemon makes on its own. `Gateway`
+  computes the exempt set; see [`notifications.md`](notifications.md).
+- A backend **with a call in flight**. A `tools/call` waiting on a human is the
+  longest-running thing this daemon does, and it is not idle.
+- A backend with **no `idle_ttl`**, which is every backend by default.
+
+### Sleeping is not failing
+
+`sleep()` leaves `consecutive_failures` and the restart backoff alone. Feeding them would
+make a quiet backend progressively slower to wake, which is the opposite of the point.
+`IDLE` is its own status for the same reason: an operator reading
+`gateway__list_backends` has to be able to tell "the daemon reclaimed this" from "somebody
+turned it off" (`stopped`) and "this is broken" (`failed`), because only one of the three is
+a reason to go and look at something.
+
+### Waking is serialised per backend
+
+Six calls landing on one sleeping backend must spawn one process, not six, and the five that
+did not win have to *wait* rather than conclude the backend is unavailable. `wake` takes its
+lock before it decides, and `Backend.wakeable` counts `STARTING` as well as `IDLE` — a
+caller that checked `asleep` alone would see the winner's `STARTING` and give up on a start
+that was milliseconds from finishing.
+
+The idle clock is `time.monotonic`, kept beside the wall-clock `last_call_at` that
+`admin.status` reports to a human. A wall clock an NTP step can move backwards would have
+the sweeper tear down a backend that was busy a second ago.
+
 ## The readiness event
 
 `ready` is set when the first sweep finishes. Listing methods wait on it, briefly.
