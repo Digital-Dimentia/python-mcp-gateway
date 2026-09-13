@@ -15,7 +15,7 @@ Both are always available, even with zero live backends. That is why
 [`protocol.md`](protocol.md) can advertise `tools` unconditionally: there is always at least
 this much to list.
 
-## The four tools
+## The five tools
 
 | Tool | Answers |
 |---|---|
@@ -23,6 +23,7 @@ this much to list.
 | `gateway__backend_health` | the above plus uptime, restarts, last error, and a **live ping round-trip** |
 | `gateway__restart_backend` | stop and respawn one, re-reading its credentials |
 | `gateway__reload_config` | re-read both files and apply the difference |
+| `gateway__clipboard` | the admin UI's bench session as one document — see [`clipboard.md`](clipboard.md) |
 
 The live ping is what makes health a health check rather than a status dump: a subprocess
 can be alive and wedged, and only a round trip tells the two apart. `ping_ms: null` means
@@ -37,6 +38,8 @@ instead of being ignored.
 block. There is no way for a value to reach the payload even by accident, because a
 `ServerSpec` holds the `${VAR}` templates rather than resolved values; that is the point of
 the split described in [`config.md`](config.md).
+
+`gateway__clipboard` quotes backend *output* — payloads the same client could have fetched itself through `/mcp` — and reads the credential store not at all.
 
 `admin.secrets.keys` likewise returns key names. There is no method anywhere that returns a
 value.

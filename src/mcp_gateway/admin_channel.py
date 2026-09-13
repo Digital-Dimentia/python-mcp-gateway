@@ -114,6 +114,8 @@ class AdminConnection:
             "admin.config.get": self._config_get,
             "admin.secrets.keys": gateway.admin.secrets_keys,
             "admin.secrets.missing": gateway.admin.secrets_missing,
+            "admin.clipboard.put": gateway.admin.clipboard_put,
+            "admin.clipboard.get": gateway.admin.clipboard_get,
             "admin.config.set": self._config_set,
             "admin.backend.add": self._backend_add,
             "admin.backend.update": self._backend_update,

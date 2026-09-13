@@ -9,6 +9,28 @@ nobody reads.
 
 ## Unreleased
 
+**The Clipboard: hand a bench session to an agent.**
+
+The admin UI is where a person works a backend out by hand — press Send, read the answer,
+pick a value, press Send again. What comes out of that is evidence, and it used to be
+trapped in the page. The Results column now has a **Clipboard** button: it opens a modal
+holding one text document — every call with its arguments and its answer, then every value
+the Injectable values column is offering and which of them are picked — in a plain editor,
+so it can be trimmed or annotated, and copied.
+
+The document is rendered by the daemon, not by the page, and that is the whole design. The
+same text is a tool: **`gateway__clipboard`** on `/mcp` returns it unedited, so a model can
+read what just happened at the bench without anyone pasting anything. One renderer
+(`clipboard.py`), two surfaces — the alternative is two renderers that drift, which would
+surface as the agent being briefed on a session that did not happen.
+
+The page publishes a *snapshot* of its two right-hand columns over `admin.clipboard.put`
+whenever either changes, so the tool answers with the current bench rather than with
+whatever it looked like the last time somebody pressed a button; the document states both
+when it was captured and how long ago that was. Every quoted payload is backend output, and
+the preamble says so in as many words — a model reading a tool result as an instruction is
+the one failure this document would otherwise invite.
+
 **A desktop app: the daemon, its backends and the admin UI in one window, with no terminal
 and no key to copy.**
 

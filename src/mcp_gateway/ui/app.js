@@ -12,6 +12,7 @@ import { buildForm, buildPromptForm, templateVariables, expandTemplate } from '.
 import {
   renderToolResult, renderPromptResult, renderResourceResult, renderError, resultCard, pretty,
 } from './render.js';
+import { installClipboard, clipboardChanged } from './clipboard.js';
 
 // Mirrors `naming.py`. A server name may contain neither, which is what makes a split on
 // the first separator unambiguous — see naming.md.
@@ -1073,6 +1074,14 @@ const MAX_CHAIN_DEPTH = 4;
 //: and the walk it would re-enter is already going to see that pick.
 let refreshing = false;
 
+//: The groups the column last drew. Read only by `clipboardSnapshot`; see `renderVariables`.
+let lastGroups = [];
+
+//: What each result card is about, keyed by the card itself. A `WeakMap` rather than a list
+//: because the column *is* the list: deleting a card drops its record with it, and there is
+//: no second structure to drift out of step with what is on screen.
+const resultRecords = new WeakMap();
+
 //: Input types that parse what they are given, and so cannot be shown a `[a, b]` set: the
 //: browser drops the text and leaves the field empty, without saying so.
 const PARSED_INPUTS = new Set([
@@ -1440,6 +1449,11 @@ function renderVariables() {
 
   for (const group of groups) host.append(vocabularyGroup(group));
   updateSendLabel();
+  // Kept for `clipboardSnapshot`, which must not call `vocabularyGroups` itself: that
+  // resolver *buries* picks whose group has gone, and a snapshot is a reader. What is on
+  // screen is what was drawn here, which is exactly the question the document asks.
+  lastGroups = groups;
+  clipboardChanged();
 }
 
 function vocabularyGroup(pair) {
@@ -1702,6 +1716,9 @@ function pickDisplay(values) {
  * is a set that would be sent literally, since the fan-out would not rewrite it.
  */
 function fillPick(pick, { quiet = false } = {}) {
+  // Every pick change comes through here, whether or not a form is open to take it -- so
+  // this is the one place the clipboard has to be told about one. Debounced there.
+  clipboardChanged();
   const values = [...pick.values];
   const say = quiet ? () => {} : varsNote;
   const control = controlFor(pick.variable, { strict: true });
@@ -2266,19 +2283,88 @@ function pushCard(options) {
   if (empty) empty.remove();
   // A card deletes itself; what it cannot know is that it was the last one, and a column
   // left with nothing in it at all reads as broken rather than as empty.
-  results.append(resultCard({
+  const card = resultCard({
     ...options,
-    onRemove: () => { if (!results.querySelector('.card')) clearResults(); },
-  }));
+    onRemove: () => {
+      if (!results.querySelector('.card')) clearResults();
+      clipboardChanged();
+    },
+  });
+  // What the card is *about*, kept beside the card rather than in a list of its own. The
+  // column is the list: a card that is deleted takes its record with it, and there is no
+  // second structure to fall out of step with what is on screen. See `clipboardSnapshot`.
+  resultRecords.set(card, {
+    title: options.title,
+    subtitle: options.subtitle || '',
+    method: options.request?.method || '',
+    params: options.request?.params ?? {},
+    raw: options.raw,
+    failed: !!options.failed,
+    elapsed_ms: options.elapsedMs,
+    at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+  });
+  results.append(card);
   // Appended rather than prepended, so the column reads in the order the calls were made
   // -- and then scrolled, because an answer below the fold is an answer nobody saw. The
   // scroll is unconditional on purpose: a card arrives because a person just pressed Send,
   // which is not the situation where being left where you were is the kindness. The log
   // pane pins itself to the bottom the same way, for a different reason.
   results.scrollTop = results.scrollHeight;
+  clipboardChanged();
 }
 
-$('btn-clear-results').addEventListener('click', clearResults);
+$('btn-clear-results').addEventListener('click', () => { clearResults(); clipboardChanged(); });
+
+// ── The clipboard ──────────────────────────────────────────────────────────────
+//
+// What the two right-hand columns *are*, as data. The document itself is rendered by the
+// daemon -- `clipboard.py` -- because `gateway__clipboard` on `/mcp` hands the model the
+// same text, and two renderers of one document drift. See `clipboard.md`.
+
+/** The Results column and the Injectable values column, in the order they are on screen. */
+function clipboardSnapshot() {
+  return {
+    server: state.selected,
+    bind: state.status?.bind || null,
+    results: [...$('results').querySelectorAll('.card')]
+      .map((card) => resultRecords.get(card))
+      .filter(Boolean),
+    variables: lastGroups.map(snapshotGroup).filter(Boolean),
+  };
+}
+
+/** One vocabulary group: where its values came from, what they are, and what was picked. */
+function snapshotGroup(group) {
+  const read = vocabularies.get(group.uri) || {};
+  const pick = picks.get(group.uri);
+  // A group the column drew but never read is still worth reporting -- "this parameter is
+  // waiting on a pick above it" is a fact about the session, and a snapshot that dropped it
+  // would make the document disagree with the screen.
+  const note = group.pending === 'pick'
+    ? `Waiting on a pick in ${group.from} above.`
+    : group.pending
+      ? `Needs ${group.from}, which nothing above it publishes.`
+      : read.loading ? 'Still being read.'
+        : read.error ? `Could not be read: ${read.error}` : '';
+  return {
+    variable: group.variable || '',
+    listing: group.listing || '',
+    spends: read.narrows || read.readOne || group.template || '',
+    narrows: !!read.narrows,
+    multi: !!pick?.multi,
+    context: group.context || {},
+    picked: pick ? [...pick.values] : [],
+    values: note ? [] : (read.values || []),
+    note,
+  };
+}
+
+installClipboard({
+  gather: clipboardSnapshot,
+  // `state.admin.request` rather than the `admin()` helper above: that one pushes a result
+  // card, and a publish that pushed a card would publish again forever.
+  send: (method, params) => state.admin.request(method, params),
+});
 
 $('btn-reload').addEventListener('click', () => admin('admin.reload', {}));
 $('btn-refresh').addEventListener('click', async () => { await refreshAdmin(); await refreshListings(); });
@@ -2568,6 +2654,7 @@ export {
   gatewayUri,
   pushCard,
   clearResults,
+  clipboardSnapshot,
   renderPrimitives,
   hideTooltip,
 };

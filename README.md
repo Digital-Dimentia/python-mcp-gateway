@@ -122,7 +122,7 @@ github__create_issue        filesystem__read_file
 github__list_prs            mcpgw://docs/file%3A%2F%2F%2FREADME.md
 ```
 
-The gateway also exposes four tools of its own, so a model can explain itself:
+The gateway also exposes five tools of its own, so a model can explain itself:
 
 | | |
 |---|---|
@@ -130,6 +130,7 @@ The gateway also exposes four tools of its own, so a model can explain itself:
 | `gateway__backend_health` | uptime, restarts, last error, and a live ping round-trip |
 | `gateway__restart_backend` | stop and respawn one, re-reading its credentials |
 | `gateway__reload_config` | re-read both files and apply the difference |
+| `gateway__clipboard` | the admin UI's bench session — every call made there, with its request and answer, and every value picked |
 
 A call to a backend that is down comes back as readable content, not a protocol error — so
 the model can tell you "GitHub is not configured" instead of failing the turn.

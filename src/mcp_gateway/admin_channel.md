@@ -36,9 +36,15 @@ Authentication is the same as `/mcp`: the same key, checked in the same handshak
 | `admin.logs.tail` / `.stop` | stream redacted log records as `admin.logs` notifications |
 | `admin.reload` | re-read both files and apply the difference |
 | `admin.backend.restart` | stop and respawn one backend |
+| `admin.clipboard.put` / `.get` | publish the two right-hand columns, and read back the briefing they render to — see [`clipboard.md`](clipboard.md) |
 
 The last two ship because they are the same code the meta-tools already expose to the model.
 Withholding them from the UI while the model can call them would be theatre.
+
+`admin.clipboard.put` is the one method here that *writes*, and what it writes is a view of
+the page rather than a view of the machine: the results the person has collected and the
+values they have picked, held in memory for `gateway__clipboard` to render. It configures
+nothing and it touches no file.
 
 **Not implemented:** `admin.config.set`, `admin.secrets.set`, `admin.backend.add`/`remove`.
 When the UI epic lands they go here and only here — a surface the model cannot reach.
