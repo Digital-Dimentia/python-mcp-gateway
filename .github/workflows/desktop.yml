@@ -1,0 +1,104 @@
+name: Desktop shell
+
+# Its own workflow, and deliberately not a leg of `ci.yml`.
+#
+# `ci.yml` is the daemon: three Python versions on Linux, no Rust toolchain, no webview.
+# The daemon is the product and it ships without the app, so a checkout with no Rust at all
+# must still run the whole Python suite -- and adding Rust to that matrix would make every
+# interpreter leg pay for a toolchain none of them use.
+#
+# What this workflow is for is the code no single developer's machine can compile: the
+# Windows Job Object and the Linux `PDEATHSIG` in `supervisor.rs`, the `/proc` lookup in
+# `appdata.rs`, the `cfg`-gated halves of `pathenv.rs`. A macOS developer cannot reach any
+# of it, and code that is never built is code that does not work.
+#
+# It builds no bundle: that is `publish-artifacts.yml`, which runs on a release and has an
+# interpreter to fetch and a webview to package. This one compiles, lints and tests, which
+# is the part worth knowing about on every push.
+
+# The path list is written twice because GitHub Actions does not support YAML anchors. Keep
+# the two copies identical.
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "desktop/**"
+      - "scripts/stage_ui.py"
+      - "src/mcp_gateway/ui/**"
+      - "Makefile"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "scripts/stage_ui.py"
+      - "src/mcp_gateway/ui/**"
+      - "Makefile"
+      - ".github/workflows/desktop.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: tauri-check (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macos
+            python: python3
+          - os: ubuntu-22.04
+            label: linux
+            python: python3
+          - os: windows-latest
+            label: windows
+            # `setup-python` is not required to put a `python3` on PATH on Windows, and the
+            # Makefile's default is `python3`. One variable rather than a second Makefile.
+            python: python
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # `make tauri-check` stages the UI when nothing is staged, and that is a Python
+      # script: `tauri::generate_context!` embeds the frontend at compile time and refuses
+      # to build without it.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Install the Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev
+
+      # The runner image is not guaranteed to carry GNU make, and the check is a make target
+      # on purpose. Ten seconds to remove the question.
+      - name: Install make
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install make --no-progress -y
+
+      # cargo fmt --check, clippy -D warnings, cargo test. The three integration tests skip
+      # rather than fail here: they need `make tauri-python`, which is a minute of download
+      # and belongs in the release workflow that has a bundle to build anyway.
+      - run: make tauri-check

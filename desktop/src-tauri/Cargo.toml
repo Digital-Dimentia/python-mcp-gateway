@@ -27,8 +27,24 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 getrandom = "0.2"
 base64 = "0.22"
-libc = "0.2"
 thiserror = "2"
+
+# Orphan control is the one thing that cannot be written once for every platform, so each
+# platform brings its own primitive and nothing else. See the module docs in `supervisor.rs`.
+
+# `setpgid`/`killpg` on both, `prctl(PR_SET_PDEATHSIG)` on Linux only. Also the `0600` on
+# `gateway.env` and the `/proc` lookup that decides whether a leftover pid is ours.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# A Job Object with `KILL_ON_JOB_CLOSE`, which is what Windows has instead of a process
+# group -- and which covers the Force Quit case a pidfile exists for on Unix.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [profile.release]
 # A shipped app, so trade build time for size and speed. `panic = "abort"` is deliberate:

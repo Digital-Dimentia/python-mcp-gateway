@@ -8,7 +8,14 @@ SHELL := /bin/bash
 # interpreter first.
 PYTHON ?= python3
 VENV_DIR ?= .venv
-PYTHON_BIN := $(VENV_DIR)/bin/python
+# `bin` everywhere except Windows, which puts a virtual environment's executables in
+# `Scripts`. The daemon's own targets are only ever run on Unix, but the desktop bundle is
+# built on all three platforms now, and `tauri-python` goes through this interpreter -- so
+# this one line is what lets `publish-artifacts.yml` express the Windows leg as the same
+# make targets as the other two rather than as a second, drifting copy of them.
+# `scripts/venv_bootstrap.py` decides the same thing for itself in `venv_python`.
+VENV_BINDIR := $(if $(filter Windows_NT,$(OS)),Scripts,bin)
+PYTHON_BIN := $(VENV_DIR)/$(VENV_BINDIR)/python
 VENV_STAMP := $(VENV_DIR)/.mcp-gateway-venv.json
 VENV_BOOTSTRAP := scripts/venv_bootstrap.py
 
@@ -96,7 +103,7 @@ VENV_FLAGS := $(if $(strip $(OFFLINE)),--offline,)
 
 .PHONY: venv sync install lint docs-check test ui-deps check build wheel sdist container-image \
         print-release-platforms package run run-dev connect tauri-python tauri-stage tauri-dev \
-        tauri-bundle tauri-check clean clean-outputs clean-venv distclean
+        tauri-bundle tauri-artifacts tauri-check clean clean-outputs clean-venv distclean
 
 venv: $(VENV_STAMP)
 
@@ -266,6 +273,21 @@ tauri-python: build
 tauri-stage:
 	$(PYTHON_BIN) scripts/stage_ui.py --mode copy
 
+## The same staging, but only when there is nothing staged at all.
+##
+## `tauri::generate_context!` embeds the frontend at *compile* time and fails the build when
+## `frontendDist` does not exist -- so `cargo test` and `cargo clippy` cannot run on a fresh
+## checkout, which is every CI leg and every developer's first `make tauri-check`. Hence the
+## prerequisite below.
+##
+## A directory target rather than a dependency on `tauri-stage`, because `make tauri-dev`
+## stages a *symlink* on purpose and re-running the copy behind it would silently turn every
+## live edit into a stale one. Existing is the whole condition; what is there is its owner's.
+STAGED_UI := $(DESKTOP_DIR)/.staging/ui
+
+$(STAGED_UI): $(VENV_STAMP)
+	$(PYTHON_BIN) scripts/stage_ui.py --mode copy
+
 ## Run the app from source, with the UI symlinked rather than copied so an edit to
 ## `src/mcp_gateway/ui/app.js` is one Cmd+R away. Needs the bundled interpreter to exist;
 ## `tauri-python` is cheap to re-run but not free, so it is a separate target you run once.
@@ -278,10 +300,16 @@ tauri-dev:
 tauri-bundle: tauri-python tauri-stage
 	cd '$(TAURI_DIR)' && cargo tauri build
 
+## What `tauri-bundle` produced, renamed for the platform that produced it and dropped in
+## $(ARTIFACTS_DIR). `publish-artifacts.yml` uploads exactly this directory, so a release
+## asset is named by a script a developer can run rather than by a line of YAML.
+tauri-artifacts:
+	$(PYTHON_BIN) scripts/collect_desktop_bundle.py --out $(ARTIFACTS_DIR)
+
 ## The Rust half of the test suite: the stderr parser, the restart backoff, the PATH
 ## discovery, the first-run seeding. Not part of `make test`, which must stay runnable on a
 ## machine with no Rust toolchain at all.
-tauri-check:
+tauri-check: $(STAGED_UI)
 	cd '$(TAURI_DIR)' && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 
 ## Build outputs and tool caches. **Leaves the virtual environment alone.** Deleting it

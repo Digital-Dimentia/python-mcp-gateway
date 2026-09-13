@@ -9,6 +9,12 @@
 //! project. It is created `0600` and, unlike the config, its mode *is* repaired on every
 //! launch: `secrets.py` only warns about a group-readable store, and the app that created
 //! the directory is in a position to do better than warn.
+//!
+//! That repair is Unix-only, because the mode bits are. On Windows the data directory is
+//! under `%APPDATA%`, whose inherited ACL already grants the owning user and nobody else,
+//! and rewriting it with a hand-built DACL would be a good deal more likely to lock a user
+//! out of their own credentials than to protect them from anything. The seeding, the
+//! pidfile and the rest of this module are the same everywhere.
 
 use std::fs;
 use std::io;
@@ -110,7 +116,21 @@ pub fn reap_previous(pidfile: &Path, interpreter: &Path) -> Option<u32> {
 }
 
 /// Whether `pid` is running *our* interpreter, rather than whatever reused the number.
-#[cfg(unix)]
+///
+/// Linux answers this exactly, macOS approximately, and the difference is not a detail:
+/// `ps -o comm=` prints the full executable path on macOS and only the first fifteen
+/// characters of the *name* on Linux, so the macOS test applied there would compare
+/// `python3` against an absolute path, never match, and quietly turn the reaper off.
+#[cfg(target_os = "linux")]
+fn is_ours(pid: u32, interpreter: &Path) -> bool {
+    // `/proc/<pid>/exe` is the kernel's own answer, with no truncation and no parsing.
+    match fs::read_link(format!("/proc/{pid}/exe")) {
+        Ok(exe) => exe == interpreter || fs::canonicalize(interpreter).is_ok_and(|c| exe == c),
+        Err(_) => false,
+    }
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
 fn is_ours(pid: u32, interpreter: &Path) -> bool {
     let output = std::process::Command::new("/bin/ps")
         .args(["-o", "comm=", "-p", &pid.to_string()])
@@ -125,6 +145,14 @@ fn is_ours(pid: u32, interpreter: &Path) -> bool {
     }
 }
 
+/// Nothing to reap on Windows, and deliberately so.
+///
+/// The pidfile exists for the one case signals and `kill_on_drop` cannot reach: the shell
+/// being killed outright. Windows answers that in the kernel instead -- every gateway is a
+/// member of a Job Object with `KILL_ON_JOB_CLOSE`, so when this process dies by any means
+/// the job's last handle closes and its members go with it. There is never a gateway left
+/// behind to find, and a pidfile hunt here would only be able to find the wrong process.
+/// See `supervisor::job`.
 #[cfg(not(unix))]
 pub fn reap_previous(_pidfile: &Path, _interpreter: &Path) -> Option<u32> {
     None

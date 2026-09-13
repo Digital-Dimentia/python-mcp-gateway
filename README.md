@@ -34,10 +34,13 @@ there is no key to paste, and none written down anywhere.
 
 ```bash
 make tauri-python     # the bundled interpreter, once
-make tauri-bundle     # desktop/src-tauri/target/release/bundle/macos/
+make tauri-bundle     # desktop/src-tauri/target/release/bundle/
+make tauri-artifacts  # the same, renamed for this platform, in artifacts/
 ```
 
-macOS, unsigned, and a first cut. See [`desktop/README.md`](desktop/README.md).
+macOS, Linux and Windows — a `.app`, a `.deb` and an AppImage, and an NSIS installer, one
+per release from its own runner. Unsigned, and a first cut. See
+[`desktop/README.md`](desktop/README.md).
 
 ## Why a daemon
 

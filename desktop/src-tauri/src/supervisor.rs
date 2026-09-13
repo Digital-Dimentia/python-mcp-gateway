@@ -28,13 +28,32 @@
 //!
 //! The gateway owns subprocesses of its own, and they hold every credential in
 //! `gateway.env`. A shell that exits and leaves them running is not untidy, it is a
-//! security bug that accumulates. macOS has no `PDEATHSIG`, so there are three layers:
+//! security bug that accumulates. Every platform has to answer the same two questions --
+//! "kill the whole tree, not just the daemon" and "what if the shell itself is killed" --
+//! and each answers them with a different primitive.
+//!
+//! **macOS.** No `PDEATHSIG`, so three layers:
 //!
 //! 1. The child is put in its own process group (`setpgid`), and teardown signals the
 //!    *group*. That takes the `npx` backends with it even if the daemon itself is wedged.
 //! 2. `kill_on_drop`, for the panic path.
 //! 3. A pidfile, checked at startup, for the case neither of the above can reach: the shell
 //!    itself being `SIGKILL`ed (Force Quit).
+//!
+//! **Linux.** The same three, plus `prctl(PR_SET_PDEATHSIG, SIGTERM)` in the child, which
+//! is strictly better than all of them: the kernel signals the daemon the moment this
+//! process goes, including the `SIGKILL` no handler of ours can run on. `SIGTERM` and not
+//! `SIGKILL`, so the daemon's own handler gets to take its backends down cleanly. The
+//! other three stay because `PDEATHSIG` has one hole -- it fires when the *thread* that
+//! spawned the child exits, not the process -- and because a daemon that ignores `SIGTERM`
+//! still needs the group kill.
+//!
+//! **Windows.** No process groups and no `PDEATHSIG`. The equivalent is a Job Object with
+//! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: every gateway this process starts is assigned to
+//! one job owned by the app, `TerminateJobObject` is the group kill, and the *close* limit
+//! is the Force Quit answer -- when this process dies by any means, the last handle to the
+//! job closes and the kernel kills everything still in it. That is the pidfile layer done
+//! by the OS, which is why `appdata::reap_previous` is a no-op there.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -71,7 +90,10 @@ pub const MAX_FAILED_STARTS: u32 = 5;
 /// How long a run has to last before it counts as healthy enough to reset the backoff.
 const HEALTHY_AFTER: Duration = Duration::from_secs(10);
 
-/// How long `SIGTERM` gets before `SIGKILL`.
+/// How long `SIGTERM` gets before `SIGKILL`. Unix only -- Windows has no polite signal to
+/// wait on, so its teardown has no grace period to name. Left uncompiled rather than
+/// unused there, because `tauri-check` runs `clippy -D warnings` on every platform.
+#[cfg(unix)]
 const TERM_GRACE: Duration = Duration::from_secs(5);
 
 /// Lines of the child's stderr kept for the UI and for a bug report.
@@ -236,17 +258,126 @@ pub fn spawn(layout: &Layout, key: &str, path: &str) -> std::io::Result<Child> {
 
     #[cfg(unix)]
     unsafe {
-        // Its own process group, so teardown can signal the whole tree -- the daemon and
-        // every backend it spawned. See the module docs.
-        command.pre_exec(|| {
+        // Captured here, in the parent, because the child cannot ask what it used to be.
+        // See the `PDEATHSIG` race below.
+        let parent = std::process::id() as libc::pid_t;
+        command.pre_exec(move || {
+            // Its own process group, so teardown can signal the whole tree -- the daemon
+            // and every backend it spawned. See the module docs.
             if libc::setpgid(0, 0) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
+
+            #[cfg(target_os = "linux")]
+            {
+                // The one layer macOS cannot have: the kernel signals us when the app goes,
+                // including the SIGKILL no exit handler of ours survives.
+                // Cast, because `prctl` is variadic and the kernel reads this argument as
+                // an `unsigned long`. An `int` passed through varargs is a promotion the
+                // ABI does not owe us.
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                // `prctl` is not atomic with the fork: if the app died in the window
+                // between the two, the signal it was supposed to deliver has already been
+                // missed and this process would run on forever holding credentials.
+                // Reparenting is how that is visible from here.
+                if libc::getppid() != parent {
+                    libc::_exit(1);
+                }
+            }
+            // `parent` is only read on Linux; naming it keeps the closure's capture honest
+            // on the platforms that do not.
+            let _ = parent;
             Ok(())
         });
     }
 
-    command.spawn()
+    let child = command.spawn()?;
+
+    // Windows has no process group to put it in, so the job object stands in for both that
+    // and the pidfile. See the module docs.
+    #[cfg(windows)]
+    job::adopt(&child);
+
+    Ok(child)
+}
+
+/// The app's Job Object: what Windows has instead of a process group *and* instead of the
+/// pidfile. See the module docs.
+///
+/// One job for the life of the process, rather than one per spawn, because the property
+/// that matters is tied to the handle: the kernel kills the job's members when its last
+/// handle closes, so the handle must outlive every child and is deliberately never closed.
+/// A job that has been terminated still accepts new members, which is what makes one job
+/// enough for a supervisor that restarts.
+///
+/// The assignment happens just after `CreateProcess` rather than as part of it -- tokio
+/// does not expose `CREATE_SUSPENDED` -- so there is a window, measured in the time it
+/// takes a cold Python to reach its first `import`, in which a grandchild could escape the
+/// job. The gateway spawns no backend that early; nothing here can close the window
+/// without spawning the process by hand.
+#[cfg(windows)]
+mod job {
+    use std::sync::OnceLock;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    /// The job, created on first use. `None` if the OS refused to make one, which is not
+    /// fatal: `kill_on_drop` and the explicit `terminate` still run, and a shell that can
+    /// start the gateway is more use than one that refuses to because a handle failed.
+    fn handle() -> Option<HANDLE> {
+        // Stored as `isize` because a raw handle is a pointer and `OnceLock` wants `Send`.
+        static JOB: OnceLock<isize> = OnceLock::new();
+
+        let raw = *JOB.get_or_init(|| unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return 0;
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let ok = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::addr_of!(info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+            if ok == 0 {
+                // Without the limit the job buys nothing the explicit kill does not, and a
+                // handle that is never closed is worth closing here.
+                CloseHandle(job);
+                return 0;
+            }
+            job as isize
+        });
+
+        (raw != 0).then_some(raw as HANDLE)
+    }
+
+    /// Put a freshly spawned child in the job, with everything it goes on to spawn.
+    pub fn adopt(child: &tokio::process::Child) {
+        let (Some(job), Some(process)) = (handle(), child.raw_handle()) else {
+            return;
+        };
+        unsafe {
+            AssignProcessToJobObject(job, process as HANDLE);
+        }
+    }
+
+    /// Kill every process in the job: the daemon and every backend under it.
+    pub fn terminate_all() {
+        if let Some(job) = handle() {
+            unsafe {
+                TerminateJobObject(job, 1);
+            }
+        }
+    }
 }
 
 /// Read the child's stderr, handing every line to `on_line` and the port to `on_port`.
@@ -295,7 +426,20 @@ pub async fn terminate(child: &mut Child) {
     let _ = child.wait().await;
 }
 
-#[cfg(not(unix))]
+/// The same promise on Windows, kept by the job object: `TerminateJobObject` reaches the
+/// daemon and every backend under it, where `child.kill()` alone would reach only the
+/// daemon and leave the `npx` processes holding credentials.
+///
+/// No grace period, because there is nothing to be polite with: Windows has no `SIGTERM`,
+/// and the daemon's clean-shutdown handler is not reachable from another process.
+#[cfg(windows)]
+pub async fn terminate(child: &mut Child) {
+    job::terminate_all();
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}
+
+#[cfg(not(any(unix, windows)))]
 pub async fn terminate(child: &mut Child) {
     let _ = child.kill().await;
 }
@@ -387,7 +531,10 @@ mod tests {
 
     #[test]
     fn the_child_is_told_to_let_the_os_pick_the_port() {
-        let args = argv(Path::new("/data/servers.yaml"), Path::new("/data/gateway.port"));
+        let args = argv(
+            Path::new("/data/servers.yaml"),
+            Path::new("/data/gateway.port"),
+        );
         let port = args.iter().position(|a| a == "--port").expect("--port");
         assert_eq!(
             args[port + 1],
@@ -398,7 +545,10 @@ mod tests {
 
     #[test]
     fn the_child_is_told_where_its_config_is_and_not_where_its_secrets_are() {
-        let args = argv(Path::new("/data/servers.yaml"), Path::new("/data/gateway.port"));
+        let args = argv(
+            Path::new("/data/servers.yaml"),
+            Path::new("/data/gateway.port"),
+        );
         assert!(args.contains(&"/data/servers.yaml".to_string()));
         // `cli.default_env_path` finds `gateway.env` beside the config. Passing `--env`
         // would be a second path to keep in sync with the seeding.
@@ -408,7 +558,10 @@ mod tests {
     #[test]
     fn the_key_travels_in_the_environment_and_never_in_argv() {
         let key = "a-secret-that-must-not-be-public";
-        let args = argv(Path::new("/data/servers.yaml"), Path::new("/data/gateway.port"));
+        let args = argv(
+            Path::new("/data/servers.yaml"),
+            Path::new("/data/gateway.port"),
+        );
         assert!(
             !args.iter().any(|a| a.contains(key)),
             "argv is world-readable through `ps`"
@@ -455,6 +608,11 @@ mod tests {
         // a patch release does not move the path this side names.
         #[cfg(unix)]
         assert!(layout.interpreter().ends_with("python/bin/python3"));
+        // python-build-standalone puts the Windows interpreter at the root of the tree,
+        // not under `bin/`. `bundle_python.py` knows the same thing; if one of them is
+        // wrong the app starts nothing at all.
+        #[cfg(windows)]
+        assert!(layout.interpreter().ends_with("python\\python.exe"));
         assert!(layout.config().ends_with("servers.yaml"));
         assert!(layout.pidfile().ends_with("gateway.pid"));
     }

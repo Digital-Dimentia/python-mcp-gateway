@@ -37,3 +37,120 @@ jobs:
             dist/*.tar.gz
             dist/*.tar
             artifacts/*.tar.gz
+
+  # The desktop shell, one runner per platform.
+  #
+  # Separate from `publish` and not dependent on it: the daemon is the product and it ships
+  # without the app, so a Windows toolchain having a bad morning must not be able to stop
+  # the wheel and the container image from reaching the release. `fail-fast: false` is the
+  # same argument one level down -- three bundles and a red leg beats no bundles.
+  #
+  # Each leg builds for the machine it runs on. Nothing here cross-compiles: the bundle
+  # carries a python-build-standalone interpreter *and* a Tauri binary, and both are happier
+  # built natively than cross-built against a webview SDK that is not the host's.
+  desktop:
+    name: desktop (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macos-aarch64
+            python: python3
+          # Intel Macs are still the machine on a lot of desks, and a universal binary is
+          # not on offer here: the bundled interpreter is per-architecture.
+          - os: macos-13
+            label: macos-x86_64
+            python: python3
+          # Pinned to the oldest supported image rather than `ubuntu-latest`, because the
+          # `.deb` and the AppImage carry whatever glibc they were linked against, and a
+          # bundle built on the newest runner simply will not start on a two-year-old
+          # desktop. The Python legs in `ci.yml` have no such constraint and stay on latest.
+          - os: ubuntu-22.04
+            label: linux-x86_64
+            python: python3
+          - os: windows-latest
+            label: windows-x86_64
+            # `setup-python` is not required to put a `python3` on PATH on Windows, and the
+            # Makefile's default is `python3`. One variable rather than a second Makefile.
+            python: python
+    defaults:
+      run:
+        # Including on Windows, where this is the Git bash that ships with the runner. The
+        # whole point of expressing the build as make targets is that the three platforms
+        # run the same commands; a PowerShell leg would be a fourth spelling of them.
+        shell: bash
+    env:
+      PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # The same floor the wheel is built on, so the app ships a gateway built by the
+          # interpreter the release was tested with. Note this is *not* the interpreter the
+          # app runs: `bundle_python.py` fetches that one.
+          python-version: "3.12"
+
+      # How `bundle_python.py` fetches the standalone interpreter. Not a second dependency
+      # on a second thing -- uv's managed builds *are* python-build-standalone.
+      - uses: astral-sh/setup-uv@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Tauri's dependency tree is large and identical between releases; without this every
+      # leg spends most of its time compiling `webkit2gtk-sys` and friends from scratch.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      # A prebuilt `cargo tauri`, rather than `cargo install tauri-cli`, which is several
+      # minutes of compiling a tool that is not part of what we ship.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli
+
+      # The webview, and what the bundler shells out to. `libfuse2` is for the AppImage
+      # tooling; `patchelf` is what rewrites the binary's rpath on the way into it.
+      - name: Install the Linux webview and bundler dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libfuse2 \
+            patchelf \
+            file
+
+      # The runner image is not guaranteed to carry GNU make, and every step below is a make
+      # target on purpose. Ten seconds to remove the question.
+      - name: Install make
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install make --no-progress -y
+
+      # The Rust half of the suite: the stderr parser, the restart backoff, the PATH
+      # discovery, the seeding, the orphan control. This is the leg where the Windows Job
+      # Object and the Linux `PDEATHSIG` are compiled and run at all -- a macOS developer
+      # cannot reach either of them locally.
+      - name: Check the Rust half
+        run: make tauri-check
+
+      # `tauri-bundle` runs `tauri-python` first, which fetches the interpreter, installs
+      # the freshly built wheel into it, strips it and then *verifies* it: a bundle that
+      # cannot import the gateway or find its own UI assets fails here rather than in front
+      # of a user.
+      - name: Build the bundle
+        run: make tauri-bundle
+
+      - name: Collect the bundle under a name that says which platform it is
+        run: make tauri-artifacts
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*
