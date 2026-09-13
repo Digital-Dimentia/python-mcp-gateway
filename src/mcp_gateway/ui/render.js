@@ -215,11 +215,42 @@ export function renderError(error) {
   return el('div', { class: 'result-body' }, parts);
 }
 
+//: A trashcan, as path data. Built through `createElementNS` rather than `innerHTML`
+//: because `el()` makes HTML elements and an `<svg>` in the HTML namespace does not draw --
+//: a distinction that costs one helper and is invisible in the markup either way.
+const TRASH = [
+  'M2.5 4h11',                                       // the lid
+  'M6 4V2.5h4V4',                                    // the handle above it
+  'M4 4l.7 9a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9L12 4',// the tapering body
+  'M6.6 6.7v4.6', 'M9.4 6.7v4.6',                    // the two ribs
+];
+
+function trashIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  for (const [name, value] of Object.entries({
+    viewBox: '0 0 16 16', width: '13', height: '13', fill: 'none', stroke: 'currentColor',
+    'stroke-width': '1.3', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+    'aria-hidden': 'true',
+  })) svg.setAttribute(name, value);
+  for (const d of TRASH) {
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+  }
+  return svg;
+}
+
 /**
  * One result card: what was asked, how long it took, and what came back.
  * `body` is a node; `request` is `{method, params}`.
+ *
+ * `onRemove` is called after the card takes itself out of the document, and is how the
+ * column learns it may have just lost its last card. The card removes *itself* rather than
+ * being handed its container: a card that knows where it lives is a card that can only live
+ * there, and the callback says everything the caller actually needs told.
  */
-export function resultCard({ title, subtitle, request, body, elapsedMs, raw, failed }) {
+export function resultCard({ title, subtitle, request, body, elapsedMs, raw, failed, onRemove }) {
   const rawText = pretty(raw);
 
   const copy = el('button', { type: 'button', class: 'ghost', text: 'Copy JSON' });
@@ -242,7 +273,12 @@ export function resultCard({ title, subtitle, request, body, elapsedMs, raw, fai
     textBlock(rawText),
   ]);
 
-  return el('article', { class: `card${failed ? ' card-failed' : ''}` }, [
+  const remove = el('button', {
+    type: 'button', class: 'ghost danger card-del',
+    title: 'Remove this result', 'aria-label': `Remove the ${title} result`,
+  }, [trashIcon()]);
+
+  const card = el('article', { class: `card${failed ? ' card-failed' : ''}` }, [
     el('header', { class: 'card-head' }, [
       el('div', {}, [
         el('h3', { text: title }),
@@ -251,9 +287,16 @@ export function resultCard({ title, subtitle, request, body, elapsedMs, raw, fai
       el('div', { class: 'card-meta' }, [
         el('span', { class: 'tag', text: `${Math.round(elapsedMs)} ms` }),
         copy,
+        remove,
       ]),
     ]),
     body,
     rawBlock,
   ]);
+
+  remove.addEventListener('click', () => {
+    card.remove();
+    onRemove?.();
+  });
+  return card;
 }
