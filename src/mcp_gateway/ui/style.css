@@ -790,6 +790,32 @@ a.button { text-decoration: none; display: inline-block; }
 .primitive-name { font-family: var(--mono); font-size: 0.78rem; flex: none; }
 .primitive-note { color: var(--muted); font-size: 0.73rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
+/* The full description of whatever the pointer is on. Fixed, and placed by `placeTooltip`,
+ * because the column it describes scrolls and would clip it -- the same arrangement, and
+ * the same reason, as `.server-menu` above.
+ *
+ * `pre-wrap` because an MCP description is prose the server author wrote, paragraph breaks
+ * and all, and collapsing those runs the sentences together. `pointer-events: none` so it
+ * cannot sit between the pointer and the row it belongs to: hovering the tooltip itself
+ * would fire `mouseleave` on the row, which hides the tooltip, which un-hovers it, forever.
+ */
+#tooltip {
+  position: fixed;
+  z-index: 6;
+  max-width: 26rem;
+  padding: 0.4rem 0.55rem;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+  color: var(--ink);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
 .badge {
   font-size: 0.63rem;
   text-transform: uppercase;
