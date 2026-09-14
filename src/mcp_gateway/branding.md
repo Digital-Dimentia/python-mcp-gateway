@@ -60,7 +60,7 @@ There are two hosts for one admin UI, and only one of them can fetch a URL.
 
 The desktop shell loads the page off disk under
 `img-src 'self' data:; connect-src ipc: http://ipc.localhost` — see
-[`../../desktop/README.md`](../../desktop/README.md). An `<img src="http://127.0.0.1:…">`
+[`../desktop/README.md`](../desktop/README.md). An `<img src="http://127.0.0.1:…">`
 is simply not loadable there, and widening that CSP would open the window to the network for
 the sake of a logo. So the bytes ride inside the `/admin` payload the window is already
 receiving: one path, both hosts, byte-identical rendering.

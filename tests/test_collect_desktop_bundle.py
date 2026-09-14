@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TAURI = REPO_ROOT / "desktop" / "src-tauri"
+TAURI = REPO_ROOT / "src" / "desktop" / "src-tauri"
 
 
 def load_script():

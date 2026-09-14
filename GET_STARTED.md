@@ -21,7 +21,7 @@ is the map. This is the path through them.
 
 | | |
 |---|---|
-| **The desktop app** | Everything in one window: no terminal, no URL, no access key to paste. Download a bundle, or build one — [`desktop/README.md`](desktop/README.md). Start here if you only want to *use* the gateway. |
+| **The desktop app** | Everything in one window: no terminal, no URL, no access key to paste. Download a bundle, or build one — [`src/desktop/README.md`](src/desktop/README.md). Start here if you only want to *use* the gateway. |
 | **The daemon, from a terminal** | `make run`, a browser for the UI, and a client attached over WebSocket or HTTP. This is what the rest of this document walks through, and it is also what the desktop app runs inside itself. |
 
 Either way the daemon, the configuration files and the UI are the same, and both mint an
@@ -524,7 +524,7 @@ anything that has it.
 - [README.md](README.md) — the pitch, and the reference for flags and make targets
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the module map, startup order, and the two things the
   design turns on
-- [`desktop/README.md`](desktop/README.md) — the Tauri shell, and why its host owns the
+- [`src/desktop/README.md`](src/desktop/README.md) — the Tauri shell, and why its host owns the
   sockets
 - [`webui.md`](src/mcp_gateway/webui.md) — the admin UI in full, including every rule the
   Injectable values column follows

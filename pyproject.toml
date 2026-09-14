@@ -66,6 +66,12 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+# `src/desktop` is the Tauri shell, not a Python package. It has no `__init__.py`, so
+# discovery would skip it today -- but only by luck: `src-tauri` and `.staging` are
+# rejected as identifiers, and that is the whole of what keeps the ~58 MB of bundled
+# CPython under `resources/python/` (which is full of `__init__.py`) out of the wheel.
+# Saying it out loud costs one line and removes the accident.
+exclude = ["desktop*"]
 
 # The admin UI's assets. `mcp_gateway.ui` is a package (it has an `__init__.py`) purely so
 # these files ship in the wheel and `importlib.resources` can find them there exactly as

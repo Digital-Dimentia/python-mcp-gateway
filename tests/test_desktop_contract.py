@@ -1,6 +1,6 @@
 """What the desktop shell depends on, asserted from this side of the boundary.
 
-`desktop/` is Rust, and nothing in this repo's Python test suite runs it. So every place
+`src/desktop/` is Rust, and nothing in this repo's Python test suite runs it. So every place
 the shell reaches into the daemon is a coupling that a Python change could break silently:
 the build would stay green, `cargo test` would stay green, and the failure would surface as
 a window that never connects on somebody's machine.
@@ -46,7 +46,7 @@ from mcp_gateway.secrets import SecretStore
 from tests.fixtures.ws_client import daemon
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SEED = REPO_ROOT / "desktop" / "src-tauri" / "seed"
+SEED = REPO_ROOT / "src" / "desktop" / "src-tauri" / "seed"
 
 #: How long to wait for a daemon with no backends to bind. Generous: a cold import on a
 #: loaded CI box is the slow part, and a flake here reads as a broken contract.
@@ -171,7 +171,7 @@ def test_the_port_file_survives_debug_logging(tmp_path) -> None:
     ],
 )
 def test_the_reader_agrees_with_its_rust_twin(contents: str, expected: int | None, tmp_path) -> None:
-    """**Twinned with `parse_port_file` in `desktop/src-tauri/src/supervisor.rs`.** Keep the
+    """**Twinned with `parse_port_file` in `src/desktop/src-tauri/src/supervisor.rs`.** Keep the
     two together: if one is taught something, teach the other."""
     path = tmp_path / "gateway.port"
     path.write_text(contents)

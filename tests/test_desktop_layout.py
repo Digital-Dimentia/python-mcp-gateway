@@ -2,7 +2,7 @@
 
 Two things are asserted here, and both are invariants a person cannot hold in their head.
 
-**There is one admin UI.** `desktop/.staging/ui` is a rebuilt view of `src/mcp_gateway/ui/`,
+**There is one admin UI.** `src/desktop/.staging/ui` is a rebuilt view of `src/mcp_gateway/ui/`,
 not a fork. Nothing enforces that except this file: the day someone edits a staged file
 because it was the one open in the editor, the copy stops being a copy and the browser build
 and the app start to differ in ways nobody looks for.
@@ -23,7 +23,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 UI = REPO_ROOT / "src" / "mcp_gateway" / "ui"
-DESKTOP = REPO_ROOT / "desktop"
+DESKTOP = REPO_ROOT / "src" / "desktop"
 TAURI = DESKTOP / "src-tauri"
 STAGING = DESKTOP / ".staging" / "ui"
 
@@ -83,7 +83,7 @@ def test_the_shim_ships_to_both_hosts() -> None:
 def test_the_staging_directory_is_not_committed() -> None:
     """It is generated. A committed one is the second copy this file exists to prevent."""
     tracked = subprocess.run(
-        ["git", "ls-files", "desktop/.staging"],
+        ["git", "ls-files", "src/desktop/.staging"],
         cwd=REPO_ROOT, capture_output=True, text=True,
     )
     assert tracked.stdout.strip() == "", tracked.stdout

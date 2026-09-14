@@ -9,6 +9,20 @@ nobody reads.
 
 ## Unreleased
 
+**The desktop shell lives under `src/`.** `desktop/` is now `src/desktop/`, beside the
+package it wraps rather than a sibling of it: both halves of the product are one tree, and
+the repository root is left to the things that are genuinely about the repository. Nothing
+about using it changed — `make tauri-python`, `make tauri-dev`, `make tauri-bundle` and
+`make tauri-check` take the same arguments and produce the same artifacts, and the Rust
+crate resolves everything from its own manifest directory, so it moved without an edit.
+
+Two things that were true by accident are now said out loud. `packages.find` is given
+`exclude = ["desktop*"]`, because the only reason a wheel build skipped the ~58 MB of
+bundled CPython under `src-tauri/resources/python/` was that `src-tauri` is not a legal
+Python identifier. And `scripts/stage_ui.py` computes the `.staging/ui` symlink from the
+asset directory instead of spelling `../../` out, which is the line this move would
+otherwise have broken silently.
+
 **White labelling, out of the box.** The gateway now ships with a drawn mark and a
 `branding:` block already in `servers.yaml`, so rebranding is editing a file that is open
 rather than discovering that a key exists:
@@ -195,7 +209,7 @@ load-bearing should fail a test rather than someone's window.
 - **`desktop/`**: the Tauri shell. A Rust host (`supervisor.rs`, `proxy.rs`, `key.rs`,
   `pathenv.rs`, `appdata.rs`) and the configuration to bundle it. `make tauri-python`,
   `make tauri-dev`, `make tauri-bundle`, `make tauri-check`. macOS, unsigned, first cut —
-  see [`desktop/README.md`](desktop/README.md).
+  see [`src/desktop/README.md`](src/desktop/README.md).
 - **`scripts/bundle_python.py`**: builds the interpreter the app ships — a
   python-build-standalone CPython with the gateway wheel installed into it, stripped of
   developer tooling and Tk, pre-compiled, and then *verified*: the build fails if the result

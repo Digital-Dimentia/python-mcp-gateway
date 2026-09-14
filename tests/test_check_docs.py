@@ -25,7 +25,7 @@ def test_repository_satisfies_its_own_documentation_invariants() -> None:
 
 
 def test_cargos_build_tree_is_not_mistaken_for_ours() -> None:
-    """`desktop/src-tauri/target/` is vendored crate sources, not this project's docs.
+    """`src/desktop/src-tauri/target/` is vendored crate sources, not this project's docs.
 
     A dependency's own `README.md` is full of links that resolve inside *its* repository, so
     a walker that descends into `target/` fails `make docs-check` on files nobody here
@@ -38,8 +38,8 @@ def test_cargos_build_tree_is_not_mistaken_for_ours() -> None:
     finally:
         sys.path.pop(0)
 
-    assert is_ignored(Path("desktop/src-tauri/target/package/foo-1.0/README.md"))
-    assert is_ignored(Path("desktop/src-tauri/target/debug/build/x/out/NOTES.md"))
+    assert is_ignored(Path("src/desktop/src-tauri/target/package/foo-1.0/README.md"))
+    assert is_ignored(Path("src/desktop/src-tauri/target/debug/build/x/out/NOTES.md"))
     # The shell's own documentation is ours, and stays checked.
-    assert not is_ignored(Path("desktop/README.md"))
-    assert not is_ignored(Path("desktop/src-tauri/src/supervisor.rs"))
+    assert not is_ignored(Path("src/desktop/README.md"))
+    assert not is_ignored(Path("src/desktop/src-tauri/src/supervisor.rs"))

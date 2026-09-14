@@ -244,25 +244,25 @@ artifacts/
 tests/ui/node_modules/
 
 # --- the desktop shell ----------------------------------------------------
-# Everything under desktop/ that a build produces. All three need the network to rebuild,
+# Everything under src/desktop/ that a build produces. All three need the network to rebuild,
 # which is why `make clean` leaves them alone and only `distclean` takes them -- the same
 # rule the venv and tests/ui/node_modules already follow.
 #
 # The bundled interpreter: ~58 MB of standalone CPython with the gateway installed into it,
 # produced by scripts/bundle_python.py. A build artifact in every sense, and the one thing
 # here that would be actively harmful to commit.
-desktop/src-tauri/resources/python/
-desktop/src-tauri/resources/.python.staging/
+src/desktop/src-tauri/resources/python/
+src/desktop/src-tauri/resources/.python.staging/
 # Cargo's build tree, and Tauri's generated platform scaffolding.
-desktop/src-tauri/target/
-desktop/src-tauri/gen/
+src/desktop/src-tauri/target/
+src/desktop/src-tauri/gen/
 # The staging view of src/mcp_gateway/ui/. There is one copy of the UI and it is not this
-# one; scripts/stage_ui.py rebuilds this from it. See desktop/README.md.
-desktop/.staging/
+# one; scripts/stage_ui.py rebuilds this from it. See src/desktop/README.md.
+src/desktop/.staging/
 
 # A rebrand, applied to the bundle by `make tauri-brand` and merged into the committed
 # tauri.conf.json at build time. Generated from `branding:` in the catalogue, so it is
 # reproducible; gitignored so a white-labelled checkout shows no diff and keeps passing
 # tests/test_desktop_layout.py, which pins the stock config. See src/mcp_gateway/branding.md.
-desktop/src-tauri/tauri.brand.json
-desktop/src-tauri/icons/brand/
+src/desktop/src-tauri/tauri.brand.json
+src/desktop/src-tauri/icons/brand/

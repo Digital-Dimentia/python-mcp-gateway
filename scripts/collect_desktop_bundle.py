@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gather what `cargo tauri build` produced into one directory, under names that travel.
 
-`tauri-bundle` leaves its output under `desktop/src-tauri/target/release/bundle/`, in a
+`tauri-bundle` leaves its output under `src/desktop/src-tauri/target/release/bundle/`, in a
 per-format subdirectory, named for the product and its version and nothing else:
 `MCP-Gateway.app`, `MCP-Gateway_0.1.0_amd64.deb`, `MCP-Gateway_0.1.0_x64-setup.exe`. Three
 runners uploading those to one GitHub release is three assets, two of which collide on
@@ -39,11 +39,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: Where `cargo tauri build` leaves its output.
-BUNDLE_ROOT = REPO_ROOT / "desktop" / "src-tauri" / "target" / "release" / "bundle"
+BUNDLE_ROOT = REPO_ROOT / "src" / "desktop" / "src-tauri" / "target" / "release" / "bundle"
 
 #: The config the product name and version are read from, so this script cannot drift from
 #: what the bundler actually stamped on the files.
-TAURI_CONF = REPO_ROOT / "desktop" / "src-tauri" / "tauri.conf.json"
+TAURI_CONF = REPO_ROOT / "src" / "desktop" / "src-tauri" / "tauri.conf.json"
 
 DEFAULT_OUT = REPO_ROOT / "artifacts"
 

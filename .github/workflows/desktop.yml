@@ -34,7 +34,7 @@ on:
   push:
     branches: ["**"]
     paths:
-      - "desktop/**"
+      - "src/desktop/**"
       - "scripts/stage_ui.py"
       - "scripts/bundle_python.py"
       - "src/mcp_gateway/ui/**"
@@ -42,7 +42,7 @@ on:
       - ".github/workflows/desktop.yml"
   pull_request:
     paths:
-      - "desktop/**"
+      - "src/desktop/**"
       - "scripts/stage_ui.py"
       - "scripts/bundle_python.py"
       - "src/mcp_gateway/ui/**"
@@ -96,7 +96,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop/src-tauri
+          workspaces: src/desktop/src-tauri
 
       - name: Install the Linux webview dependencies
         if: runner.os == 'Linux'

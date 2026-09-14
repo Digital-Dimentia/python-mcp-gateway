@@ -103,7 +103,7 @@ jobs:
       # leg spends most of its time compiling `webkit2gtk-sys` and friends from scratch.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop/src-tauri
+          workspaces: src/desktop/src-tauri
 
       # A prebuilt `cargo tauri`, rather than `cargo install tauri-cli`, which is several
       # minutes of compiling a tool that is not part of what we ship.

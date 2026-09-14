@@ -261,12 +261,12 @@ connect:
 #
 # A Tauri app that owns both halves: a Rust host that mints the access key, supervises a
 # bundled-CPython gateway, and proxies its two sockets into an embedded webview running the
-# same UI assets `webui.py` serves. See desktop/README.md.
+# same UI assets `webui.py` serves. See src/desktop/README.md.
 #
 # None of these are prerequisites of `test` or `build`. The daemon is the product and it
 # ships without any of this; a checkout with no Rust toolchain runs the whole Python suite.
 
-DESKTOP_DIR := $(MAKEFILE_DIR)/desktop
+DESKTOP_DIR := $(MAKEFILE_DIR)/src/desktop
 TAURI_DIR := $(DESKTOP_DIR)/src-tauri
 
 ## The interpreter the app ships: standalone CPython with the gateway installed into it.
