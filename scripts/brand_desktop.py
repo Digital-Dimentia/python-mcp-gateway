@@ -7,7 +7,7 @@ file exists -- the bundle's name (`Acme-Tools.app`, the process in Activity Moni
 Windows install directory) and its icon (the Dock, the taskbar, the Finder). Those are
 Tauri's `productName` and `bundle.icon`, read by `cargo tauri build`.
 
-So this script writes an **overlay**, `desktop/src-tauri/tauri.brand.json`, which
+So this script writes an **overlay**, `src/desktop/src-tauri/tauri.brand.json`, which
 `make tauri-bundle` passes to `--config` when it exists. It does not edit
 `tauri.conf.json`.
 
@@ -54,7 +54,7 @@ sys.path.insert(0, str(REPO / "src"))
 from mcp_gateway.branding import DEFAULT_TITLE  # noqa: E402
 from mcp_gateway.config import ConfigError, load  # noqa: E402
 
-TAURI_DIR = REPO / "desktop" / "src-tauri"
+TAURI_DIR = REPO / "src" / "desktop" / "src-tauri"
 OVERLAY = TAURI_DIR / "tauri.brand.json"
 #: Generated icons go beside the stock set, never over it: `cargo tauri icon` defaults to
 #: overwriting `icons/`, and a committed file replaced by a build step is a diff nobody

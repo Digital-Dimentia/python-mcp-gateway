@@ -133,4 +133,4 @@ for why a file carries both the port *and* readiness where a line carries only t
 The same shell is why the `Origin` rule's "a request with no `Origin` proceeds" branch is now
 load-bearing rather than merely convenient: the shell's own client is `tokio-tungstenite`,
 which sends none. That, plus `Authorization: Bearer` already being accepted, is the whole
-reason this module needed no change to support a desktop app. See `desktop/README.md`.
+reason this module needed no change to support a desktop app. See `../desktop/README.md`.

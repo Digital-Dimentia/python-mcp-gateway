@@ -75,7 +75,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: Where the bundle lands. `tauri.conf.json` names the same path in `bundle.resources`, and
 #: `supervisor.rs` resolves `python/bin/python3` under the app's resource dir.
-DEFAULT_OUT = REPO_ROOT / "desktop" / "src-tauri" / "resources" / "python"
+DEFAULT_OUT = REPO_ROOT / "src" / "desktop" / "src-tauri" / "resources" / "python"
 
 #: Pinned rather than floated. `requires-python` allows 3.12 through 3.14, which is a
 #: statement about what the *library* supports; a bundle ships exactly one interpreter and
@@ -192,7 +192,7 @@ def strip_globs() -> tuple[str, ...]:
 def interpreter_path(root: Path) -> Path:
     """The interpreter inside a bundle.
 
-    **Twinned with `Layout::interpreter` in `desktop/src-tauri/src/supervisor.rs`**, which
+    **Twinned with `Layout::interpreter` in `src/desktop/src-tauri/src/supervisor.rs`**, which
     has to name the same two paths from the other side. If one of them is wrong the app
     starts nothing at all, with a dialog that says nothing useful -- which is why the Rust
     side has a unit test asserting both spellings and this script verifies the real file.
@@ -474,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--config",
         type=Path,
-        default=REPO_ROOT / "desktop" / "src-tauri" / "seed" / "servers.yaml",
+        default=REPO_ROOT / "src" / "desktop" / "src-tauri" / "seed" / "servers.yaml",
         help="Config the verification step runs `--check` against.",
     )
     parser.add_argument(

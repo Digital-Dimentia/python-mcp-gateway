@@ -7,7 +7,7 @@ files off disk inside its window. A second checked-in copy would drift within a 
 whole reason `webui.ASSETS` exists as an allowlist that `tests/test_webui.py` pins against
 the directory listing is that this project already decided one list beats two.
 
-So `desktop/.staging/ui` is a *view*, rebuilt by this script and gitignored. Nothing is ever
+So `src/desktop/.staging/ui` is a *view*, rebuilt by this script and gitignored. Nothing is ever
 edited there.
 
 ## Two modes, and why both
@@ -27,13 +27,14 @@ business being more generous than the HTTP one.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SOURCE = REPO_ROOT / "src" / "mcp_gateway" / "ui"
-DEFAULT_TARGET = REPO_ROOT / "desktop" / ".staging" / "ui"
+DEFAULT_TARGET = REPO_ROOT / "src" / "desktop" / ".staging" / "ui"
 
 
 def assets() -> dict[str, str]:
@@ -66,8 +67,11 @@ def stage_link(target: Path) -> None:
     clear(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     # Relative, so the staging directory keeps working if the checkout is moved or the
-    # repository is mounted at a different path inside a container.
-    target.symlink_to(Path("../../src/mcp_gateway/ui"), target_is_directory=True)
+    # repository is mounted at a different path inside a container. Computed from `SOURCE`
+    # rather than spelled out: a literal `../../...` is a second copy of the layout, and it
+    # goes stale silently the next time either end of it moves.
+    hop = Path(os.path.relpath(SOURCE, target.parent))
+    target.symlink_to(hop, target_is_directory=True)
 
 
 def stage_copy(target: Path) -> list[str]:

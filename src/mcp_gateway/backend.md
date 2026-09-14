@@ -155,7 +155,7 @@ we cannot tell. Two concurrent calls from one session are not ambiguous.
 can be spawned at all. An app launched from Finder inherits launchd's `PATH`, which has no
 Homebrew, no nvm and no `~/.local/bin` on it — so the shell asks the user's login shell what
 `PATH` really is and hands *that* to the daemon, which this module then forwards to every
-backend. One repair, at one boundary. See `desktop/README.md`.
+backend. One repair, at one boundary. See `../desktop/README.md`.
 
 The shell adds to the daemon's environment rather than replacing it, which is why
 `env_passthrough` keeps working there: a cleared environment would have silently narrowed

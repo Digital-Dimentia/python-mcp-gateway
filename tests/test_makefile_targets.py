@@ -36,7 +36,7 @@ REQUIRED_TARGETS = frozenset(
         "connect",
         # The desktop shell. Not in CI's `make venv lint docs-check test build` line and
         # deliberately not a prerequisite of any of it -- the daemon ships without the app
-        # -- but README.md and desktop/README.md both name these, so losing one silently is
+        # -- but README.md and src/desktop/README.md both name these, so losing one silently is
         # the same failure this file exists to prevent.
         "tauri-python",
         "tauri-stage",

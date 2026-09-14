@@ -28,7 +28,7 @@ from pathlib import Path
 
 #: Directory names that are never ours, matched exactly against a path component.
 #:
-#: `target` is Cargo's build tree, under `desktop/src-tauri/`. It fills with vendored crate
+#: `target` is Cargo's build tree, under `src/desktop/src-tauri/`. It fills with vendored crate
 #: sources, and a dependency's own `README.md` is full of relative links that resolve inside
 #: *its* repository and nowhere else -- so without this entry `make docs-check` fails on
 #: files nobody here wrote. Exactly the `.venv` bug recorded below, in a second language.

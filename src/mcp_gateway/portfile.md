@@ -70,4 +70,4 @@ keep waiting through rather than an error to report.
 `SIGKILL` and the power going out. So a reader should treat the contents as a hint to be
 confirmed by connecting, and a supervisor that spawns the daemon should delete any existing
 file *before* spawning — an old number may name a port something else now holds.
-`desktop/src-tauri/src/supervisor.rs` does both.
+`../desktop/src-tauri/src/supervisor.rs` does both.

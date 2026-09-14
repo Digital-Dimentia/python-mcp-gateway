@@ -31,7 +31,7 @@ the resources and templates that light up the UI's *Injectable values* column.
 
 ## Desktop app
 
-`desktop/` builds **MCP-Gateway.app**: the daemon, its backends and the admin UI in one
+`src/desktop/` builds **MCP-Gateway.app**: the daemon, its backends and the admin UI in one
 window, with no terminal and no URL to copy. The app generates the access key itself at every
 launch, hands it to the daemon through the environment, and opens the sockets from Rust — so
 there is no key to paste, and none written down anywhere.
@@ -44,7 +44,7 @@ make tauri-artifacts  # the same, renamed for this platform, in artifacts/
 
 macOS, Linux and Windows — a `.app`, a `.deb` and an AppImage, and an NSIS installer, one
 per release from its own runner. Unsigned, and a first cut. See
-[`desktop/README.md`](desktop/README.md).
+[`src/desktop/README.md`](src/desktop/README.md).
 
 ## Why a daemon
 

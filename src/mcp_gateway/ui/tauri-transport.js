@@ -4,7 +4,7 @@
 // mints one per launch and keeps it in Rust -- and even if it had one, a `WebSocket`
 // constructor takes a URL and a subprotocol list, with no way to send the
 // `Authorization: Bearer` header the gateway wants. So the host opens both sockets and this
-// module is the wire to them. See `desktop/README.md` and python-mcp-gateway-isb.
+// module is the wire to them. See `../../desktop/README.md` and python-mcp-gateway-isb.
 //
 // Loaded unconditionally by `index.html`, because there is **one copy of the admin UI** and
 // two hosts that serve it. In a browser the guard below finds no Tauri and the module

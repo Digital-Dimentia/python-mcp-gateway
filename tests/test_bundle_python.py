@@ -205,7 +205,7 @@ def test_the_two_strip_lists_describe_the_same_policy() -> None:
 
 
 def test_the_interpreter_path_is_the_one_the_rust_side_names() -> None:
-    """Twinned with `Layout::interpreter` in `desktop/src-tauri/src/supervisor.rs`.
+    """Twinned with `Layout::interpreter` in `src/desktop/src-tauri/src/supervisor.rs`.
 
     Asserted from both sides because a disagreement here is an app that starts nothing, and
     neither side can notice it alone.
@@ -215,7 +215,7 @@ def test_the_interpreter_path_is_the_one_the_rust_side_names() -> None:
     assert bundle_python.stdlib_path.__doc__  # named here so a rename breaks this test too
 
     rust = (
-        REPO_ROOT / "desktop" / "src-tauri" / "src" / "supervisor.rs"
+        REPO_ROOT / "src" / "desktop" / "src-tauri" / "src" / "supervisor.rs"
     ).read_text()
     assert '"python.exe"' in rust, "the Windows interpreter name moved on the Rust side"
     assert 'join("bin").join("python3")' in rust, "the Unix interpreter path moved"
@@ -340,7 +340,7 @@ def test_the_bundled_version_is_one_the_project_supports() -> None:
 # when a real bundle is on disk it gets asked directly. Skipped otherwise: a checkout that
 # has never run `make tauri-python` stays green, the same way `tests/ui/` skips without node.
 
-BUNDLE = REPO_ROOT / "desktop" / "src-tauri" / "resources" / "python"
+BUNDLE = REPO_ROOT / "src" / "desktop" / "src-tauri" / "resources" / "python"
 
 
 def bundle_or_skip() -> Path:

@@ -187,7 +187,7 @@ against it is in
 
 ## The desktop shell
 
-`desktop/` is a Tauri app that is all of the above in one window. A Rust host mints the
+`src/desktop/` is a Tauri app that is all of the above in one window. A Rust host mints the
 access key, supervises the daemon as a child process with a bundled CPython, and opens the
 daemon's two sockets itself — so the page it shows has no key and dials nothing.
 
@@ -221,7 +221,7 @@ Two couplings came out of it, both pinned by `tests/test_desktop_contract.py`: t
 learns which port `--port 0` chose from the file `--port-file` names, and the `Origin`-less
 branch is now load-bearing. The port started out as a scrape of the daemon's `listening on
 ws://…` line, which worked but made a log line a wire format;
-[`portfile.md`](src/mcp_gateway/portfile.md) is what replaced it. See [`desktop/README.md`](desktop/README.md).
+[`portfile.md`](src/mcp_gateway/portfile.md) is what replaced it. See [`src/desktop/README.md`](src/desktop/README.md).
 
 ## Notes
 

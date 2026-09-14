@@ -6,7 +6,7 @@ gateway's two WebSockets itself.
 
 This file is how the shell is built and why it is shaped this way. For what to do once it
 opens — configuring backends, attaching a client, working the admin UI — see
-[GET_STARTED.md](../GET_STARTED.md); everything there applies unchanged, minus the terminal
+[GET_STARTED.md](../../GET_STARTED.md); everything there applies unchanged, minus the terminal
 and the access key.
 
 ```
@@ -28,7 +28,7 @@ MCP-Gateway.app
 A browser's `WebSocket` constructor takes a URL and a subprotocol list. There is no header
 parameter, so a page cannot send `Authorization: Bearer` — which is why the browser build of
 the admin UI carries its key in a query string, and why
-[`python-mcp-gateway-isb`](../src/mcp_gateway/transport_ws.md) sat deferred rather than
+[`python-mcp-gateway-isb`](../mcp_gateway/transport_ws.md) sat deferred rather than
 choosing between a cookie, a subprotocol smuggle and a single-use ticket.
 
 Here the question does not arise. The key is generated in Rust, goes into the child's
@@ -69,7 +69,7 @@ UI assets, or validate a config. Roughly 58 MB, which makes the `.app` about 96 
 
 ## Why there is only one copy of the admin UI
 
-The assets live in `src/mcp_gateway/ui/` and nowhere else. `desktop/.staging/ui` is a view of
+The assets live in `src/mcp_gateway/ui/` and nowhere else. `src/desktop/.staging/ui` is a view of
 that directory, rebuilt by `scripts/stage_ui.py` and gitignored — a symlink for
 `make tauri-dev`, so editing `app.js` in its real home is one Cmd+R away, and a copy for
 `make tauri-bundle`, because the bundler would follow a symlink to a path that does not exist
@@ -87,7 +87,7 @@ browser it looks for Tauri, does not find it, and returns having done nothing.
 ```bash
 make tauri-python     # the bundled interpreter — needs the network, takes a minute
 make tauri-dev        # run from source, UI symlinked, edits live
-make tauri-bundle     # the installable bundle, under desktop/src-tauri/target/release/bundle/
+make tauri-bundle     # the installable bundle, under src/desktop/src-tauri/target/release/bundle/
 make tauri-artifacts  # what tauri-bundle produced, renamed for this platform, in artifacts/
 make tauri-check      # cargo fmt --check, clippy -D warnings, cargo test
 ```

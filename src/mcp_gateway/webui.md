@@ -2,7 +2,7 @@
 ## Two hosts, one directory
 
 These files are served over HTTP by this module *and* loaded off disk by the desktop shell
-(`desktop/README.md`). There is deliberately one copy: `desktop/.staging/ui` is a view of
+(`../desktop/README.md`). There is deliberately one copy: `../desktop/.staging/ui` is a view of
 this directory rebuilt by `scripts/stage_ui.py`, and the copy it makes takes `ASSETS` as its
 manifest, so the app can never ship a file this module would not serve.
 
