@@ -9,6 +9,20 @@ nobody reads.
 
 ## Unreleased
 
+**The admin UI is its own package.** `src/mcp_gateway/ui/` is now `src/mcp_gateway_ui/`,
+a top-level package beside the daemon rather than package data inside it. `src/mcp_gateway/`
+is the Python that serves MCP, `src/mcp_gateway_ui/` is the page a browser and the desktop
+window load, and `src/desktop/` is that window — three directories under `src/`, one job
+each, finishing the reorganisation the desktop-shell move started.
+
+Nothing about using the gateway changed: the UI is still served from the same port at the
+same `/ui` route, off the same eleven files, and `webui.py` still resolves a request against
+an allowlist and never joins a path. What changed is one string — `ASSET_PACKAGE` — because
+the directory name and the import name have to agree for a single `importlib.resources`
+lookup to work both from a checkout and from `site-packages`. The visible consequence is
+that a `pip install` now puts a second top-level name, `mcp_gateway_ui`, in `site-packages`;
+it is prefixed rather than a bare `ui` precisely because that name belongs to nobody.
+
 **The desktop shell lives under `src/`.** `desktop/` is now `src/desktop/`, beside the
 package it wraps rather than a sibling of it: both halves of the product are one tree, and
 the repository root is left to the things that are genuinely about the repository. Nothing
@@ -34,7 +48,7 @@ branding:
   # icon: ./brand/acme.svg
 ```
 
-The mark is one file — `src/mcp_gateway/ui/logo.svg`, replacing the plug emoji that used to
+The mark is one file — `src/mcp_gateway_ui/logo.svg`, replacing the plug emoji that used to
 be the favicon — worn by the page header, the browser tab and the desktop window, and served
 like the stylesheet. Swap that file, or point `icon:` at your own anywhere the package is not
 yours to edit. A configured icon is read by the daemon and inlined as a `data:` URI on

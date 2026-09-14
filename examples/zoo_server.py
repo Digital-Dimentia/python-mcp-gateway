@@ -46,7 +46,7 @@ with no animals.
 `zoo://ticks` is the one resource that is not a constant -- each read appends a
 minute-stamped line and keeps the last ten -- so reading it twice proves the second read
 reached the server rather than a cache. `zoo-blob` is base64 that a renderer must never
-print. See `src/mcp_gateway/ui/render.js` for both.
+print. See `src/mcp_gateway_ui/render.js` for both.
 
 Run it through the gateway: `make run-dev`.
 """

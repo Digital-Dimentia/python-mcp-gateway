@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Put the admin UI where Tauri looks for a frontend, without making a second copy of it.
 
-There is one admin UI, and it lives in `src/mcp_gateway/ui/`. Two hosts serve it: `webui.py`
+There is one admin UI, and it lives in `src/mcp_gateway_ui/`. Two hosts serve it: `webui.py`
 answers a GET for each file over the daemon's own port, and the desktop shell loads the same
 files off disk inside its window. A second checked-in copy would drift within a week -- the
 whole reason `webui.ASSETS` exists as an allowlist that `tests/test_webui.py` pins against
@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SOURCE = REPO_ROOT / "src" / "mcp_gateway" / "ui"
+SOURCE = REPO_ROOT / "src" / "mcp_gateway_ui"
 DEFAULT_TARGET = REPO_ROOT / "src" / "desktop" / ".staging" / "ui"
 
 

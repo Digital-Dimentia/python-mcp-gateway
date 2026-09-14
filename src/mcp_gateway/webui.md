@@ -6,7 +6,7 @@ These files are served over HTTP by this module *and* loaded off disk by the des
 this directory rebuilt by `scripts/stage_ui.py`, and the copy it makes takes `ASSETS` as its
 manifest, so the app can never ship a file this module would not serve.
 
-One file exists only for the second host. [`tauri-transport.js`](ui/tauri-transport.js) swaps
+One file exists only for the second host. [`tauri-transport.js`](../mcp_gateway_ui/tauri-transport.js) swaps
 `rpc.js`'s transport for one that talks to sockets the Tauri host already opened — with a
 real `Authorization: Bearer` header, which a page cannot send. `index.html` loads it
 unconditionally and in a browser it finds no Tauri and returns, so this module serves a file
@@ -24,11 +24,11 @@ The Tauri window's content security policy is *narrower* than the one below: its
 form of "that page opens no sockets". `tests/test_desktop_layout.py` asserts it.
 
 
-The UI is eleven files: [`index.html`](ui/index.html), [`style.css`](ui/style.css),
-[`app.js`](ui/app.js), [`rpc.js`](ui/rpc.js), [`schema_form.js`](ui/schema_form.js),
-[`render.js`](ui/render.js), [`clipboard.js`](ui/clipboard.js),
-[`markdown.js`](ui/markdown.js), [`theme.js`](ui/theme.js),
-[`tauri-transport.js`](ui/tauri-transport.js) and [`logo.svg`](ui/logo.svg). No build step,
+The UI is eleven files: [`index.html`](../mcp_gateway_ui/index.html), [`style.css`](../mcp_gateway_ui/style.css),
+[`app.js`](../mcp_gateway_ui/app.js), [`rpc.js`](../mcp_gateway_ui/rpc.js), [`schema_form.js`](../mcp_gateway_ui/schema_form.js),
+[`render.js`](../mcp_gateway_ui/render.js), [`clipboard.js`](../mcp_gateway_ui/clipboard.js),
+[`markdown.js`](../mcp_gateway_ui/markdown.js), [`theme.js`](../mcp_gateway_ui/theme.js),
+[`tauri-transport.js`](../mcp_gateway_ui/tauri-transport.js) and [`logo.svg`](../mcp_gateway_ui/logo.svg). No build step,
 no bundler, no dependency — ES modules the browser loads directly. This module answers a GET
 for one of them.
 
@@ -167,7 +167,7 @@ columns with `admin.clipboard.put`, and the daemon renders it; the modal shows w
 back, in a plain textarea, and the Copy button copies whatever is in the box. The reason is
 [`gateway__clipboard`](clipboard.md): the same text is a tool call on `/mcp`, so a model can
 read the bench without anyone pasting anything, and two renderers of one document would
-drift. [`clipboard.js`](ui/clipboard.js) is the modal and the publisher;
+drift. [`clipboard.js`](../mcp_gateway_ui/clipboard.js) is the modal and the publisher;
 [`clipboard.md`](clipboard.md) is the document.
 
 The snapshot is published on a debounce whenever either column changes, not only when the
@@ -442,7 +442,7 @@ no credential; everything a person can actually *see* arrives over a socket that
 the key. Gating the shell would trade a real secret-leak channel for no protection at all.
 
 The banner prints the URL with `?key=` when a key is configured, because that is the one
-carrier that gets a browser connected. [`app.js`](ui/app.js) takes the key out of the
+carrier that gets a browser connected. [`app.js`](../mcp_gateway_ui/app.js) takes the key out of the
 address bar with `history.replaceState` the moment it reads it, and keeps it in
 `localStorage` instead.
 

@@ -76,8 +76,8 @@ SURVIVORS = (
     "lib/python3.13/site-packages/ruamel/yaml/__init__.py",
     # The UI assets `webui.py` reads through `importlib.resources`. A strip that took these
     # would leave a bundle that starts, serves, and 404s its own page.
-    "lib/python3.13/site-packages/mcp_gateway/ui/app.js",
-    "lib/python3.13/site-packages/mcp_gateway/ui/index.html",
+    "lib/python3.13/site-packages/mcp_gateway_ui/app.js",
+    "lib/python3.13/site-packages/mcp_gateway_ui/index.html",
     # Extension modules the two-name dependency list does not mention and something still
     # reaches. See REQUIRED_MODULES in the script.
     "lib/python3.13/lib-dynload/_ssl.cpython-313-darwin.so",
@@ -141,8 +141,8 @@ WINDOWS_SURVIVORS = (
     "Lib/site-packages/websockets/__init__.py",
     "Lib/site-packages/ruamel/yaml/__init__.py",
     # The UI assets `webui.py` reads through `importlib.resources`.
-    "Lib/site-packages/mcp_gateway/ui/app.js",
-    "Lib/site-packages/mcp_gateway/ui/index.html",
+    "Lib/site-packages/mcp_gateway_ui/app.js",
+    "Lib/site-packages/mcp_gateway_ui/index.html",
     # Extension modules, which live in `DLLs/` here. `_ssl` also needs the two OpenSSL
     # DLLs beside it, and `libcrypto` is one `libs`-shaped typo away from being removed.
     "DLLs/_ssl.pyd",
@@ -362,8 +362,8 @@ def test_the_built_bundle_kept_everything_the_daemon_needs() -> None:
         name for name in (
             "site-packages/mcp_gateway/cli.py",
             "site-packages/mcp_gateway/webui.py",
-            "site-packages/mcp_gateway/ui/app.js",
-            "site-packages/mcp_gateway/ui/index.html",
+            "site-packages/mcp_gateway_ui/app.js",
+            "site-packages/mcp_gateway_ui/index.html",
             "site-packages/websockets/__init__.py",
             "site-packages/ruamel/yaml/__init__.py",
             "ssl.py",

@@ -73,14 +73,20 @@ where = ["src"]
 # Saying it out loud costs one line and removes the accident.
 exclude = ["desktop*"]
 
-# The admin UI's assets. `mcp_gateway.ui` is a package (it has an `__init__.py`) purely so
+# The admin UI's assets. `mcp_gateway_ui` is a package (it has an `__init__.py`) purely so
 # these files ship in the wheel and `importlib.resources` can find them there exactly as
 # it does in a checkout -- see webui.md. `tests/test_webui.py` asserts they are in the built
 # wheel, because "works from the repo, 404s from pip install" is the failure this invites.
+#
+# It is discovered by the `find` above as a *top-level* package beside `mcp_gateway`, not
+# as a subpackage of it: the daemon is Python and the UI is not, and the directory name and
+# the import name have to agree for one `resources.files()` call to work both from `src` on
+# `sys.path` and from `site-packages`. The `mcp_gateway_` prefix is what shipping at the top
+# level costs -- a bare `ui` in `site-packages` is a name another distribution will claim.
 [tool.setuptools.package-data]
 # `*.svg` is the stock mark, which is package data for the same reason the stylesheet is:
 # the page ships everything it loads. See src/mcp_gateway/branding.md.
-"mcp_gateway.ui" = ["*.html", "*.css", "*.js", "*.svg"]
+"mcp_gateway_ui" = ["*.html", "*.css", "*.js", "*.svg"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

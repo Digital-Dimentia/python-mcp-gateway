@@ -14,7 +14,7 @@ version: 1
 # and the tool namespace never changes: a backend is `github__create_issue` everywhere.
 #
 # To white-label: edit the two lines below, and swap the mark. The mark is one file,
-# src/mcp_gateway/ui/logo.svg, worn by the page header, the browser tab and the desktop
+# src/mcp_gateway_ui/logo.svg, worn by the page header, the browser tab and the desktop
 # window; replace it in place, or leave it alone and point `icon:` at your own. See
 # src/mcp_gateway/branding.md.
 branding:

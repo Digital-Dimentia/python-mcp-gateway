@@ -29,8 +29,9 @@ at all.
 `asset_for` resolves a request path against a fixed tuple of filenames. There is no
 `Path(root) / requested` anywhere in this module, so there is no traversal to get wrong --
 no `..`, no encoded separator, no symlink, no case-insensitive-filesystem surprise. The cost
-is that adding a file to `ui/` means adding its name here, and `tests/test_webui.py` asserts
-the two agree, so the failure mode is a red test rather than a 404 nobody can explain.
+is that adding a file to `src/mcp_gateway_ui/` means adding its name here, and
+`tests/test_webui.py` asserts the two agree, so the failure mode is a red test rather than
+a 404 nobody can explain.
 """
 
 from __future__ import annotations
@@ -50,8 +51,10 @@ logger = logging.getLogger(__name__)
 UI_PATH = "/ui"
 
 #: The package the assets live in, as an importable name so `importlib.resources` finds
-#: them inside a wheel exactly as it does in a checkout.
-ASSET_PACKAGE = "mcp_gateway.ui"
+#: them inside a wheel exactly as it does in a checkout. It is a top-level package beside
+#: this one, not a subpackage of it: the UI is not part of the daemon. See
+#: `mcp_gateway_ui/__init__.py`.
+ASSET_PACKAGE = "mcp_gateway_ui"
 
 INDEX = "index.html"
 

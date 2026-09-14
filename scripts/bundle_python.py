@@ -14,7 +14,7 @@ SDK partly to keep compiled extensions out of the process (see the long note in
 is the only per-target artifact in the whole bundle -- which Tauri builds per target anyway.
 
 That is also why there is no PyInstaller. A freezer would buy one file and cost the thing
-`webui.py` depends on: `importlib.resources` finding `mcp_gateway/ui/*.js` inside the bundle
+`webui.py` depends on: `importlib.resources` finding `mcp_gateway_ui/*.js` inside the bundle
 exactly as it finds them in a checkout. Here that keeps working because the layout is a
 real interpreter with a real `site-packages`, and `cli.py` in the shipped app is still a file
 a person can open when a user reports something.
@@ -90,6 +90,7 @@ DEFAULT_VERSION = "3.13"
 REQUIRED_MODULES = (
     "mcp_gateway",
     "mcp_gateway.cli",
+    "mcp_gateway_ui",
     "websockets",
     "ruamel.yaml",
     "ssl",
