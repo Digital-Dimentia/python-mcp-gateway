@@ -32,6 +32,15 @@ can be alive and wedged, and only a round trip tells the two apart. `ping_ms: nu
 Every schema sets `additionalProperties: false`, so a model's invented argument fails loudly
 instead of being ignored.
 
+## `admin.status` carries the branding
+
+The one non-status thing in that payload, and deliberately: the page needs the deployment's
+title and icon at exactly the moments it needs the rest of `admin.status` — on connect, and
+again after every reload — so a method of its own would be a second round trip that is
+always made beside the first. The icon travels inline as a `data:` URI because the desktop
+shell cannot fetch a URL for it; [`branding.md`](branding.md) has the whole argument, and
+the 128 KiB cap that keeps this payload a status payload.
+
 ## Credential values never appear in either payload
 
 `describe_backend` reports `env_keys` — the *names* of the variables from the server's `env`

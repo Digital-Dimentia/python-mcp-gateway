@@ -440,6 +440,51 @@ Edit `servers.yaml` (or use `+ Add` in the UI), then reload the same way. The ca
 changes and a `list_changed` goes out to every attached client; the eleven backends you did
 not touch never notice.
 
+### Putting your own name on it
+
+For an internal deployment that is not "the MCP gateway" to the people using it. The block
+is already in `servers.yaml`, filled in with the stock values — edit it:
+
+```yaml
+# servers.yaml
+branding:
+  title: "Acme Internal Tools"
+  name: acme-tools
+```
+
+Reload, and the browser tab, the page header and the desktop window all wear the new name;
+MCP clients see `acme-tools` in `serverInfo` instead of `mcp-gateway`.
+
+The mark is one file, `src/mcp_gateway/ui/logo.svg` — the header image and the favicon, in
+both the browser and the desktop app. In a checkout, replace it. Anywhere else — a pip
+install, a container — point the config at your own file instead, which is also the way to
+keep your logo out of the package:
+
+```yaml
+branding:
+  title: "Acme Internal Tools"
+  name: acme-tools
+  icon: ./brand/acme.svg    # relative to servers.yaml
+```
+
+That path must be an SVG, PNG, ICO, WEBP, JPEG or GIF under 128 KiB; the daemon reads it and
+inlines it into the `/admin` payload, which is how the desktop window — which cannot fetch a
+URL — gets the same picture the browser does. A path that does not resolve is a startup
+refusal naming the file, so `make check` catches it before anything binds.
+
+Tool names do not change: a backend is still `github__create_issue`, in every deployment.
+
+The desktop bundle's *own* name and icon are baked in before any config file exists, so they
+are a build step rather than a reload:
+
+```bash
+make tauri-brand ARGS='--icon brand/acme-1024.png'   # then: make tauri-bundle
+make tauri-brand ARGS=--clear                        # back to stock
+```
+
+That writes a gitignored overlay beside `tauri.conf.json`; the committed config, and the
+tests that pin it, are untouched. See [`branding.md`](src/mcp_gateway/branding.md).
+
 ### Running in the background
 
 `make run` is foreground and does not daemonize. For a persistent daemon on macOS, adapt the

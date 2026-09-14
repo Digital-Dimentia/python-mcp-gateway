@@ -50,6 +50,10 @@ that builds for both amd64 and arm64.
 
 ```yaml
 version: 1                     # optional; must be 1
+branding:                      # optional; display only -- see branding.md
+  title: "Acme Internal Tools" # the tab, the header, the desktop window, the CLI
+  name: acme-tools             # what MCP clients receive in serverInfo
+  icon: ./brand/acme.svg       # optional; relative to this file. Omitted means ui/logo.svg
 defaults:                      # optional; each key optional
   timeout: 30.0                # per-request seconds
   startup_timeout: 20.0        # spawn + initialize + first listing
@@ -77,6 +81,11 @@ servers:                       # required
 
 Server names are validated by [`naming.py`](naming.md): no `__`, no `/` or `:`, and
 `gateway` is reserved.
+
+The `branding:` block is parsed by [`branding.py`](branding.md), which owns its validation
+for the same reason `naming.py` owns server names: the refusals are about what the value
+will be *used for* — a path that must exist, a format the page can render, an identifier a
+client will put in its own config — and none of that is a fact about YAML.
 
 ## `defaults:` is folded in, and also kept
 

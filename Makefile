@@ -110,7 +110,7 @@ VENV_FLAGS := $(if $(strip $(OFFLINE)),--offline,)
 
 .PHONY: venv sync install lint docs-check test ui-deps check build wheel sdist container-image \
         print-release-platforms package run run-dev connect tauri-python tauri-stage tauri-dev \
-        tauri-bundle tauri-artifacts tauri-check clean clean-outputs clean-venv distclean
+        tauri-bundle tauri-artifacts tauri-brand tauri-check clean clean-outputs clean-venv distclean
 
 venv: $(VENV_STAMP)
 
@@ -295,17 +295,33 @@ STAGED_UI := $(DESKTOP_DIR)/.staging/ui
 $(STAGED_UI): $(VENV_STAMP)
 	$(PYTHON_BIN) scripts/stage_ui.py --mode copy
 
+## The overlay `scripts/brand_desktop.py` writes, and the flag that applies it. Merged by
+## Tauri exactly as `tauri.windows.conf.json` beside it is, and absent from a stock
+## checkout -- so the `$(wildcard)` is the whole of "is this build branded".
+BRAND_CONF := $(TAURI_DIR)/tauri.brand.json
+BRAND_FLAG = $(if $(wildcard $(BRAND_CONF)),--config tauri.brand.json,)
+
+## Carry `branding:` from $(CONFIG) into the bundle's name and icon -- the two things the
+## daemon cannot fix at run time, because they are baked into the artifact. The window
+## title needs none of this; the page sets it from admin.status on every connect.
+##
+##     make tauri-brand                      # from servers.yaml
+##     make tauri-brand ARGS='--icon logo.png'
+##     make tauri-brand ARGS=--clear         # back to stock
+tauri-brand:
+	$(PYTHON_BIN) scripts/brand_desktop.py --config $(CONFIG) $(ARGS)
+
 ## Run the app from source, with the UI symlinked rather than copied so an edit to
 ## `src/mcp_gateway/ui/app.js` is one Cmd+R away. Needs the bundled interpreter to exist;
 ## `tauri-python` is cheap to re-run but not free, so it is a separate target you run once.
 tauri-dev:
 	$(PYTHON_BIN) scripts/stage_ui.py --mode link
-	cd '$(TAURI_DIR)' && cargo tauri dev
+	cd '$(TAURI_DIR)' && cargo tauri dev $(BRAND_FLAG)
 
 ## The installable bundle. Stages by copy, and rebuilds the interpreter so the artifact is
 ## never quietly a week older than the wheel beside it.
 tauri-bundle: tauri-python tauri-stage
-	cd '$(TAURI_DIR)' && cargo tauri build
+	cd '$(TAURI_DIR)' && cargo tauri build $(BRAND_FLAG)
 
 ## What `tauri-bundle` produced, renamed for the platform that produced it and dropped in
 ## $(ARTIFACTS_DIR). `publish-artifacts.yml` uploads exactly this directory, so a release

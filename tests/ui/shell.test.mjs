@@ -183,3 +183,21 @@ describe('the gate', () => {
     assert.equal(socket.stopped, false, 'the shell must not stop trying');
   });
 });
+
+describe('the window wears the deployment\'s name', () => {
+  // The title in `tauri.conf.json` is baked into the bundle; the branding block is read by
+  // the daemon at run time, out of a file that bundle never saw. The page is the only
+  // thing that knows both, which is why `core:window:allow-set-title` is in the capability
+  // file at all. See `src/mcp_gateway/branding.md`.
+  it('renames the title bar when the gateway reports a brand', () => {
+    ui.applyBranding({ title: 'Acme Internal Tools', name: 'acme-tools', icon: null });
+    assert.deepEqual(host.titles(), ['Acme Internal Tools']);
+  });
+
+  it('does not cross the IPC boundary when nothing changed', () => {
+    // A refresh happens on every reload and every reconnect, and a title bar that is
+    // rewritten with the same string on each one is a flicker for no reason.
+    ui.applyBranding({ title: 'Acme Internal Tools', name: 'acme-tools', icon: null });
+    assert.deepEqual(host.titles(), ['Acme Internal Tools']);
+  });
+});

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable
 
 from mcp_gateway import __version__
+from mcp_gateway.branding import Branding
 from mcp_gateway.config import ConfigError, GatewayConfig, ServerSpec, load as load_config
 from mcp_gateway.gateway import Gateway
 from mcp_gateway.logging_redaction import install_redaction
@@ -219,6 +220,21 @@ def _describe(spec: ServerSpec) -> str:
     return "\n".join(lines)
 
 
+def _print_branding(branding: Branding) -> None:
+    """What a white-labelled deployment calls itself, reported by `--check` and `--list`.
+
+    The icon is named rather than described: a broken path is already a `ConfigError` by the
+    time this runs, so what is worth printing is *which* file is being served, which is the
+    question someone has when the logo on screen is not the one they expected.
+    """
+    print(
+        f"brand: {branding.title} (serverInfo name: {branding.name})",
+        file=sys.stderr,
+    )
+    if branding.icon_path is not None:
+        print(f"icon: {branding.icon_path}", file=sys.stderr)
+
+
 def check(config_path: Path, env_path: Path, *, list_plan: bool = False) -> int:
     """Validate both files without binding a port or spawning anything.
 
@@ -243,6 +259,10 @@ def check(config_path: Path, env_path: Path, *, list_plan: bool = False) -> int:
 
     print(f"config: {config_path}", file=sys.stderr)
     print(f"secrets: {env_path} ({len(store.keys())} key(s))", file=sys.stderr)
+    # Only when there is one. An unbranded gateway printing "brand: MCP Gateway" is a line
+    # that carries no information and has to be read past every time.
+    if config.branding.customised:
+        _print_branding(config.branding)
 
     enabled = config.enabled
     disabled = [n for n, s in config.servers.items() if not s.enabled]
@@ -333,6 +353,13 @@ async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) ->
     # `websockets` logs the request line, query string and all, at DEBUG.
     access_key = resolve_access_key(store)
     install_redaction(store, extra=[access_key] if access_key else [])
+
+    # Before the bind, so the name in the log is the name on the window when someone
+    # correlates the two.
+    if config.branding.customised:
+        logger.info(
+            "serving as %r (serverInfo name %r)", config.branding.title, config.branding.name
+        )
 
     gateway = Gateway(
         config,

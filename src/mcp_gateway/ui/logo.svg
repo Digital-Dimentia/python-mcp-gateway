@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="MCP Gateway">
+  <title>MCP Gateway</title>
+  <!-- The stock mark: one client on the left, one hub, N backends on the right. That is the
+       whole product in five circles, and it is the file a deployment swaps — or replaces by
+       pointing `branding.icon` at its own. See src/mcp_gateway/branding.md.
+
+       Drawn rather than an emoji. The favicon used to be U+1F50C in a data URI, which left
+       the mark at the mercy of whichever emoji font the machine had and could never also be
+       the app icon. This is one file, served at /ui/logo.svg and staged into the desktop
+       shell with the rest of the assets.
+
+       Presentation attributes rather than an inline stylesheet, and one colour rather than
+       a light/dark pair. An SVG loaded through <img> is its own document: it inherits no
+       CSS from the page, and it is served under this package's `default-src 'none'` policy,
+       where inline CSS is exactly the thing that policy exists to refuse. So the colour is
+       picked to carry on both grounds, a touch lighter than the light theme's accent and a
+       touch deeper than the dark theme's, and the mark cannot be turned into a black square
+       by a header nobody remembered applied to images too.
+
+       (No double hyphen anywhere in this comment, and that is not style: an SVG in an <img>
+       is parsed as XML, where a comment containing one is a hard parse error rather than a
+       warning. The mark would simply fail to appear.) -->
+  <g fill="none" stroke="#2f8f77" stroke-width="2.2" stroke-linecap="round">
+    <path d="M5 16 H14"/>
+    <path d="M14 16 L26 7"/>
+    <path d="M14 16 H26"/>
+    <path d="M14 16 L26 25"/>
+  </g>
+  <g fill="#2f8f77">
+    <circle cx="14" cy="16" r="4.4"/>
+    <circle cx="4.6" cy="16" r="2.4"/>
+    <circle cx="26.6" cy="7" r="2.4"/>
+    <circle cx="26.6" cy="16" r="2.4"/>
+    <circle cx="26.6" cy="25" r="2.4"/>
+  </g>
+</svg>

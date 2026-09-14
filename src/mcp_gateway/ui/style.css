@@ -172,6 +172,19 @@ code, pre { font-family: var(--mono); }
 
 .bar h1 { flex: none; white-space: nowrap; }
 
+/* The deployment's own mark, sized to the cap height beside it rather than to whatever the
+ * file happens to be: a logo arrives as a 512px PNG as often as a 16px favicon, and the bar
+ * has one height. `object-fit: contain` keeps a wide wordmark from being squashed into the
+ * square, and the gap to the title is tightened because a mark and the name it belongs to
+ * are one thing, not two items in a row. */
+.brand-icon {
+  flex: none;
+  height: 1.35rem;
+  max-width: 8rem;
+  object-fit: contain;
+  margin-right: -0.65rem;
+}
+
 /* The word is decoration for a button that already names itself to a screen reader, so it
  * is aria-hidden and the gap to the toggle is tightened below the bar's default. */
 .theme-label { color: var(--muted); font-size: 0.76rem; margin-right: -0.65rem; }

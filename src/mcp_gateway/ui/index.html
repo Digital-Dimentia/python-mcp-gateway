@@ -7,12 +7,23 @@
 <link rel="stylesheet" href="style.css">
 <!-- Blocking, and in the head: the attribute has to be on <html> before the first paint. -->
 <script src="theme.js"></script>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128268;</text></svg>">
+<!-- The stock mark, shipped as a file rather than an inline emoji: it is the favicon, the
+     header mark and the thing a deployment swaps. `app.js` rewrites this href from
+     `admin.status` when the catalogue configures an icon of its own; it stays as written
+     until then, because the first paint happens before any socket has answered. -->
+<link rel="icon" id="brand-favicon" href="logo.svg">
 </head>
 <body>
 
 <header class="bar">
-  <h1>MCP Gateway</h1>
+  <!-- The mark and the name. Stock in the markup and replaced from `admin.status` when a
+       `branding:` block says otherwise -- so the header is complete on the first paint
+       rather than assembling itself a socket round-trip later. See branding.md.
+
+       `alt` is empty because the <h1> beside it says the same thing: a screen reader that
+       announced "MCP Gateway MCP Gateway" would be reading the decoration aloud. -->
+  <img id="brand-icon" class="brand-icon" src="logo.svg" alt="">
+  <h1 id="brand-title">MCP Gateway</h1>
 
   <!-- The configured servers themselves, one button each. The button carries only the
        indicator and the name; everything else about the server -- what it is, and what you

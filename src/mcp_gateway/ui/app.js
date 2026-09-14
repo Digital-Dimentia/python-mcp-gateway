@@ -7,7 +7,7 @@
 // what you exercise here is byte-identical to what the model gets.
 
 import { AdminSocket, McpSocket, RpcError } from './rpc.js';
-import { gatewayStatus, inShell, onGatewayState } from './tauri-transport.js';
+import { gatewayStatus, inShell, onGatewayState, setShellTitle } from './tauri-transport.js';
 import { buildForm, buildPromptForm, templateVariables, expandTemplate } from './schema_form.js';
 import {
   renderToolResult, renderPromptResult, renderResourceResult, renderError, resultCard, pretty,
@@ -24,6 +24,18 @@ const RESOURCE_SCHEME = 'mcpgw';
 const ADMIN_PREFIX = 'gateway';
 
 const KEY_STORAGE = 'mcp-gateway-ui.key';
+
+//: What the header wears before any socket has answered, and what it goes back to when a
+//: reload removes the `branding:` block. Read off the markup rather than repeated here, so
+//: `index.html` stays the one place the stock mark and name are written down.
+const DEFAULT_BRAND_TITLE = 'MCP Gateway';
+const STOCK_ICON = document.getElementById('brand-icon')?.getAttribute('src') || 'logo.svg';
+
+//: The title the desktop window is currently wearing, so a refresh that changed nothing
+//: does not cross the IPC boundary. Seeded from the markup rather than left null, because
+//: the bundle's own window title is built from the same string: an unbranded gateway must
+//: not rename the frame to what it is already called.
+let shellTitle = document.title;
 
 //: How many times a socket that has *never* connected may retry before the UI stops and
 //: leaves the gate standing. Enough to ride out a daemon that is still starting; few enough
@@ -331,7 +343,35 @@ async function refreshAdmin() {
   state.status = status;
   state.missing = missing.servers || {};
   renderBackends();
+  applyBranding(status?.branding);
   updateMeta();
+}
+
+// The deployment's own name and mark, from `admin.status` and applied on every refresh —
+// so editing `branding:` and pressing Reload shows the new logo without a restart.
+//
+// Every field is optional and every one falls back to what the markup already said, which
+// is what makes an unbranded gateway byte-identical to what it was. The icon arrives as a
+// `data:` URI rather than a URL because the desktop shell's CSP cannot fetch one; the
+// daemon reads the configured file and inlines it. See branding.md.
+function applyBranding(branding) {
+  const title = branding?.title || DEFAULT_BRAND_TITLE;
+  document.title = title;
+  $('brand-title').textContent = title;
+  // Not `setTitle` on every refresh unconditionally: the shell call is IPC, and the title
+  // bar is one of the few things a person notices flickering.
+  if (title !== shellTitle) {
+    shellTitle = title;
+    setShellTitle(title);
+  }
+
+  // A configured icon arrives as a `data:` URI, because the desktop shell cannot fetch a
+  // URL for one; the stock mark is an asset beside this file, which both hosts can load.
+  // Setting `src` to the same string twice is free -- the browser does not refetch -- so
+  // there is no need to track which of the two is currently up.
+  const mark = branding?.icon || STOCK_ICON;
+  $('brand-icon').src = mark;
+  $('brand-favicon').href = mark;
 }
 
 // ── The server bar ─────────────────────────────────────────────────────────────
@@ -2626,6 +2666,7 @@ connect();
 export {
   state,
   EDITOR_GROUPS,
+  applyBranding,
   openEditor,
   refreshing,
   vocabularies,

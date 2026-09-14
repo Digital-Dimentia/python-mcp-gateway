@@ -10,6 +10,19 @@
 
 version: 1
 
+# What this deployment calls itself. Display only — no backend behaves differently for it,
+# and the tool namespace never changes: a backend is `github__create_issue` everywhere.
+#
+# To white-label: edit the two lines below, and swap the mark. The mark is one file,
+# src/mcp_gateway/ui/logo.svg, worn by the page header, the browser tab and the desktop
+# window; replace it in place, or leave it alone and point `icon:` at your own. See
+# src/mcp_gateway/branding.md.
+branding:
+  title: "MCP Gateway"   # the tab, the header, the desktop window, the CLI output
+  name: mcp-gateway      # the identifier MCP clients key their own config off
+  # icon: ./brand/acme.svg   # relative to THIS file. SVG, PNG, ICO, WEBP, JPEG or GIF,
+                             # under 128 KiB. Omitted means the stock mark above.
+
 defaults:
   # Per-request seconds, and the budget for spawn + initialize + first listing.
   timeout: 30.0

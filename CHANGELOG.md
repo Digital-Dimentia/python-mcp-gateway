@@ -9,6 +9,35 @@ nobody reads.
 
 ## Unreleased
 
+**White labelling, out of the box.** The gateway now ships with a drawn mark and a
+`branding:` block already in `servers.yaml`, so rebranding is editing a file that is open
+rather than discovering that a key exists:
+
+```yaml
+branding:
+  title: "MCP Gateway"   # the tab, the header, the desktop window, the CLI
+  name: mcp-gateway      # what MCP clients receive in serverInfo
+  # icon: ./brand/acme.svg
+```
+
+The mark is one file — `src/mcp_gateway/ui/logo.svg`, replacing the plug emoji that used to
+be the favicon — worn by the page header, the browser tab and the desktop window, and served
+like the stylesheet. Swap that file, or point `icon:` at your own anywhere the package is not
+yours to edit. A configured icon is read by the daemon and inlined as a `data:` URI on
+`admin.status`, which is what lets one file reach both the browser page and the desktop
+window, whose CSP cannot fetch a URL — and it means no unauthenticated endpoint was added to
+serve it. A missing file, an unsupported format or one over 128 KiB is refused at load with
+the path in the message, so `make check` reports a broken logo without binding a port; one
+that disappears under a running daemon falls back to the stock mark rather than taking the
+footer with it.
+
+`title` and `name` are separate because a window titled `acme-tools` and a client config key
+called `Acme Internal Tools` are both somebody's bug; `serverInfo` now carries both, and an
+unbranded gateway reports exactly the name every released version has. The tool namespace is
+deliberately not brandable: a backend is `github__create_issue` in every deployment. For the
+desktop bundle's own name and icon — baked in before any config file exists — `make
+tauri-brand` writes a gitignored overlay that `make tauri-bundle` picks up.
+
 **The briefing quotes payloads as TOON.** The request and response blocks in the Clipboard
 document — and so in `gateway__clipboard` — are written in
 [TOON](https://github.com/toon-format/spec) rather than pretty-printed JSON. It is the same

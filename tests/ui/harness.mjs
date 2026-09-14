@@ -163,6 +163,17 @@ export function fakeTauri() {
       },
       Channel,
     },
+    // The window handle, for the one thing the page is allowed to do to its own frame:
+    // wear the deployment's title. `setTitle` records like `invoke` does, so a test can ask
+    // what the window was renamed to -- and, just as usefully, that it was renamed once.
+    window: {
+      getCurrentWindow: () => ({
+        setTitle(title) {
+          calls.push({ command: 'setTitle', args: { title } });
+          return Promise.resolve();
+        },
+      }),
+    },
     event: {
       listen(name, handler) {
         listeners.set(name, handler);
@@ -176,6 +187,8 @@ export function fakeTauri() {
     calls,
     /** Every `gw_open` so far, in order. */
     opened: () => calls.filter((c) => c.command === 'gw_open'),
+    /** Every title the page has put on the window, in order. */
+    titles: () => calls.filter((c) => c.command === 'setTitle').map((c) => c.args.title),
     /** Push a frame at the socket opened by the nth `gw_open`. */
     deliver(index, frame) { channels[index].onmessage(frame); },
     /** Fire a `gateway-state` event at the page. */

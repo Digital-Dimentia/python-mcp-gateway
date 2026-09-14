@@ -73,6 +73,12 @@ ASSETS: dict[str, str] = {
     "render.js": "text/javascript; charset=utf-8",
     "clipboard.js": "text/javascript; charset=utf-8",
     "markdown.js": "text/javascript; charset=utf-8",
+    # The stock mark, worn by the header and the favicon before any socket has answered --
+    # and kept by both when the catalogue configures no `branding.icon`. An asset rather
+    # than a `data:` URI so there is one file to swap and one thing to look at; a
+    # *configured* icon never comes through here, because the file it names is outside this
+    # package and arrives inline over `/admin` instead. See `branding.md`.
+    "logo.svg": "image/svg+xml",
 }
 
 

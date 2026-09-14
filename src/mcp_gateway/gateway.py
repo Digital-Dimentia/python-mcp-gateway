@@ -128,7 +128,14 @@ class Gateway:
     # --- what a Session calls -----------------------------------------------------------
 
     def server_info(self) -> dict[str, Any]:
-        return {"name": "mcp-gateway", "version": __version__}
+        """What a client is told this server is, at `initialize`.
+
+        `name` is the identifier clients key their own config off; `title` is the display
+        string beside it, and both come from `branding:` when the deployment sets one. An
+        unbranded gateway reports exactly what it always has -- see `branding.md`.
+        """
+        branding = self.config.branding
+        return {"name": branding.name, "title": branding.title, "version": __version__}
 
     def instructions(self) -> str:
         """Told to the model at `initialize`, so it knows the namespace exists.
