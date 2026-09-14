@@ -12,6 +12,7 @@ import asyncio
 import shutil
 import subprocess
 import zipfile
+from xml.etree import ElementTree
 from http.client import HTTPConnection
 from pathlib import Path
 
@@ -205,3 +206,54 @@ def test_the_url_carries_the_key_only_when_there_is_one() -> None:
     assert webui.url("127.0.0.1", 8765, "abc") == "http://127.0.0.1:8765/ui/?key=abc"
     # A wildcard bind is not an address a browser can be told to visit.
     assert webui.url("0.0.0.0", 8765).startswith("http://127.0.0.1:")
+
+
+async def test_the_stock_mark_is_served_as_an_image(tmp_path) -> None:
+    """The default logo is a file on `/ui`, not an emoji in a data URI.
+
+    It is the favicon, the header mark, and the thing a deployment swaps -- so it has to be
+    fetchable by a browser *and* stageable into the desktop shell, which is what being an
+    asset in the allowlist buys. A configured `branding.icon` never comes through here: that
+    file lives outside this package and arrives inline over `/admin`. See `branding.md`.
+    """
+    harness = await daemon(tmp_path)
+    try:
+        status, headers, body = await get(harness.port, "/ui/logo.svg")
+        assert status == 200
+        assert headers["Content-Type"] == "image/svg+xml"
+        assert body.lstrip().startswith(b"<svg")
+        # No <style> block: an SVG in an <img> is its own document, served under this
+        # module's `default-src 'none'` policy, where inline CSS is refused.
+        assert b"<style" not in body
+    finally:
+        await harness.close()
+
+
+def test_the_stock_mark_is_well_formed_xml() -> None:
+    """An SVG in an `<img>` is parsed as XML, not as HTML, and XML is unforgiving.
+
+    A `--` inside a comment is the trap: illegal in XML, tolerated nowhere, and the symptom
+    is not an error but an image that silently does not appear. It happened while this file
+    was being written, in a comment explaining the CSS custom property the colour came from.
+    Every other well-formedness slip fails the same silent way, so the check is the whole
+    parse rather than that one rule.
+    """
+    root = ElementTree.fromstring((ASSET_DIR / "logo.svg").read_text())
+    assert root.tag.endswith("svg")
+    assert root.get("viewBox"), "a mark with no viewBox cannot be scaled to a favicon"
+    for circle in (e for e in root.iter() if e.tag.endswith("circle")):
+        cx, cy, r = (float(circle.get(k)) for k in ("cx", "cy", "r"))
+        assert 0 <= cx - r and cx + r <= 32, circle.attrib
+        assert 0 <= cy - r and cy + r <= 32, circle.attrib
+
+
+def test_the_markup_wears_the_stock_mark_before_any_socket_answers() -> None:
+    """`index.html` names `logo.svg` twice: the favicon, and the header image.
+
+    Pinned because the fallback in `app.js` reads the second one off the DOM -- the markup
+    is the single place the stock mark is written down, and a rename here that missed one of
+    the two would leave a broken image until the first `admin.status` arrived.
+    """
+    markup = (ASSET_DIR / "index.html").read_text()
+    assert 'id="brand-favicon" href="logo.svg"' in markup
+    assert 'id="brand-icon" class="brand-icon" src="logo.svg"' in markup

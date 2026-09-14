@@ -53,6 +53,7 @@ flowchart TB
 | [`notifications.py`](src/mcp_gateway/notifications.md) | backend→client relay, and its debounce |
 | [`config.py`](src/mcp_gateway/config.md) | `servers.yaml` → specs. No secrets |
 | [`config_writer.py`](src/mcp_gateway/config_writer.md) | the other direction: the only module that writes `servers.yaml` |
+| [`branding.py`](src/mcp_gateway/branding.md) | white labelling: the title, the `serverInfo` name, and the icon |
 | [`secrets.py`](src/mcp_gateway/secrets.md) | `gateway.env` → values. The only module that holds one |
 | [`logging_redaction.py`](src/mcp_gateway/logging_redaction.md) | scrubs known values from every log record |
 | [`naming.py`](src/mcp_gateway/naming.md) | the `__` separator and the `mcpgw://` scheme |

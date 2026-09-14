@@ -72,7 +72,9 @@ where = ["src"]
 # it does in a checkout -- see webui.md. `tests/test_webui.py` asserts they are in the built
 # wheel, because "works from the repo, 404s from pip install" is the failure this invites.
 [tool.setuptools.package-data]
-"mcp_gateway.ui" = ["*.html", "*.css", "*.js"]
+# `*.svg` is the stock mark, which is package data for the same reason the stylesheet is:
+# the page ships everything it loads. See src/mcp_gateway/branding.md.
+"mcp_gateway.ui" = ["*.html", "*.css", "*.js", "*.svg"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

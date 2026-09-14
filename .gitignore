@@ -259,3 +259,10 @@ desktop/src-tauri/gen/
 # The staging view of src/mcp_gateway/ui/. There is one copy of the UI and it is not this
 # one; scripts/stage_ui.py rebuilds this from it. See desktop/README.md.
 desktop/.staging/
+
+# A rebrand, applied to the bundle by `make tauri-brand` and merged into the committed
+# tauri.conf.json at build time. Generated from `branding:` in the catalogue, so it is
+# reproducible; gitignored so a white-labelled checkout shows no diff and keeps passing
+# tests/test_desktop_layout.py, which pins the stock config. See src/mcp_gateway/branding.md.
+desktop/src-tauri/tauri.brand.json
+desktop/src-tauri/icons/brand/

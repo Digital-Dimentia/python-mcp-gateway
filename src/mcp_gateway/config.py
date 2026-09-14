@@ -29,6 +29,9 @@ from typing import Any
 
 from ruamel.yaml import YAML, YAMLError
 
+from mcp_gateway.branding import Branding, BrandingError
+from mcp_gateway.branding import DEFAULT as DEFAULT_BRANDING
+from mcp_gateway.branding import parse as parse_branding
 from mcp_gateway.naming import NamingError, validate_server_name
 
 logger = logging.getLogger(__name__)
@@ -45,7 +48,7 @@ ENV_MODE_CURATED = "curated"
 ENV_MODE_INHERIT = "inherit"
 ENV_MODES = frozenset({ENV_MODE_CURATED, ENV_MODE_INHERIT})
 
-_TOP_KEYS = frozenset({"version", "defaults", "servers"})
+_TOP_KEYS = frozenset({"version", "defaults", "servers", "branding"})
 _DEFAULTS_KEYS = frozenset({"timeout", "startup_timeout", "env_mode", "cwd", "lazy", "idle_ttl"})
 _ENTRY_KEYS = frozenset(
     {
@@ -121,6 +124,10 @@ class GatewayConfig:
     #: server has to say what omitting a key will mean, and the folded specs cannot answer
     #: that. `admin.config.get` reports it; see python-mcp-gateway-cw4.
     defaults: dict[str, Any] = field(default_factory=dict)
+    #: What this deployment calls itself. Display only -- see `branding.md`. Defaulted
+    #: rather than optional so every reader can say `config.branding.title` without a
+    #: branch, including the readers that run before any file has been loaded.
+    branding: Branding = DEFAULT_BRANDING
 
     @property
     def enabled(self) -> dict[str, ServerSpec]:
@@ -294,6 +301,17 @@ def parse(text: str, *, source: Path | None = None) -> GatewayConfig:
     if "lazy" in defaults:
         _as_bool(defaults["lazy"], where=f"{label}.defaults.lazy")
 
+    # Before the servers, so a broken logo is reported next to the other structural
+    # refusals rather than after a hundred lines of catalogue have parsed cleanly.
+    try:
+        branding = parse_branding(
+            document.get("branding"),
+            base_dir=source.parent if source is not None else None,
+            where=f"{label}.branding",
+        )
+    except BrandingError as exc:
+        raise ConfigError(str(exc)) from exc
+
     servers_raw = document.get("servers")
     if servers_raw is None:
         raise ConfigError(f"{label}: 'servers' is required")
@@ -309,7 +327,9 @@ def parse(text: str, *, source: Path | None = None) -> GatewayConfig:
             raise ConfigError(f"{label}.servers.{name}: {exc}") from exc
         servers[name] = _parse_entry(name, entry, defaults, where=f"{label}.servers.{name}")
 
-    return GatewayConfig(source=source, servers=servers, defaults=dict(defaults))
+    return GatewayConfig(
+        source=source, servers=servers, defaults=dict(defaults), branding=branding
+    )
 
 
 def load(path: Path) -> GatewayConfig:

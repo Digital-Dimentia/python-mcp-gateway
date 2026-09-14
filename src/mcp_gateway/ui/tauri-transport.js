@@ -96,6 +96,28 @@ export async function onGatewayState(handler) {
   return window.__TAURI__.event.listen('gateway-state', (event) => handler(event.payload));
 }
 
+/**
+ * Put the deployment's own title on the desktop window. A no-op in a browser, where
+ * `document.title` is the whole story.
+ *
+ * The window's title is baked into `tauri.conf.json` at build time and is therefore the
+ * stock one in a bundle anybody can build; the branding block is read by the *daemon*, at
+ * run time, out of a config file the bundle never saw. So the page is the only thing that
+ * knows both, and this is the one call that closes that gap. `core:window:allow-set-title`
+ * is in the capability file for exactly this and nothing else -- see branding.md.
+ *
+ * Swallows its failure: a window whose title bar still says `MCP Gateway` is a cosmetic
+ * disappointment, and throwing here would take `refreshAdmin` down with it.
+ */
+export async function setShellTitle(title) {
+  if (!inShell || !window.__TAURI__?.window || !title) return;
+  try {
+    await window.__TAURI__.window.getCurrentWindow().setTitle(title);
+  } catch {
+    /* the capability is absent, or the window has gone */
+  }
+}
+
 if (inShell) {
   // The key argument `rpc.js` passes is ignored, and that is the point of the whole design.
   setTransport((path) => new ShellSocket(path));

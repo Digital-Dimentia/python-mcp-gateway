@@ -24,12 +24,19 @@ The Tauri window's content security policy is *narrower* than the one below: its
 form of "that page opens no sockets". `tests/test_desktop_layout.py` asserts it.
 
 
-The UI is nine files: [`index.html`](ui/index.html), [`style.css`](ui/style.css),
+The UI is eleven files: [`index.html`](ui/index.html), [`style.css`](ui/style.css),
 [`app.js`](ui/app.js), [`rpc.js`](ui/rpc.js), [`schema_form.js`](ui/schema_form.js),
-[`render.js`](ui/render.js), [`clipboard.js`](ui/clipboard.js), [`theme.js`](ui/theme.js)
-and [`tauri-transport.js`](ui/tauri-transport.js). No build step, no bundler, no
-dependency — ES modules the browser loads directly. This module answers a GET for one of
-them.
+[`render.js`](ui/render.js), [`clipboard.js`](ui/clipboard.js),
+[`markdown.js`](ui/markdown.js), [`theme.js`](ui/theme.js),
+[`tauri-transport.js`](ui/tauri-transport.js) and [`logo.svg`](ui/logo.svg). No build step,
+no bundler, no dependency — ES modules the browser loads directly. This module answers a GET
+for one of them.
+
+`logo.svg` is the odd one and is here deliberately: it is the stock mark, worn by the page
+header and the favicon, and a deployment's shortest rebrand is replacing that one file. A
+*configured* `branding.icon` is not served from here at all — it names a file outside this
+package, and it reaches the page inline over `/admin` instead. See
+[`branding.md`](branding.md).
 
 ## The frame
 

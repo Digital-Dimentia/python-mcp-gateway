@@ -275,6 +275,12 @@ class Admin:
             "connections": self.gateway.describe_connections(),
             "config_path": str(self.gateway.config_path),
             "env_path": str(self.gateway.env_path),
+            # Display only, and carried here rather than behind its own method because the
+            # page needs it at the same moment it needs the rest of this: on connect, and
+            # again after every reload. The icon travels inline as a `data:` URI, capped at
+            # 128 KiB -- `branding.md` explains why a URL would not work in the desktop
+            # shell, and why re-reading the file beats caching it.
+            "branding": self.gateway.config.branding.describe(),
         }
 
     async def backends(self, _params: dict) -> dict[str, Any]:

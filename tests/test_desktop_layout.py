@@ -185,3 +185,20 @@ def test_the_shell_no_longer_reads_the_port_off_a_log_line() -> None:
 @pytest.mark.parametrize("name", ["servers.yaml", "gateway.env.template"])
 def test_the_seed_files_exist_for_the_bundle_to_carry(name: str) -> None:
     assert (TAURI / "seed" / name).is_file()
+
+
+def test_the_window_may_rename_itself_and_nothing_more() -> None:
+    """One permission beyond `core:default`, and it is the white-labelling one.
+
+    The window's title is baked into `tauri.conf.json` at build time; the deployment's own
+    title lives in a config file the daemon reads at run time. The page is the only thing
+    that sees both, so `setTitle` over IPC is how they meet -- see
+    `src/mcp_gateway/branding.md`.
+
+    Pinned as an exact list because the interesting failure is not this permission going
+    missing, it is the next one arriving beside it. `core:default` is broad already; every
+    addition after it is a decision, and a decision in a JSON array is invisible in review.
+    """
+    capability = json.loads((TAURI / "capabilities" / "default.json").read_text())
+    assert capability["permissions"] == ["core:default", "core:window:allow-set-title"]
+    assert capability["windows"] == ["main"]
