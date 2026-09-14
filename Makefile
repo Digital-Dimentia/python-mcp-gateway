@@ -312,7 +312,7 @@ tauri-brand:
 	$(PYTHON_BIN) scripts/brand_desktop.py --config $(CONFIG) $(ARGS)
 
 ## Run the app from source, with the UI symlinked rather than copied so an edit to
-## `src/mcp_gateway/ui/app.js` is one Cmd+R away. Needs the bundled interpreter to exist;
+## `src/mcp_gateway_ui/app.js` is one Cmd+R away. Needs the bundled interpreter to exist;
 ## `tauri-python` is cheap to re-run but not free, so it is a separate target you run once.
 tauri-dev:
 	$(PYTHON_BIN) scripts/stage_ui.py --mode link

@@ -455,7 +455,7 @@ branding:
 Reload, and the browser tab, the page header and the desktop window all wear the new name;
 MCP clients see `acme-tools` in `serverInfo` instead of `mcp-gateway`.
 
-The mark is one file, `src/mcp_gateway/ui/logo.svg` — the header image and the favicon, in
+The mark is one file, `src/mcp_gateway_ui/logo.svg` — the header image and the favicon, in
 both the browser and the desktop app. In a checkout, replace it. Anywhere else — a pip
 install, a container — point the config at your own file instead, which is also the way to
 keep your logo out of the package:

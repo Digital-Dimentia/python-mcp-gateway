@@ -21,7 +21,7 @@ before(async () => {
   const dom = new JSDOM('<main id="out"></main>');
   globalThis.document = dom.window.document;
   doc = dom.window.document;
-  ({ renderMarkdown } = await import('../../src/mcp_gateway/ui/markdown.js'));
+  ({ renderMarkdown } = await import('../../src/mcp_gateway_ui/markdown.js'));
 });
 
 /** Render `text` into a fresh box and hand the box back. */

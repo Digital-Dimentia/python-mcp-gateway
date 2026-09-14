@@ -37,7 +37,7 @@ on:
       - "src/desktop/**"
       - "scripts/stage_ui.py"
       - "scripts/bundle_python.py"
-      - "src/mcp_gateway/ui/**"
+      - "src/mcp_gateway_ui/**"
       - "Makefile"
       - ".github/workflows/desktop.yml"
   pull_request:
@@ -45,7 +45,7 @@ on:
       - "src/desktop/**"
       - "scripts/stage_ui.py"
       - "scripts/bundle_python.py"
-      - "src/mcp_gateway/ui/**"
+      - "src/mcp_gateway_ui/**"
       - "Makefile"
       - ".github/workflows/desktop.yml"
 

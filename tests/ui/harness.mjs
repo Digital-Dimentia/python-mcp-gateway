@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { JSDOM } from 'jsdom';
 
-const UI = new URL('../../src/mcp_gateway/ui/', import.meta.url);
+const UI = new URL('../../src/mcp_gateway_ui/', import.meta.url);
 
 //: The URL the page is served from, so `location.host` gives `rpc.js` a socket address and
 //: the `?key=` branch of `initialKey` has a query string to not find a key in.

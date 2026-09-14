@@ -83,7 +83,8 @@ clients, fanning out to N backend MCP servers that are stdio subprocesses it own
 credential lives in one gitignored `gateway.env`; each backend's environment is built from
 nothing but an allowlist plus its own `env` and `env_passthrough`. `servers.yaml` is
 committed and holds only `${NAME}` references. The same port serves the admin UI, which is
-static ES modules with no build step, and `src/desktop/` wraps the lot in a Tauri window.
+static ES modules with no build step in `src/mcp_gateway_ui/`, and `src/desktop/` wraps the
+lot in a Tauri window.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) is the module map, [GET_STARTED.md](GET_STARTED.md) is
 the user-facing walkthrough, and every module under `src/mcp_gateway/` has a sibling `.md`

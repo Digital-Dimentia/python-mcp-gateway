@@ -22,7 +22,7 @@ from mcp_gateway import webui
 from tests.fixtures.ws_client import daemon
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ASSET_DIR = REPO_ROOT / "src" / "mcp_gateway" / "ui"
+ASSET_DIR = REPO_ROOT / "src" / "mcp_gateway_ui"
 
 
 async def get(port: int, path: str):
@@ -98,11 +98,11 @@ async def test_the_allowlist_and_the_directory_agree(tmp_path) -> None:
 
     `webui.py` resolves a request against `ASSETS` and never joins a path, which is what
     makes traversal unreachable rather than merely guarded. The cost of that is this
-    assertion: a new file in `ui/` has to be named in the tuple or it is not served, and
-    a deleted one has to leave it or it 500s.
+    assertion: a new file in `src/mcp_gateway_ui/` has to be named in the tuple or it is
+    not served, and a deleted one has to leave it or it 500s.
     """
     on_disk = {p.name for p in ASSET_DIR.iterdir() if p.is_file() and p.suffix != ".py"}
-    assert on_disk == set(webui.ASSETS), "src/mcp_gateway/ui/ and webui.ASSETS disagree"
+    assert on_disk == set(webui.ASSETS), "src/mcp_gateway_ui/ and webui.ASSETS disagree"
 
 
 @pytest.mark.parametrize(
@@ -178,7 +178,7 @@ def test_the_wheel_carries_the_assets() -> None:
     with zipfile.ZipFile(wheels[-1]) as archive:
         names = set(archive.namelist())
     for asset in webui.ASSETS:
-        assert f"mcp_gateway/ui/{asset}" in names, asset
+        assert f"mcp_gateway_ui/{asset}" in names, asset
 
 
 def test_the_modules_parse() -> None:

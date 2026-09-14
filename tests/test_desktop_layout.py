@@ -2,10 +2,10 @@
 
 Two things are asserted here, and both are invariants a person cannot hold in their head.
 
-**There is one admin UI.** `src/desktop/.staging/ui` is a rebuilt view of `src/mcp_gateway/ui/`,
-not a fork. Nothing enforces that except this file: the day someone edits a staged file
-because it was the one open in the editor, the copy stops being a copy and the browser build
-and the app start to differ in ways nobody looks for.
+**There is one admin UI.** `src/desktop/.staging/ui` is a rebuilt view of
+`src/mcp_gateway_ui/`, not a fork. Nothing enforces that except this file: the day someone
+edits a staged file because it was the one open in the editor, the copy stops being a copy
+and the browser build and the app start to differ in ways nobody looks for.
 
 **The window cannot reach the network.** The whole design -- the host owning the sockets,
 the key never entering JavaScript -- rests on the page having no way out except the IPC
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-UI = REPO_ROOT / "src" / "mcp_gateway" / "ui"
+UI = REPO_ROOT / "src" / "mcp_gateway_ui"
 DESKTOP = REPO_ROOT / "src" / "desktop"
 TAURI = DESKTOP / "src-tauri"
 STAGING = DESKTOP / ".staging" / "ui"
@@ -49,7 +49,7 @@ def stage(mode: str) -> None:
 
 
 def test_a_copy_stage_is_byte_identical_to_the_source() -> None:
-    """Every staged file came from `src/mcp_gateway/ui/` and was not touched on the way."""
+    """Every staged file came from `src/mcp_gateway_ui/` and was not touched on the way."""
     stage("copy")
     try:
         staged = {p.name: p.read_bytes() for p in STAGING.iterdir() if p.is_file()}

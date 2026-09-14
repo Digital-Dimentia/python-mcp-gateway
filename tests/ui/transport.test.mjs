@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 
 import {
   AdminSocket, McpSocket, RpcError, PROTOCOL_VERSION, setTransport,
-} from '../../src/mcp_gateway/ui/rpc.js';
+} from '../../src/mcp_gateway_ui/rpc.js';
 
 /** The documented schedule in `rpc.js`. Spelled again here so a change has to be meant. */
 const BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000];

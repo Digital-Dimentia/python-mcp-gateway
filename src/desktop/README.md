@@ -58,7 +58,7 @@ architecture-independent and the interpreter is the only per-target artifact in 
 which Tauri builds per target anyway.
 
 A freezer (PyInstaller, Nuitka) would buy one file and cost the thing `webui.py` depends on:
-`importlib.resources` finding `mcp_gateway/ui/*.js` inside the bundle exactly as it finds
+`importlib.resources` finding `mcp_gateway_ui/*.js` inside the bundle exactly as it finds
 them in a checkout. It also keeps the app debuggable — `cli.py` in a shipped `.app` is still
 a file you can open when a user reports something.
 
@@ -69,7 +69,7 @@ UI assets, or validate a config. Roughly 58 MB, which makes the `.app` about 96 
 
 ## Why there is only one copy of the admin UI
 
-The assets live in `src/mcp_gateway/ui/` and nowhere else. `src/desktop/.staging/ui` is a view of
+The assets live in `src/mcp_gateway_ui/` and nowhere else. `src/desktop/.staging/ui` is a view of
 that directory, rebuilt by `scripts/stage_ui.py` and gitignored — a symlink for
 `make tauri-dev`, so editing `app.js` in its real home is one Cmd+R away, and a copy for
 `make tauri-bundle`, because the bundler would follow a symlink to a path that does not exist

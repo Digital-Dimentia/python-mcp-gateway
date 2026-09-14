@@ -141,7 +141,8 @@ drop in-flight work on the other eleven. See [`supervisor.md`](src/mcp_gateway/s
 ## The UI
 
 `/ui` serves nine static files -- HTML, CSS and seven ES modules -- from the same port as
-the two sockets. No build step and no dependency; `webui.py` answers the GET.
+the two sockets. No build step and no dependency; `webui.py` answers the GET, and the files
+themselves live in `src/mcp_gateway_ui/`, a package of their own beside the daemon.
 
 ```mermaid
 flowchart LR
