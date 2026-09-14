@@ -38,3 +38,4 @@ servers:
       # allowlist's. This is here so a pyenv or Homebrew interpreter is found the same way
       # your shell finds it.
       - "PATH"
+    enabled: true
