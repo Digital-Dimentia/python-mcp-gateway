@@ -434,6 +434,57 @@ else keeps its process and its in-flight work, and every attached client stays c
 either file fails to parse, nothing changes at all — you get the parse error and the daemon
 carries on as it was.
 
+### Keeping the credentials somewhere else
+
+`gateway.env` is the default, not the only option. If your credentials live in Vault, in
+AWS Secrets Manager, or behind something internal, write a Python file and point the
+catalogue at it:
+
+```yaml
+# servers.yaml
+secrets:
+  providers:
+    - provider: "./providers/vault.py:VaultProvider"
+      options:
+        addr: "https://vault.internal:8200"
+        mount: "kv/mcp-gateway"
+```
+
+A provider is any object with a `load` method:
+
+```python
+# ./providers/vault.py
+class VaultProvider:
+    def __init__(self, addr, mount):
+        self._client = hvac.Client(url=addr)
+        self._mount = mount
+
+    def load(self, request):
+        # request.keys is exactly the ${VAR} names servers.yaml references.
+        return {key: self._fetch(key) for key in request.keys if self._has(key)}
+```
+
+Providers are asked in order and **`gateway.env` is always asked last**, so you do not have
+to move anything that already works — the usual setup is backend tokens from the provider
+and `WS_ACCESS_KEY` left in the file. Return only the keys you have; a key you omit falls
+through to the next provider, and then to the file. Raise if your store is unreachable, so
+the daemon refuses to start rather than handing every backend an empty token.
+
+`mcp-gateway --check` runs the chain and prints what each source supplied:
+
+```
+secrets: ./providers/vault.py:VaultProvider (4 key(s)) -> /etc/mcp-gateway/gateway.env (1 key(s))
+```
+
+There is a runnable provider with no third-party dependency in
+[`examples/vault_provider.py`](examples/vault_provider.py), and the reasoning behind the
+interface — in particular why it hands back everything at once instead of resolving one key
+at a time — is in
+[`src/mcp_gateway/secret_providers.md`](src/mcp_gateway/secret_providers.md).
+
+Editing a provider *file* needs a restart, not a reload: a loaded provider is cached so a
+reload does not drop a pooled connection.
+
 ### Adding a server while running
 
 Edit `servers.yaml` (or use `+ Add` in the UI), then reload the same way. The catalogue

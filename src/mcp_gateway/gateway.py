@@ -55,8 +55,8 @@ from mcp_gateway.mcp_stdio import (
 )
 from mcp_gateway.notifications import Notifier, Subscriptions
 from mcp_gateway.router import Router
+from mcp_gateway.secret_providers import build_store
 from mcp_gateway.secrets import SecretError, SecretStore
-from mcp_gateway.secrets import load as load_secrets
 from mcp_gateway.session import Session
 from mcp_gateway.supervisor import Supervisor
 from mcp_gateway.transport_ws import ClientLink, GatewayServer
@@ -608,7 +608,12 @@ class Gateway:
         async with self._reload_lock:
             try:
                 config = load_config(self.config_path)
-                store = load_secrets(self.env_path)
+                # Off the event loop: a provider is third-party code that may spend a
+                # second on a network round trip, and the sessions already attached must
+                # not stall on it. `build_store` builds a new object or raises, so moving
+                # it to a thread costs nothing of the atomicity below -- there is still no
+                # moment where half a store has been applied.
+                store = await asyncio.to_thread(build_store, config, self.env_path)
             except (ConfigError, SecretError) as refusal:
                 logger.error("reload refused, nothing changed: %s", refusal)
                 return error_result(f"reload refused, nothing changed: {refusal}")

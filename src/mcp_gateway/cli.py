@@ -30,8 +30,8 @@ from mcp_gateway.config import ConfigError, GatewayConfig, ServerSpec, load as l
 from mcp_gateway.gateway import Gateway
 from mcp_gateway.logging_redaction import install_redaction
 from mcp_gateway import portfile
+from mcp_gateway.secret_providers import FILE_ORIGIN, build_store
 from mcp_gateway.secrets import MissingSecret, SecretError, SecretStore, missing_for
-from mcp_gateway.secrets import load as load_secrets
 from mcp_gateway.transport_ws import (
     UnauthenticatedBindError,
     resolve_access_key,
@@ -235,6 +235,24 @@ def _print_branding(branding: Branding) -> None:
         print(f"icon: {branding.icon_path}", file=sys.stderr)
 
 
+def _describe_sources(config: GatewayConfig, env_path: Path, store: SecretStore) -> str:
+    """The `secrets:` line of `--check`, naming every source and its key count.
+
+    One line rather than one per source: the interesting number is how many keys resolved,
+    and an operator with no providers configured -- which is most of them -- must not have
+    to read past a section header to find it.
+    """
+    counts: dict[str, int] = {}
+    for key in store.keys():
+        origin = store.origin(key) or FILE_ORIGIN
+        counts[origin] = counts.get(origin, 0) + 1
+    if not config.secret_providers:
+        return f"{env_path} ({len(store.keys())} key(s))"
+    parts = [f"{spec.ref} ({counts.get(spec.ref, 0)} key(s))" for spec in config.secret_providers]
+    parts.append(f"{env_path} ({counts.get(FILE_ORIGIN, 0)} key(s))")
+    return " -> ".join(parts)
+
+
 def check(config_path: Path, env_path: Path, *, list_plan: bool = False) -> int:
     """Validate both files without binding a port or spawning anything.
 
@@ -248,7 +266,10 @@ def check(config_path: Path, env_path: Path, *, list_plan: bool = False) -> int:
         print(str(refusal), file=sys.stderr)
         return EXIT_REFUSED
     try:
-        store = load_secrets(env_path)
+        # Runs any configured provider, which is the point: `--check` exists to fail on
+        # this machine before the daemon does, and an unreachable Vault is exactly the
+        # kind of thing it should catch.
+        store = build_store(config, env_path)
     except SecretError as refusal:
         print(str(refusal), file=sys.stderr)
         return EXIT_REFUSED
@@ -258,7 +279,7 @@ def check(config_path: Path, env_path: Path, *, list_plan: bool = False) -> int:
     install_redaction(store)
 
     print(f"config: {config_path}", file=sys.stderr)
-    print(f"secrets: {env_path} ({len(store.keys())} key(s))", file=sys.stderr)
+    print(f"secrets: {_describe_sources(config, env_path, store)}", file=sys.stderr)
     # Only when there is one. An unbranded gateway printing "brand: MCP Gateway" is a line
     # that carries no information and has to be read past every time.
     if config.branding.customised:
@@ -348,7 +369,7 @@ def _handle(loop: asyncio.AbstractEventLoop, sig: int, action: Callable[[], None
 async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) -> None:
     """Load, start backends, bind, and serve until told to stop."""
     config = load_config(config_path)
-    store = load_secrets(env_path)
+    store = build_store(config, env_path)
     # The access key goes in even when it came from the environment rather than the store:
     # `websockets` logs the request line, query string and all, at DEBUG.
     access_key = resolve_access_key(store)
