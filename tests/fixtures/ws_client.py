@@ -23,7 +23,7 @@ from mcp_gateway.config import load as load_config
 from mcp_gateway.gateway import Gateway
 from mcp_gateway.logging_redaction import install_redaction
 from mcp_gateway.protocol import MCP_PROTOCOL_VERSION
-from mcp_gateway.secrets import load as load_secrets
+from mcp_gateway.secret_providers import build_store
 
 
 class Client:
@@ -179,10 +179,13 @@ async def daemon(
     env_path = tmp_path / "gateway.env"
     env_path.write_text(env)
 
-    store = load_secrets(env_path)
+    # `build_store`, not `secrets.load`, so a harness builds its store exactly the way the
+    # daemon does -- including any `secrets:` block the test put in `servers`.
+    config = load_config(config_path)
+    store = build_store(config, env_path)
     install_redaction(store, extra=[access_key] if access_key else [])
     gateway = Gateway(
-        load_config(config_path),
+        config,
         store,
         config_path=config_path,
         env_path=env_path,

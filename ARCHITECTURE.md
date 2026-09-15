@@ -55,6 +55,7 @@ flowchart TB
 | [`config_writer.py`](src/mcp_gateway/config_writer.md) | the other direction: the only module that writes `servers.yaml` |
 | [`branding.py`](src/mcp_gateway/branding.md) | white labelling: the title, the `serverInfo` name, and the icon |
 | [`secrets.py`](src/mcp_gateway/secrets.md) | `gateway.env` → values. The only module that holds one |
+| [`secret_providers.py`](src/mcp_gateway/secret_providers.md) | the `secrets:` block: pluggable sources ahead of that file |
 | [`logging_redaction.py`](src/mcp_gateway/logging_redaction.md) | scrubs known values from every log record |
 | [`naming.py`](src/mcp_gateway/naming.md) | the `__` separator and the `mcpgw://` scheme |
 | [`protocol.py`](src/mcp_gateway/protocol.md) | method names, versions, the capability block |
@@ -130,7 +131,8 @@ drop in-flight work on the other eleven. See [`supervisor.md`](src/mcp_gateway/s
 | | |
 |---|---|
 | Backend env | built from nothing: allowlist + `env_passthrough` + own `env`. No backend sees another's credential |
-| `${VAR}` | resolved from `gateway.env` only, **never** `os.environ` |
+| `${VAR}` | resolved from `gateway.env` and any configured secret provider, **never** `os.environ` |
+| `secrets:` | provider refs come from the committed catalogue and are never interpolated; parsing a catalogue imports nothing |
 | `command`/`args` | interpolation refused — argv is world-readable through `ps` |
 | Logging | every known value scrubbed at the **root** logger, so a backend's own stderr is covered too |
 | Bind | non-loopback with no key is refused; `is_loopback` fails closed |

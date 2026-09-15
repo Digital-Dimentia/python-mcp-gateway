@@ -33,6 +33,8 @@ from mcp_gateway.branding import Branding, BrandingError
 from mcp_gateway.branding import DEFAULT as DEFAULT_BRANDING
 from mcp_gateway.branding import parse as parse_branding
 from mcp_gateway.naming import NamingError, validate_server_name
+from mcp_gateway.secret_providers import ProviderSpec, SecretProviderError
+from mcp_gateway.secret_providers import parse as parse_secret_providers
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ ENV_MODE_CURATED = "curated"
 ENV_MODE_INHERIT = "inherit"
 ENV_MODES = frozenset({ENV_MODE_CURATED, ENV_MODE_INHERIT})
 
-_TOP_KEYS = frozenset({"version", "defaults", "servers", "branding"})
+_TOP_KEYS = frozenset({"version", "defaults", "servers", "branding", "secrets"})
 _DEFAULTS_KEYS = frozenset({"timeout", "startup_timeout", "env_mode", "cwd", "lazy", "idle_ttl"})
 _ENTRY_KEYS = frozenset(
     {
@@ -128,6 +130,11 @@ class GatewayConfig:
     #: rather than optional so every reader can say `config.branding.title` without a
     #: branch, including the readers that run before any file has been loaded.
     branding: Branding = DEFAULT_BRANDING
+    #: The `secrets:` block: where secret *values* come from, ahead of `gateway.env`.
+    #: Validated here but not loaded here -- importing the operator's Python is
+    #: `secret_providers.build_store`'s job, so parsing a catalogue never runs their code.
+    #: Empty means the file alone, which is every deployment that has not asked otherwise.
+    secret_providers: tuple[ProviderSpec, ...] = ()
 
     @property
     def enabled(self) -> dict[str, ServerSpec]:
@@ -312,6 +319,15 @@ def parse(text: str, *, source: Path | None = None) -> GatewayConfig:
     except BrandingError as exc:
         raise ConfigError(str(exc)) from exc
 
+    # Beside branding, and for the same reason: a `secrets:` block that cannot be honoured
+    # is a structural refusal, and it decides where every `${VAR}` below will resolve from.
+    try:
+        secret_providers = parse_secret_providers(
+            document.get("secrets"), where=f"{label}.secrets"
+        )
+    except SecretProviderError as exc:
+        raise ConfigError(str(exc)) from exc
+
     servers_raw = document.get("servers")
     if servers_raw is None:
         raise ConfigError(f"{label}: 'servers' is required")
@@ -328,7 +344,11 @@ def parse(text: str, *, source: Path | None = None) -> GatewayConfig:
         servers[name] = _parse_entry(name, entry, defaults, where=f"{label}.servers.{name}")
 
     return GatewayConfig(
-        source=source, servers=servers, defaults=dict(defaults), branding=branding
+        source=source,
+        servers=servers,
+        defaults=dict(defaults),
+        branding=branding,
+        secret_providers=secret_providers,
     )
 
 

@@ -85,6 +85,15 @@ class SecretStore:
 
     source: Path | None = None
     _values: dict[str, str] = field(default_factory=dict, repr=False)
+    #: Where each key came from: a provider's `ref` string, or
+    #: `secret_providers.FILE_ORIGIN`. Populated by `secret_providers.build_store`, which
+    #: attributes every key including the file's -- one rule rather than two, so `origin`
+    #: either answers for every key or for none. Empty for a store built by `load` alone,
+    #: which is this module knowing nothing about the chain above it.
+    #: See [`secret_providers.md`](secret_providers.md).
+    #:
+    #: Key *names* only, never values -- this is reported over `/admin` verbatim.
+    origins: dict[str, str] = field(default_factory=dict, repr=False)
 
     def __repr__(self) -> str:
         """Key names only.
@@ -113,6 +122,16 @@ class SecretStore:
         error naming a key that is plainly there.
         """
         return self._values.get(key)
+
+    def origin(self, key: str) -> str | None:
+        """Where `key` came from, or `None` when this store carries no provenance.
+
+        `None` rather than a guess. A store built by `load` alone has no origins map --
+        this module knows nothing about the chain above it, and inventing an answer here
+        would mean naming a constant that belongs to `secret_providers`. Such a caller
+        already knows the answer: it is `source`, for every key.
+        """
+        return self.origins.get(key)
 
     def redactable_values(self) -> list[str]:
         """Every value long enough to be worth scrubbing from a log line.

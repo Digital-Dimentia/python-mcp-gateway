@@ -9,6 +9,35 @@ nobody reads.
 
 ## Unreleased
 
+**Secrets can come from somewhere other than `gateway.env`.** A `secrets:` block in
+`servers.yaml` names one or more providers — a Python file on your own machine, or an
+importable module — and each is asked for the `${VAR}` values the catalogue references
+before the file is. This is for the deployment whose credentials live in Vault, in AWS
+Secrets Manager, or behind an internal service, and which until now had no way to say so
+without forking the project.
+
+```yaml
+secrets:
+  providers:
+    - provider: "./providers/vault.py:VaultProvider"
+      options: {addr: "https://vault.internal:8200", mount: "kv/mcp-gateway"}
+```
+
+A provider is any object with `load(request) -> Mapping[str, str]`. The request names
+exactly the keys the catalogue wants, so a remote store is read by path and never has to
+grant permission to list a mount.
+
+Providers are asked in order, the first answer for a key wins, and **`gateway.env` is
+always the last link** — so adopting one does not mean moving a working credential. The
+usual shape is backend tokens from Vault and the daemon's own `WS_ACCESS_KEY` left in the
+file it is already in. `--check` now names each source and how many keys it supplied, and
+`admin.secrets.list` reports where each key came from.
+
+Nothing changed for a deployment that does not write the block: no providers means the file
+alone, exactly as before. A provider that cannot reach its backing store is fatal rather
+than quietly empty — startup refuses, and a reload refuses without changing anything, which
+is the same load-then-replace guarantee a malformed `servers.yaml` has always had.
+
 **The admin UI is its own package.** `src/mcp_gateway/ui/` is now `src/mcp_gateway_ui/`,
 a top-level package beside the daemon rather than package data inside it. `src/mcp_gateway/`
 is the Python that serves MCP, `src/mcp_gateway_ui/` is the page a browser and the desktop

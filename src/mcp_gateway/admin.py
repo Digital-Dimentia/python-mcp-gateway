@@ -296,8 +296,23 @@ class Admin:
         return await self._health(backend)
 
     async def secrets_keys(self, _params: dict) -> dict[str, Any]:
-        """Key **names** only. There is no method that returns a value, deliberately."""
-        return {"keys": self.gateway.store.keys(), "source": str(self.gateway.env_path)}
+        """Key **names** only. There is no method that returns a value, deliberately.
+
+        `source` stays what it always was -- the path to `gateway.env` -- and `origins`
+        is added beside it, naming where each key actually came from once a `secrets:`
+        block is in play. A store built from the file alone reports an empty `origins`,
+        so a page that never learned about providers keeps rendering exactly as before.
+
+        Origins are provider *refs*, never options: the ref is already in a committed file,
+        while an option mapping is where somebody eventually puts a URL with a token in it.
+        """
+        store = self.gateway.store
+        return {
+            "keys": store.keys(),
+            "source": str(self.gateway.env_path),
+            "origins": {key: origin for key in store.keys() if (origin := store.origin(key))},
+            "providers": [spec.ref for spec in self.gateway.config.secret_providers],
+        }
 
     async def clipboard_put(self, params: dict) -> dict[str, Any]:
         """The page publishing its two right-hand columns.
