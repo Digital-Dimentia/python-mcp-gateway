@@ -9,6 +9,23 @@ nobody reads.
 
 ## Unreleased
 
+**The admin UI has screens, and an About screen to read the gateway off.** A selector sits in the header
+after the name; the bars stay exactly as they are and only the panel between them changes.
+**Basics** is the work you already had — primitives, results, injectable values — and still
+the screen the page opens on. **About** is the other: the endpoint to point a client at, the
+config and env files the gateway read, and a row per configured server saying whether it came
+up, what command is behind it, which secrets `gateway.env` is missing for it, and what it said
+if it failed. That is all reachable from Basics already, in a footer or behind a menu; the
+point of About is reading it in one pass, before you start working. It makes no request of
+its own. The choice is remembered per browser, and applied before the first paint so no
+reload flashes the wrong screen.
+
+A screen is one module that default-exports `{ id, refresh(state), show() }`, and the page
+dispatches through a registry rather than a branch per screen — so adding one is a new file,
+an `<option>`, a pair of CSS rules and a line in the asset allowlist, with no edit inside any
+screen that already exists. About is the first module to live outside `app.js`; the columns
+follow.
+
 **Secrets can come from somewhere other than `gateway.env`.** A `secrets:` block in
 `servers.yaml` names one or more providers — a Python file on your own machine, or an
 importable module — and each is asked for the `${VAR}` values the catalogue references

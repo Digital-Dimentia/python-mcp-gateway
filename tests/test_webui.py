@@ -181,6 +181,24 @@ def test_the_wheel_carries_the_assets() -> None:
         assert f"mcp_gateway_ui/{asset}" in names, asset
 
 
+def test_the_screen_modules_do_not_import_the_frame() -> None:
+    """The seam is one-way, and this is the only place that can say so.
+
+    `app.js` imports the screen modules and hands each one what it may touch -- the state it
+    renders, and for the variables column a named port of everything it may do to an open
+    form. Importing back the other way would work, and it is exactly what must not happen:
+    the cycle is the lesser problem, and a screen reaching into the frame's variables is the
+    real one, because it is what makes a screen impossible to move, test or delete on its
+    own. Nothing about that rule is visible from inside either file, so it is checked here.
+
+    Prose in these files mentions `app.js` constantly, which is why this matches the import
+    specifier rather than the name.
+    """
+    for name in ("variables.js", "detail.js", "primitives.js", "results.js", "naming.js", "screen_about.js", "screen_basics.js"):
+        text = (ASSET_DIR / name).read_text()
+        assert "from './app.js'" not in text, name
+
+
 def test_the_modules_parse() -> None:
     """`node --check` on each ES module, when node is around.
 

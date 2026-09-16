@@ -1,23 +1,41 @@
-// The three columns, and everything that moves between them.
+// The frame, and the wiring between the pieces inside it.
 //
 // Two sockets, deliberately. `/admin` answers what is configured and what is running;
 // `/mcp` answers what those backends actually publish, through a real MCP handshake. The
 // second half is not a convenience: a UI that asked `/admin` for a tool listing would be
 // showing its own rendering of the catalogue, and the whole point of a test bench is that
 // what you exercise here is byte-identical to what the model gets.
+//
+// What is left in this file is the part that is true on every screen: the two sockets and
+// the gate in front of them, the deployment's branding, the server bar and the editor it
+// drops, the log, the theme, and the registry that says which screen is showing. The Basics
+// screen is coming out of here a piece at a time -- `variables.js` and `detail.js` so far,
+// the rest under python-mcp-gateway-8mm -- and each piece is *handed* what it may touch,
+// never given this file to import. The installs at the foot of `Go` are where that is done,
+// and they are the only place either module is named twice.
 
 import { AdminSocket, McpSocket, RpcError } from './rpc.js';
 import { gatewayStatus, inShell, onGatewayState, setShellTitle } from './tauri-transport.js';
-import { buildForm, buildPromptForm, templateVariables, expandTemplate } from './schema_form.js';
-import {
-  renderToolResult, renderPromptResult, renderResourceResult, renderError, resultCard, pretty,
-} from './render.js';
+import { renderError, resultCard, pretty } from './render.js';
 import { installClipboard, clipboardChanged } from './clipboard.js';
+import { basename, formatDuration } from './format.js';
+//: The screens. Each is one default export; the registry under `The screens` is what binds
+//: one to the `<option>` that selects it.
+import basicsScreen from './screen_basics.js';
+import aboutScreen from './screen_about.js';
+//: The injectable values column, which is the first piece of the Basics screen to live
+//: outside this file. It is handed what it may touch rather than importing it -- see
+//: the `variables.install` call in `Go`, and the header of `variables.js`.
+import * as variables from './variables.js';
+//: The form a primitive opens into. It is handed the frame it needs, and hands back the
+//: eight functions the column above needs to write into whatever form is open -- so this
+//: file wires the two together and implements neither. See both modules' headers.
+//: The left column: what the selected server publishes, and the row that opens the panel.
+//: The middle column. It takes no port: see its header for why it is the one that does not.
+import * as results from './results.js';
+import * as primitives from './primitives.js';
+import * as detail from './detail.js';
 
-// Mirrors `naming.py`. A server name may contain neither, which is what makes a split on
-// the first separator unambiguous — see naming.md.
-const SEPARATOR = '__';
-const RESOURCE_SCHEME = 'mcpgw';
 
 //: The gateway's own meta-tools live under this name and have no backend behind them, so
 //: they appear in the header's server row as a synthetic entry rather than going unreachable.
@@ -73,6 +91,13 @@ const state = {
   item: null,
   everConnected: { admin: false, mcp: false },
 };
+
+//: Which screen the content panel is showing. Chrome rather than gateway truth -- the same
+//: reason `openMenu` is not in `state` -- but at module scope so the refreshes can ask
+//: whether the screen they would repaint is the one on the glass. Null until the selector
+//: is wired at the foot of this file; nothing that reads it can run before then, because
+//: every reader is downstream of a socket answering.
+let activeScreen = null;
 
 // ── Access key ─────────────────────────────────────────────────────────────────
 
@@ -182,7 +207,7 @@ function connect() {
     await refreshAdmin();
     startLogTail();
   });
-  wire(state.mcp, 'mcp', $('pill-mcp'), () => refreshListings());
+  wire(state.mcp, 'mcp', $('pill-mcp'), () => primitives.refreshListings());
 
   state.admin.addEventListener('notify', (event) => {
     const { method, params } = event.detail;
@@ -194,7 +219,7 @@ function connect() {
     // The gateway relays a backend's `list_changed` upward. Refetching on it is the whole
     // reason the notification exists; a UI that ignores it shows a listing that was true
     // once.
-    if (method.startsWith('notifications/') && method.endsWith('list_changed')) refreshListings();
+    if (method.startsWith('notifications/') && method.endsWith('list_changed')) primitives.refreshListings();
   });
 
   state.admin.connect();
@@ -272,6 +297,11 @@ function updateMeta() {
     if (i) meta.append(el('span', { class: 'bar-sep', text: '·', 'aria-hidden': 'true' }));
     meta.append(el('span', { text }));
   });
+
+  //: A screen drawn from these payloads is repainted from the same place the bars are --
+  //: and only while it is the one being looked at. A hidden screen is repainted when it is
+  //: chosen, by `showScreen`.
+  SCREEN_MODULES[activeScreen]?.refresh?.(state);
 }
 
 // A pill said only whether its socket was open. It now says the whole of what an operator
@@ -318,16 +348,6 @@ function updateFiles() {
     file.title = status.env_path;
   }
 }
-
-const basename = (path) => String(path).split('/').pop() || String(path);
-
-const formatDuration = (seconds) => {
-  const s = Math.max(0, Math.round(seconds || 0));
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
-  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
-};
 
 // ── What /admin says ───────────────────────────────────────────────────────────
 
@@ -523,7 +543,7 @@ document.addEventListener('keydown', (event) => {
   // Escape dismisses the tooltip whether or not a menu is open, and without swallowing the
   // key: WAI-ARIA asks that a tooltip be dismissible without moving focus, which matters
   // most to the person who cannot simply look past it.
-  hideTooltip();
+  primitives.hideTooltip();
   if (openMenu === null) return;
   openMenu = null;
   renderBackends();
@@ -552,7 +572,7 @@ async function admin(method, params) {
   const started = performance.now();
   try {
     const result = await state.admin.request(method, params);
-    pushCard({
+    results.pushCard({
       title: method,
       subtitle: params?.name || '',
       request: { method, params: params || {} },
@@ -561,10 +581,10 @@ async function admin(method, params) {
       raw: result,
     });
     await refreshAdmin();
-    await refreshListings();
+    await primitives.refreshListings();
     return result;
   } catch (err) {
-    pushCard({
+    results.pushCard({
       title: method,
       subtitle: params?.name || '',
       request: { method, params: params || {} },
@@ -586,6 +606,17 @@ function adminResultBody(result) {
   }
   parts.push(el('pre', { class: 'block' }, [el('code', { text: pretty(result) })]));
   return el('div', { class: 'result-body' }, parts);
+}
+
+// Which server the whole screen is about. The server bar's action rather than any one
+// column's: it changes what every column below is showing, so it belongs where the buttons
+// that trigger it are.
+function select(name) {
+  state.selected = name;
+  state.item = null;
+  renderBackends();
+  primitives.render();
+  variables.refreshVariables();
 }
 
 // ── Logs ───────────────────────────────────────────────────────────────────────
@@ -679,1681 +710,94 @@ $('btn-log').addEventListener('click', () => {
   setLogOpen($('btn-log').getAttribute('aria-expanded') !== 'true');
 });
 
-// ── The column widths ──────────────────────────────────────────────────────────
+// ── The screens ────────────────────────────────────────────────────────────────
 //
-// `theme.js` owns the storage, the validation and the defaults, because a split restored
-// from a deferred module lands after the first paint. This owns the gesture. The two
-// gutters are the edges between the columns, and dragging one moves only the pair it
-// divides -- their sum is held constant, so the third column does not shuffle sideways
-// while you are still aiming at the second.
+// The header and the footer are the frame and do not change: they are the gateway -- the
+// servers, the sockets, the log, the two files it reads -- and not a view of it. What the
+// selector swaps is the content panel between them.
 //
-// Everything is measured in pixels and written back as `fr`. An `fr` value is a pure ratio,
-// so a set of measured widths *is* a valid set of `fr` numbers: writing the measurements
-// back reproduces the layout exactly, and keeps it proportional through a later window
-// resize with no listener of our own. It is also the only sound basis for the arithmetic.
-// Once a column is sitting on its floor the grid takes that track out of the flex
-// distribution and shares the rest among the others, so the rendered widths stop following
-// the stored ratio -- and a delta measured against the stored numbers would send the
-// divider somewhere other than where the cursor is on the very first move.
+// The register of screens is the `<option>` list in `index.html`, read here rather than
+// repeated: the control, the sections and the stylesheet's rules are three places a screen
+// already has to be written down, and a fourth list in JavaScript would be the one that
+// falls out of step. `theme.js` restores the stored name before the first paint and knows
+// none of them; this is where a name that is no longer a screen is caught, because the body
+// is parsed by the time a module runs and the options can be looked at.
+//
+// A screen is one default-exported object -- `{ id, refresh(state), show() }` -- and this is
+// the registry of them. The contract is written out at the head of `screen_about.js`; what
+// matters here is that dispatch is a lookup rather than a branch, so adding a screen touches
+// this object and nothing else in this file.
+//
+// `refresh` is *handed* the state rather than importing it. A screen that reached back into
+// this module's variables would be a cycle on paper and a knot in practice; a screen that is
+// a renderer of what it is given can be moved, tested and deleted on its own.
+//
+// Every screen renders on being shown rather than on every refresh. Basics is the work
+// surface and the rest are pages about it; keeping a hidden page up to date is work nobody
+// is looking at.
 
-const columnsEl = document.querySelector('.columns');
-const colEls = [...columnsEl.querySelectorAll('.col')];
-const gutterEls = [...columnsEl.querySelectorAll('.gutter')];
+const screenSelect = $('screen-select');
+const SCREENS = [...screenSelect.options].map((option) => option.value);
 
-let colDrag = null;
+const SCREEN_MODULES = {
+  [basicsScreen.id]: basicsScreen,
+  [aboutScreen.id]: aboutScreen,
+};
 
-/** The floor a drag clamps against, read off the stylesheet rather than copied from it. */
-function columnFloor() {
-  const raw = getComputedStyle(columnsEl).getPropertyValue('--col-min').trim();
-  const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-  if (raw.endsWith('rem')) return parseFloat(raw) * root;
-  if (raw.endsWith('px')) return parseFloat(raw);
-  return 16 * root;
+//: Every option must name a module, and every module an option. Cheap, and it fires on the
+//: one mistake this design invites -- a screen added to the markup and to the stylesheet but
+//: never registered, which shows an empty section and no error at all.
+for (const name of SCREENS) {
+  if (!SCREEN_MODULES[name]) console.warn(`no module registered for screen ${name}`);
 }
 
-const measureColumns = () => colEls.map((col) => col.getBoundingClientRect().width);
+function showScreen(name, store = true) {
+  const screen = SCREENS.includes(name) ? name : SCREENS[0];
+  activeScreen = screen;
+  screenSelect.value = screen;
+  //: Storage is written by the gesture, not by the restore. Writing on the way in would
+  //: make every load a write, and would pin whichever screen is first in the list as an
+  //: explicit choice for someone who has never made one. The one exception is a stored name
+  //: this build no longer has a screen for: the attribute `theme.js` put on <html> still
+  //: names it, the stylesheet is answering it with Basics, and leaving the two saying
+  //: different things is how a later screen with that name comes back from the dead.
+  if (store || (name && !SCREENS.includes(name))) window.__screen.set(screen);
 
-/** Widths as shares of 100, to a tenth: small, legible numbers that mean the same thing. */
-function columnShares(widths) {
-  const total = widths[0] + widths[1] + widths[2];
-  return widths.map((w) => Math.round((w / total) * 1000) / 10);
+  //: Both hooks, in this order: draw from the payloads that moved while the screen was
+  //: away, then do whatever needed the screen to actually be laid out.
+  const module = SCREEN_MODULES[screen];
+  module?.refresh?.(state);
+  module?.show?.();
 }
 
-/** A separator that moves is a widget, and a widget with no value announces nothing. */
-function showColumnValues(widths) {
-  gutterEls.forEach((gutter, i) => {
-    const share = (widths[i] / (widths[i] + widths[i + 1])) * 100;
-    gutter.setAttribute('aria-valuenow', String(Math.round(share)));
-  });
-}
+screenSelect.addEventListener('change', () => showScreen(screenSelect.value));
 
-/**
- * The move itself. `i` names the pair, `delta` is in pixels, and it is clamped *before* it
- * is applied rather than after: clamping the result would let an overshoot accumulate out
- * of sight, and the divider would then sit still for the width of that overshoot on the way
- * back instead of picking the cursor up where it left it.
- */
-function moveColumnEdge(widths, i, delta, floor) {
-  const low = floor - widths[i];
-  const high = widths[i + 1] - floor;
-  //: Too narrow for both floors at once -- only reachable in the band between their total
-  //: and the breakpoint where the columns stack. There is no honest move, so make none.
-  if (low > high) return null;
-  const step = Math.min(Math.max(delta, low), high);
-  const next = widths.slice();
-  next[i] += step;
-  next[i + 1] -= step;
-  return next;
-}
-
-function applyColumnDrag() {
-  if (!colDrag) return;
-  const next = moveColumnEdge(
-    colDrag.widths, colDrag.index, colDrag.x - colDrag.startX, colDrag.floor,
-  );
-  if (!next) return;
-  colDrag.shares = columnShares(next);
-  window.__columns.apply(colDrag.shares);
-  showColumnValues(next);
-}
-
-function endColumnDrag() {
-  if (!colDrag) return;
-  if (colDrag.frame) cancelAnimationFrame(colDrag.frame);
-  colDrag.frame = 0;
-  //: A press that never moved is a click, not a resize. Landing it anyway would store the
-  //: split the page happens to be showing, which looks like nothing at all and quietly
-  //: turns the stylesheet's default into a pinned layout that only a reset undoes.
-  if (colDrag.x !== colDrag.startX) applyColumnDrag();   // the last position, not the last frame
-  //: Written once, at the end. Persisting per frame would be a hundred serialisations of a
-  //: number nobody has settled on yet.
-  if (colDrag.shares) window.__columns.save(colDrag.shares);
-  colDrag.gutter.classList.remove('on');
-  document.documentElement.classList.remove('col-resizing');
-  colDrag = null;
-}
-
-function resetColumns() {
-  window.__columns.reset();
-  showColumnValues(measureColumns());
-}
-
-for (const gutter of gutterEls) {
-  gutter.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
-    //: Cancelling a `pointerdown` suppresses the compatibility mouse events in some
-    //: engines, and `dblclick` -- the reset gesture -- with them. So selection is suppressed
-    //: by a class instead, and the second click of a double is caught here as well.
-    if (event.detail === 2) { resetColumns(); return; }
-
-    const widths = measureColumns();
-    //: Zero widths mean the stacked layout, or a page not laid out yet. Neither has an edge.
-    if (!widths.every((w) => w > 0)) return;
-
-    colDrag = {
-      gutter,
-      index: Number(gutter.dataset.gutter),
-      startX: event.clientX,
-      x: event.clientX,
-      widths,                 // measured once: re-measuring mid-drag reads back what this
-      floor: columnFloor(),   // same drag just wrote, and creeps by a rounding error a frame
-      frame: 0,
-      shares: null,
-    };
-    //: Pointer capture rather than window listeners: the pointer leaves the gutter on the
-    //: first pixel and may leave the window entirely, and capture is what guarantees the
-    //: `pointerup` that ends the gesture and the `pointercancel` that abandons it.
-    if (gutter.setPointerCapture) gutter.setPointerCapture(event.pointerId);
-    gutter.classList.add('on');
-    document.documentElement.classList.add('col-resizing');
-  });
-
-  gutter.addEventListener('pointermove', (event) => {
-    if (!colDrag || colDrag.gutter !== gutter) return;
-    colDrag.x = event.clientX;
-    //: One write per frame. A pointer reports faster than the screen refreshes, and every
-    //: write here relays out three columns of results.
-    if (colDrag.frame) return;
-    colDrag.frame = requestAnimationFrame(() => {
-      if (!colDrag) return;
-      colDrag.frame = 0;
-      applyColumnDrag();
-    });
-  });
-
-  gutter.addEventListener('pointerup', endColumnDrag);
-  gutter.addEventListener('pointercancel', endColumnDrag);
-
-  // Back to the stylesheet's split, and the stored one forgotten: a reset that left the old
-  // numbers in storage would bring them back on the next reload.
-  gutter.addEventListener('dblclick', resetColumns);
-
-  // The same gesture for someone who tabbed here. Measured fresh each time, because a
-  // keypress is a whole gesture rather than one frame of one.
-  gutter.addEventListener('keydown', (event) => {
-    if (event.key === 'Home') {
-      event.preventDefault();
-      resetColumns();
-      return;
-    }
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault();                      // otherwise the arrows scroll the column
-    const step = (event.shiftKey ? 64 : 16) * (event.key === 'ArrowLeft' ? -1 : 1);
-    const widths = measureColumns();
-    if (!widths.every((w) => w > 0)) return;
-    const next = moveColumnEdge(widths, Number(gutter.dataset.gutter), step, columnFloor());
-    if (!next) return;
-    window.__columns.save(columnShares(next));
-    showColumnValues(next);
-  });
-}
-
-//: A window that changes size under a live drag invalidates the widths that drag was
-//: measured from. Ending it is both the cheap fix and what the gesture looks like anyway.
-window.addEventListener('resize', endColumnDrag);
-
-showColumnValues(measureColumns());
+showScreen(window.__screen.get(), false);
 
 // ── The primitives column ──────────────────────────────────────────────────────
-
-async function refreshListings() {
-  if (state.mcp?.state !== 'ready') return;
-  const capabilities = state.mcp.capabilities || {};
-  const ask = (method, key, guard) => (guard === false
-    ? Promise.resolve({ [key]: [] })
-    : state.mcp.request(method).catch(() => ({ [key]: [] })));
-
-  const [tools, prompts, resources, templates] = await Promise.all([
-    ask('tools/list', 'tools'),
-    ask('prompts/list', 'prompts', !!capabilities.prompts),
-    ask('resources/list', 'resources', !!capabilities.resources),
-    ask('resources/templates/list', 'resourceTemplates', !!capabilities.resources),
-  ]);
-  state.listings = {
-    tools: tools.tools || [],
-    prompts: prompts.prompts || [],
-    resources: resources.resources || [],
-    templates: templates.resourceTemplates || [],
-  };
-  renderPrimitives();
-  // The listings changed, so the vocabularies behind them may have too.
-  vocabularies.clear();
-  refreshVariables();
-}
-
-/** The backend a listing entry belongs to. Mirrors naming.py, and only that. */
-function ownerOf(kind, entry) {
-  if (kind === 'tools' || kind === 'prompts') {
-    const at = String(entry.name || '').indexOf(SEPARATOR);
-    return at < 0 ? null : entry.name.slice(0, at);
-  }
-  const uri = String(entry.uri || entry.uriTemplate || '');
-  const prefix = `${RESOURCE_SCHEME}://`;
-  if (!uri.startsWith(prefix)) return null;
-  return uri.slice(prefix.length).split('/')[0] || null;
-}
-
-/** The part after the namespace, which is what the backend itself called it. */
-function localName(kind, entry) {
-  if (kind === 'tools' || kind === 'prompts') {
-    const at = String(entry.name || '').indexOf(SEPARATOR);
-    return at < 0 ? entry.name : entry.name.slice(at + SEPARATOR.length);
-  }
-  const uri = String(entry.uri || entry.uriTemplate || '');
-  const prefix = `${RESOURCE_SCHEME}://${ownerOf(kind, entry) || ''}/`;
-  if (!uri.startsWith(prefix)) return uri;
-  // The gateway percent-encodes the backend's own URI into one path segment.
-  try { return decodeURIComponent(uri.slice(prefix.length)); } catch { return uri.slice(prefix.length); }
-}
-
-function entriesFor(kind) {
-  const all = state.listings[kind] || [];
-  if (!state.selected) return [];
-  const needle = $('filter').value.trim().toLowerCase();
-  return all
-    .filter((entry) => ownerOf(kind, entry) === state.selected)
-    .filter((entry) => !needle || JSON.stringify(entry).toLowerCase().includes(needle));
-}
-
-function select(name) {
-  state.selected = name;
-  state.item = null;
-  renderBackends();
-  renderPrimitives();
-  refreshVariables();
-}
-
-function renderPrimitives() {
-  // Every row below is about to be replaced, the hovered one included.
-  hideTooltip();
-  $('primitives-title').textContent = state.selected || 'Primitives';
-  for (const kind of Object.keys(state.listings)) {
-    const count = state.selected
-      ? (state.listings[kind] || []).filter((e) => ownerOf(kind, e) === state.selected).length
-      : 0;
-    document.querySelector(`[data-count="${kind}"]`).textContent = String(count);
-  }
-
-  const list = $('primitives');
-  list.replaceChildren();
-  if (!state.selected) {
-    list.append(el('li', { class: 'empty', text: 'Select a server in the header.' }));
-    $('detail').replaceChildren();
-    return;
-  }
-  const entries = entriesFor(state.kind);
-  if (!entries.length) {
-    list.append(el('li', { class: 'empty', text: `No ${state.kind} for ${state.selected}.` }));
-  }
-  for (const entry of entries) {
-    const id = entry.name || entry.uri || entry.uriTemplate;
-    const row = el('li', {
-      class: `primitive${state.item && itemId(state.item.entry) === id ? ' on' : ''}`,
-    });
-    const button = el('button', { type: 'button', class: 'primitive-main' }, [
-      el('span', { class: 'primitive-name', text: localName(state.kind, entry) }),
-      el('span', { class: 'primitive-note', text: entry.description || entry.title || '' }),
-    ]);
-    for (const badge of annotationBadges(entry)) button.append(badge);
-    tooltipOn(button, entry.description || entry.title || '');
-    button.addEventListener('click', () => openItem(state.kind, entry));
-    row.append(button);
-    list.append(row);
-  }
-}
-
-// ── The primitive tooltip ──────────────────────────────────────────────────────
 //
-// A row ellipsizes its description to one line, which on most servers is the first few
-// words of a paragraph. The rest of it lives in the detail pane, which is behind a click --
-// no help at all to someone still deciding *which* row to click, which is exactly when the
-// description is worth reading. So it also pops on hover.
+// In `primitives.js`, with the hover tooltip that belongs to its rows. It is handed the
+// state, the two things it may do to the detail panel, and one callback for "the listings
+// were re-read" -- because what else stands on a listing is this file's business, not a
+// column's.
+
+// ── The injectable values column ───────────────────────────────────────────────
 //
-// `position: fixed`, and placed by hand, for the same reason the server menu is: the column
-// scrolls, and `overflow-y: auto` clips anything positioned inside it. See `placeMenu`.
+// In `variables.js`, not here. It is the largest single piece of the Basics screen, and the
+// first to be given a file of its own: the vocabularies a server publishes, the cascade
+// between them, and what is picked. It reaches this file only through the port installed in
+// `Go` at the foot of this one -- so the two directions are `variables.<name>()` from here,
+// and nothing at all from there.
+
+// ── The detail panel ───────────────────────────────────────────────────────────
 //
-// One node for the page, not one per row. The list is rebuilt on every refresh and on every
-// tab switch, so a per-row tooltip would outlive the row it was about -- and would put a
-// hundred hidden nodes in the document to say one thing at a time.
-
-//: Long enough that running the pointer down the list does not strobe, short enough not to
-//: feel like a wait. Focus skips it: arriving by keyboard is already a deliberate act.
-const TOOLTIP_DELAY = 250;
-let tooltipTimer = null;
-
-function showTooltip(anchor, text) {
-  const tip = $('tooltip');
-  tip.textContent = text;
-  tip.hidden = false;
-  // The button, not the tooltip, is what a screen reader is on; this is what tells it there
-  // is a description to read, and `hideTooltip` is what takes the claim back.
-  anchor.setAttribute('aria-describedby', 'tooltip');
-  placeTooltip(anchor);
-}
-
-function hideTooltip() {
-  clearTimeout(tooltipTimer);
-  tooltipTimer = null;
-  const tip = $('tooltip');
-  tip.hidden = true;
-  //: Every describer, not just the one we think is current: a row removed mid-hover takes
-  //: its own attribute with it, but a rebuild that happened between show and hide would
-  //: otherwise leave one pointing at a hidden node.
-  for (const stale of document.querySelectorAll('[aria-describedby="tooltip"]')) {
-    stale.removeAttribute('aria-describedby');
-  }
-}
-
-/** Below the row, left-aligned to it, and inside the window on all four sides. */
-function placeTooltip(anchor) {
-  const tip = $('tooltip');
-  const row = anchor.getBoundingClientRect();
-  // Measured only once it is unhidden and unpinned: a `hidden` element has no box, and one
-  // still wearing the last anchor's coordinates would be measured against the wrong edge.
-  tip.style.left = '0px';
-  tip.style.top = '0px';
-  const box = tip.getBoundingClientRect();
-  const below = row.bottom + 6;
-  // Flipped above rather than squeezed: a tooltip clamped against the bottom edge covers
-  // the row it is describing, which is the one thing it must not do.
-  const top = below + box.height > window.innerHeight - 8
-    ? Math.max(8, row.top - box.height - 6)
-    : below;
-  tip.style.left = `${Math.max(8, Math.min(row.left, window.innerWidth - box.width - 8))}px`;
-  tip.style.top = `${top}px`;
-}
-
-/** Wire one row's button to the tooltip. Does nothing when there is nothing to say. */
-function tooltipOn(button, text) {
-  if (!text) return;
-  button.addEventListener('mouseenter', () => {
-    clearTimeout(tooltipTimer);
-    tooltipTimer = setTimeout(() => showTooltip(button, text), TOOLTIP_DELAY);
-  });
-  button.addEventListener('focus', () => showTooltip(button, text));
-  button.addEventListener('mouseleave', hideTooltip);
-  button.addEventListener('blur', hideTooltip);
-  // The click rebuilds the list, so the anchor is about to stop existing.
-  button.addEventListener('click', hideTooltip);
-}
-
-// A fixed tooltip does not follow its row, and there is no sensible place for it to be
-// once the thing it points at has moved. Dismissed rather than chased.
-$('primitives').addEventListener('scroll', hideTooltip);
-window.addEventListener('resize', hideTooltip);
-
-const itemId = (entry) => entry.name || entry.uri || entry.uriTemplate;
-
-function annotationBadges(entry) {
-  const a = entry.annotations || {};
-  const badges = [];
-  // Worth showing *before* the button is pressed: destructive is the one thing a person
-  // needs to know about a tool they are about to fire at their own machine.
-  if (a.destructiveHint) badges.push(el('span', { class: 'badge badge-danger', text: 'destructive' }));
-  if (a.readOnlyHint) badges.push(el('span', { class: 'badge', text: 'read-only' }));
-  if (a.idempotentHint) badges.push(el('span', { class: 'badge', text: 'idempotent' }));
-  if (a.openWorldHint) badges.push(el('span', { class: 'badge', text: 'open-world' }));
-  return badges;
-}
-
-document.querySelectorAll('#tabs button').forEach((button) => {
-  button.addEventListener('click', () => {
-    state.kind = button.dataset.kind;
-    document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b === button));
-    state.item = null;
-    $('detail').replaceChildren();
-    renderPrimitives();
-  });
-});
-
-$('filter').addEventListener('input', renderPrimitives);
-
-// ── The variables column ───────────────────────────────────────────────────────
-//
-// A server that publishes `zoo://animals/{id}` usually publishes `zoo://animals` beside it:
-// a listing small enough to send whole, and a template for the per-member read that would
-// not be. That pair is a *vocabulary* -- the set of values `id` may take -- and this column
-// is those vocabularies, one group per variable, every value a button that fills the field
-// it belongs in.
-//
-// The pairing is read off the URIs rather than guessed: a template's fixed prefix, up to
-// its first `{`, is the listing's URI. That is also what keeps this column from reading the
-// server's resources at large. `resources/read` is a call to a live backend -- `zoo://ticks`
-// in the fixture exists precisely to prove a read can move state -- so a resource that pairs
-// with no template is never fetched.
-
-//: Bodies already read, keyed by the gateway's URI for them. Kept across selections, so
-//: flipping between two servers does not re-read either one's listings; the Reread button
-//: and a `list_changed` are what clear it.
-const vocabularies = new Map();
-
-//: What is picked, per vocabulary: `{variable, multi, values}`. Keyed by the listing's
-//: gateway URI rather than by the variable name, because two servers -- or two listings on
-//: one server -- may both name their variable `id`.
-const picks = new Map();
-
-//: The vocabularies asked for, by the listing's gateway URI, in the order they were added.
-//:
-//: Empty to begin with, and deliberately: this column reads live backends, and a column that
-//: opened every vocabulary a server publishes would spend a read on each one before knowing
-//: whether anybody wanted it -- and would fill itself with groups that have nothing in them
-//: yet, which reads as clutter rather than as an offer. So it starts as a menu and becomes a
-//: column as you choose from it.
-let opened = [];
-
-//: The keys the last resolve produced -- the groups actually on screen. A pick outside this
-//: set is a pick nothing can show you or take back: a closed vocabulary's, or one made under
-//: a continent you have since changed. Either way it must not go on multiplying the fan-out.
-let liveKeys = new Set();
-
-//: How deep a chain of `narrows` is followed. A server whose listings point at each other in
-//: a circle is not a case to handle gracefully, but it is one that must not spin the column.
-const MAX_CHAIN_DEPTH = 4;
-
-//: Set while `refreshVariables` is walking, because a pick in a narrowing group now calls it
-//: and the walk it would re-enter is already going to see that pick.
-let refreshing = false;
-
-//: The groups the column last drew. Read only by `clipboardSnapshot`; see `renderVariables`.
-let lastGroups = [];
-
-//: What each result card is about, keyed by the card itself. A `WeakMap` rather than a list
-//: because the column *is* the list: deleting a card drops its record with it, and there is
-//: no second structure to drift out of step with what is on screen.
-const resultRecords = new WeakMap();
-
-//: Input types that parse what they are given, and so cannot be shown a `[a, b]` set: the
-//: browser drops the text and leaves the field empty, without saying so.
-const PARSED_INPUTS = new Set([
-  'checkbox', 'radio', 'number', 'range', 'date', 'time', 'datetime-local', 'month', 'week',
-  'color',
-]);
-
-//: How many expansions a template's `Expands to` line shows before it counts the rest.
-const EXPANSIONS_SHOWN = 6;
-
-//: How many calls a fan-out may start before it asks. Not a limit, a speed bump: six
-//: animals crossed with four sizes is twenty-four calls at a live backend, and the person
-//: who meant that should say so once.
-const FAN_OUT_ASKS_ABOVE = 8;
-
-//: The control in the detail panel that last had focus. The fallback for a value whose
-//: variable names no field in the open form: the field you were last typing in is a better
-//: guess than nothing, and it is the only sane target for a raw-JSON form.
-let lastFocused = null;
-
-//: The open form's send button and the word it wears when nothing is fanned out. Held here
-//: so a pick made in this column can show, on the button, how many calls it just bought.
-let sendControl = null;
-
-$('detail').addEventListener('focusin', (event) => {
-  const control = event.target.closest('input, select, textarea');
-  lastFocused = control && !control.readOnly ? control : lastFocused;
-});
-
-/**
- * The vocabularies the selected server publishes, as
- * `[{variable, listing, template, uri}]` — `listing` and `template` in the backend's own
- * spelling, `uri` in the gateway's, because that is what `resources/read` takes.
- */
-function vocabularyPairs() {
-  if (!state.selected) return [];
-  const mine = (kind) => (state.listings[kind] || [])
-    .filter((entry) => ownerOf(kind, entry) === state.selected);
-
-  const listings = new Map(mine('resources').map((r) => [localName('resources', r), r]));
-  const pairs = [];
-  for (const template of mine('templates')) {
-    const spelling = localName('templates', template);
-    const cut = spelling.indexOf('{');
-    if (cut < 1) continue;
-    // `zoo://animals/{id}` -> `zoo://animals`. The separator before the variable belongs to
-    // the template, not to the listing's own URI.
-    const prefix = spelling.slice(0, cut).replace(/[/#?&]+$/, '');
-    const listing = listings.get(prefix);
-    if (!listing) continue;
-    const variable = templateVariables(spelling)[0];
-    if (!variable) continue;
-    pairs.push({ variable, listing: prefix, template: spelling, uri: listing.uri });
-  }
-  // One listing is one vocabulary, and therefore one group. Two templates can share a
-  // fixed prefix -- `zoo://continents/{continent}/countries` and the longer one under it
-  // both cut back to `zoo://continents` -- and both `vocabularies` and `picks` are keyed by
-  // the listing's URI, so a second group on the same key would alias the first one's cache
-  // and its picks. Keep the simplest pairing: fewest variables, then shortest, then
-  // alphabetical, so the answer does not depend on listing order.
-  //
-  // Nothing is lost by dropping the others. A template that takes a value this listing does
-  // not publish is not this listing's template; it is reached through the body of the one
-  // that does, which is what `narrows` is for.
-  const simpler = (a, b) => (
-    templateVariables(a.template).length - templateVariables(b.template).length
-    || a.template.length - b.template.length
-    || a.template.localeCompare(b.template)
-  );
-  const simplest = new Map();
-  for (const pair of pairs) {
-    const held = simplest.get(pair.uri);
-    if (!held || simpler(pair, held) < 0) simplest.set(pair.uri, pair);
-  }
-  return [...simplest.values()];
-}
-
-/**
- * A backend's own URI in the gateway's address space.
- *
- * Mirrors `naming.encode_resource_uri` (`naming.py`), and only that far: the gateway
- * percent-encodes the backend's URI into one path segment, and `decode_resource_uri`
- * unquotes it, so all that has to agree is the round trip -- not which characters each side
- * chose to escape.
- *
- * What it is for is the cascade. A listing reached through another listing's `narrows` is a
- * URI the *server* produced and no listing publishes, so there is no entry to read its
- * gateway spelling off. Minting one is safe because `resources/read` resolves a URI rather
- * than looking it up: `Catalogue.find_resource` decodes the namespace and hands the rest to
- * the backend, exactly as it would for a template the client expanded itself.
- */
-function gatewayUri(local) {
-  return `${RESOURCE_SCHEME}://${state.selected}/${encodeURIComponent(local)}`;
-}
-
-/**
- * The variable one group's values fill.
- *
- * Read off the body once there is one, because the body is the only thing that knows: a
- * listing names the template its values are spent on, and the variable is the first of that
- * template's the chain has not already bound. `zoo://continents/africa/countries` is spent
- * on a template naming `continent` *and* `country`, and the first of those is already
- * decided — it is in the URI — so this group is the `country` one.
- *
- * Falls back to the pairing's guess, which is all there is before the body arrives.
- */
-function variableFor(group, read) {
-  const bound = group.context || {};
-  const spends = read?.narrows || read?.readOne;
-  const named = spends && templateVariables(spends).find((name) => !(name in bound));
-  return named || group.variable || null;
-}
-
-/**
- * Every group to draw, roots first and each child directly after its parent.
- *
- * A vocabulary whose body carries `narrows` does not publish its values: it publishes the
- * *template* of the listing that does, and which listing that is depends on what you picked
- * here. So this walks. A root comes from the pairing above; each deeper group is the parent
- * body's `narrows`, expanded with everything the chain has bound so far.
- *
- * The rule that makes the walk safe is the one the column already had: a listing is only
- * ever read at a URI something handed us. A root is named by a template's fixed prefix, and
- * a child by its parent's own body — so the column still never goes looking through a live
- * backend's resource space for something that might be a vocabulary.
- *
- * A child whose parent has no single pick is emitted `pending`: it is drawn, so you can see
- * that picking a continent is what will fill it, and it is neither read nor given a pick.
- */
-function vocabularyGroups() {
-  const groups = [];
-  // Only what was asked for. A pairing nobody opened is an entry in the menu below, not a
-  // group here and not a read.
-  const available = new Map(vocabularyPairs().map((pair) => [pair.uri, pair]));
-  opened = opened.filter((uri) => available.has(uri));
-  const queue = opened.map((uri) => ({ ...available.get(uri), context: {}, depth: 0 }));
-
-  while (queue.length) {
-    const group = queue.shift();
-    const read = group.pending ? null : vocabularies.get(group.uri);
-    // Settled here rather than in the renderer, because the *next* link expands against it:
-    // a group that thought it was still `continent` would write the country into the
-    // continent's segment and read a URI nobody published.
-    group.variable = variableFor(group, read);
-    groups.push(group);
-    if (group.pending || group.depth >= MAX_CHAIN_DEPTH || !read?.narrows) continue;
-
-    // One pick, not several: a `narrows` buys one listing, and two continents' countries
-    // merged would be a vocabulary the server never published. See `vocabularyGroup`.
-    const pick = picks.get(group.uri);
-    const chosen = pick && pick.values.size === 1 ? [...pick.values][0] : null;
-    const child = { template: read.narrows, depth: group.depth + 1, parent: group.uri };
-    if (chosen === null) {
-      queue.push({ ...child, pending: 'pick', from: group.variable, context: group.context });
-      continue;
-    }
-
-    const context = { ...group.context, [group.variable]: chosen };
-    const unbound = templateVariables(read.narrows).filter((name) => !(name in context));
-    if (unbound.length) {
-      // Expanding now would leave a segment empty, which is a different URI from the one
-      // meant — so the chain stops here rather than reading something nobody asked for.
-      queue.push({ ...child, pending: 'unbound', from: unbound.join(', '), context });
-      continue;
-    }
-    const listing = expandTemplate(read.narrows, context);
-    queue.push({ ...child, listing, uri: gatewayUri(listing), context, variable: null });
-  }
-
-  // A pick outlives its group in exactly two ways, and one rule buries both: a country
-  // picked under Africa once the continent is Asia, and anything picked in a vocabulary that
-  // has since been closed. Left in `picks`, either would keep counting toward the send
-  // button's `×n` with nothing on screen to explain the number.
-  //
-  // The bodies are *not* dropped with them. Those are a cache of what a live backend said;
-  // re-opening a vocabulary, or going back to a continent, should cost no second read.
-  liveKeys = new Set(groups.filter((group) => !group.pending).map((group) => group.uri));
-  for (const [key, pick] of [...picks.entries()]) {
-    if (liveKeys.has(key)) continue;
-    picks.delete(key);
-    buryField(pick);
-  }
-  return groups;
-}
-
-/**
- * Read whatever has not been read yet, then draw.
- *
- * A loop rather than one pass, because the cascade is only discoverable one layer at a
- * time: which listing sits under `africa` is a fact in the body of `zoo://continents`, so
- * that body has to be in hand before the child is even a URI. Each turn resolves what is
- * now knowable and reads it; the walk ends when a turn finds nothing new, which is at most
- * once per level.
- */
-async function refreshVariables() {
-  renderVariables();
-  if (state.mcp?.state !== 'ready' || refreshing) return;
-  refreshing = true;
-  try {
-    for (let level = 0; level <= MAX_CHAIN_DEPTH; level += 1) {
-      const unread = vocabularyGroups()
-        .filter((group) => !group.pending && !vocabularies.has(group.uri));
-      if (!unread.length) break;
-      for (const group of unread) vocabularies.set(group.uri, { loading: true });
-      renderVariables();
-      await Promise.all(unread.map(async (group) => {
-        try {
-          const result = await state.mcp.request('resources/read', { uri: group.uri });
-          vocabularies.set(group.uri, readVocabulary(result));
-        } catch (err) {
-          vocabularies.set(group.uri, { values: [], error: err.message || String(err) });
-        }
-      }));
-    }
-  } finally {
-    refreshing = false;
-  }
-  renderVariables();
-}
-
-/**
- * The values in a `resources/read` result.
- *
- * JSON only, and deliberately: a vocabulary has to be machine-readable to be one, and
- * splitting prose on newlines would turn every text resource into a list of garbage values.
- * Three shapes are understood, in the order a server is likely to publish them.
- */
-function readVocabulary(result) {
-  const contents = result?.contents || [];
-  const text = contents.map((c) => c.text).find((t) => typeof t === 'string');
-  if (text === undefined) {
-    return { values: [], error: 'This listing has no text content to read values from.' };
-  }
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    return { values: [], error: 'This listing is not JSON, so no values can be read from it.' };
-  }
-  return valuesFrom(body);
-}
-
-function valuesFrom(body) {
-  // 1. A JSON Schema enum fragment — what `zoo://animals` publishes, and the one shape that
-  //    carries labels *and* names its own template. Neither `readOne` nor `narrows` is a
-  //    Schema keyword; they are the listing saying where one of its values is spent, and
-  //    they differ in what it buys: `readOne` a member, `narrows` another listing.
-  if (body && typeof body === 'object' && Array.isArray(body.enum)) {
-    const names = Array.isArray(body.enumNames) ? body.enumNames : [];
-    return {
-      values: body.enum.map((value, i) => choice(value, names[i])),
-      readOne: typeof body.readOne === 'string' ? body.readOne : null,
-      narrows: typeof body.narrows === 'string' ? body.narrows : null,
-    };
-  }
-
-  // 2. An array: of scalars, or of records carrying an id and something to call it.
-  if (Array.isArray(body)) {
-    const values = body.map((item) => {
-      if (item === null || item === undefined) return null;
-      if (typeof item !== 'object') return choice(item, null);
-      const value = item.id ?? item.value ?? item.uri ?? item.name;
-      return value === undefined ? null : choice(value, item.title ?? item.name);
-    }).filter(Boolean);
-    return { values };
-  }
-
-  // 3. An object keyed by the identifier — a map of id to record, which is how a server
-  //    that never thought about clients tends to publish a set.
-  if (body && typeof body === 'object') {
-    const entries = Object.entries(body);
-    return { values: entries.map(([key, value]) => choice(key, value?.name ?? value?.title)) };
-  }
-
-  return { values: [], error: 'This listing is a single JSON scalar, not a set of values.' };
-}
-
-/** One value, and the label to show for it when the label says something the value does not. */
-function choice(value, label) {
-  const text = String(value);
-  return { value: text, label: label != null && String(label) !== text ? String(label) : null };
-}
-
-/**
- * Open one vocabulary, and whatever cascades from it.
- *
- * The read happens in `refreshVariables`, not here: this only says that somebody wants it.
- */
-function openVocabulary(uri) {
-  if (!opened.includes(uri)) opened.push(uri);
-  varsNote(null);
-  refreshVariables();
-}
-
-/**
- * Put one back in the menu, and forget what was picked in it.
- *
- * The picks go because they are a claim about what you meant, and a claim made in a group
- * that is no longer on screen is one nothing can show you or take back. The bodies stay:
- * those are a cache, and re-opening should not re-read a live backend.
- */
-function closeVocabulary(uri) {
-  opened = opened.filter((held) => held !== uri);
-  // The picks go with it, this one's and the whole chain's: the next resolve buries every
-  // key that is no longer on screen, and re-rendering is what runs it.
-  renderVariables();
-  applyPicks();
-}
-
-/** The menu this column starts as: every vocabulary not already open. */
-function vocabularyPicker(available) {
-  const closed = available.filter((pair) => !opened.includes(pair.uri));
-  const select = el('select', { class: 'vocab-add' });
-  select.append(el('option', {
-    value: '',
-    text: closed.length
-      ? (opened.length ? 'Add a parameter…' : 'Choose a parameter to start…')
-      : 'Every parameter is open',
-    disabled: !closed.length,
-  }));
-  for (const pair of closed) {
-    select.append(el('option', { value: pair.uri, text: `${pair.variable} — ${pair.listing}` }));
-  }
-  select.disabled = !closed.length;
-  select.addEventListener('change', () => {
-    const uri = select.value;
-    // Back to the placeholder: the select is a verb here, not a statement of what is showing.
-    select.value = '';
-    if (uri) openVocabulary(uri);
-  });
-  return el('div', { class: 'vocab-picker' }, [
-    el('label', { class: 'vocab-picker-label', text: 'Parameter' }),
-    select,
-  ]);
-}
-
-function renderVariables() {
-  const host = $('variables');
-  host.replaceChildren();
-
-  if (!state.selected) {
-    host.append(el('p', { class: 'empty', text: 'Select a server in the header.' }));
-    return;
-  }
-  const available = vocabularyPairs();
-  if (!available.length) {
-    host.append(el('p', {
-      class: 'empty',
-      text: `${state.selected} publishes no listing that pairs with a template, so there are `
-        + 'no values to offer.',
-    }));
-    return;
-  }
-
-  host.append(vocabularyPicker(available));
-  const groups = vocabularyGroups();
-  if (!groups.length) {
-    host.append(el('p', {
-      class: 'empty',
-      text: 'Nothing open yet. Choose a parameter above and its values — and whatever they '
-        + 'narrow — appear here.',
-    }));
-    return;
-  }
-
-  for (const group of groups) host.append(vocabularyGroup(group));
-  updateSendLabel();
-  // Kept for `clipboardSnapshot`, which must not call `vocabularyGroups` itself: that
-  // resolver *buries* picks whose group has gone, and a snapshot is a reader. What is on
-  // screen is what was drawn here, which is exactly the question the document asks.
-  lastGroups = groups;
-  clipboardChanged();
-}
-
-function vocabularyGroup(pair) {
-  const read = vocabularies.get(pair.uri) || { loading: true };
-  // A listing that names its own template overrides the pairing found by prefix: the
-  // server knows where its values are spent better than the URIs do. A `narrows` says the
-  // same thing about a listing rather than a member, and the group is named for the
-  // variable the chain has not bound yet either way.
-  const spends = read.narrows || read.readOne || pair.template;
-  const bound = pair.context || {};
-  // Settled by `vocabularyGroups`, which had to know it before this group's own child could
-  // be expanded. Reading it off the body again here would be a second answer to one question.
-  const variable = pair.variable;
-  const depth = pair.depth || 0;
-
-  const head = el('div', { class: 'vocab-head' }, [
-    el('span', { class: 'vocab-name', text: variable || '…' }),
-    el('span', { class: 'vocab-from', text: pair.listing || pair.template }),
-  ]);
-  // Only the root wears it: the groups under it are not separately closeable, because they
-  // are not separately opened -- they are what this one narrowed to.
-  if (!depth) {
-    const close = el('button', {
-      type: 'button',
-      class: 'vocab-close',
-      text: '×',
-      title: `Put ${variable || 'this parameter'} back in the menu`,
-      'aria-label': `Close ${variable || 'this parameter'}`,
-    });
-    close.addEventListener('click', () => closeVocabulary(pair.uri));
-    head.append(close);
-  }
-
-  const group = el('div', { class: depth ? 'vocab vocab-child' : 'vocab' }, [
-    head,
-    el('p', { class: 'vocab-template', text: `${read.narrows ? 'narrows' : 'spent on'} ${spends}` }),
-  ]);
-  // Why this group holds these values and not others. Without it a countries group under a
-  // continents group is just a shorter list than the one you saw a moment ago.
-  const context = Object.entries(bound);
-  if (context.length) {
-    group.append(el('p', {
-      class: 'vocab-context',
-      text: context.map(([name, value]) => `${name} = ${value}`).join(' · '),
-    }));
-  }
-
-  // Drawn, but neither read nor given a pick: the group is here to say that picking above
-  // is what fills it, which is a different thing from a listing that came back empty.
-  if (pair.pending) {
-    group.classList.add('vocab-pending');
-    group.append(el('p', {
-      class: 'note',
-      text: pair.pending === 'pick'
-        ? `Pick one ${pair.from} above to narrow this.`
-        : `This listing needs ${pair.from}, which nothing above it publishes.`,
-    }));
-    return group;
-  }
-
-  if (read.loading) {
-    group.append(el('p', { class: 'note', text: 'Reading…' }));
-    return group;
-  }
-  if (read.error) {
-    group.append(el('p', { class: 'vocab-error', text: read.error }));
-    if (pair.listing) group.append(el('p', { class: 'vocab-from', text: pair.listing }));
-    return group;
-  }
-  if (!read.values.length) {
-    group.append(el('p', { class: 'note', text: 'This listing is empty.' }));
-    return group;
-  }
-
-  const pick = pickFor(pair.uri, variable);
-
-  // One or many, and the switch is the whole feature: one value fills the field, several
-  // fill it in turn and send the form once per value.
-  //
-  // Except where a value buys another *listing*. `many` means "send the open form once per
-  // value", and reading a listing sends no form; merging two continents' countries would
-  // invent a vocabulary the server never published, with nothing on the chip to say which
-  // continent each country came from. So a narrowing group picks one, and the ambiguity
-  // never arises rather than being papered over.
-  if (read.narrows) {
-    pick.multi = false;
-  } else {
-    const modes = el('div', { class: 'vocab-modes', role: 'group' }, [
-      modeButton(pick, false, 'one'),
-      modeButton(pick, true, 'many'),
-    ]);
-    // Before the close button, which stays the last thing in the row: the control that
-    // removes the group should not move when the group grows a switch.
-    const headRow = group.querySelector('.vocab-head');
-    headRow.insertBefore(modes, headRow.querySelector('.vocab-close'));
-  }
-
-  // Radios in `one`, boxes in `many`, and the same chip around either: the switch changes
-  // what picking means, and the control under your cursor says which it currently is.
-  const values = el('div', { class: 'vocab-values' });
-  for (const item of read.values) {
-    values.append(valueChoice(pick, pair.uri, variable, item, !!read.narrows));
-  }
-  group.append(values);
-
-  const count = el('span', { class: 'vocab-count' });
-  const clear = el('button', { type: 'button', class: 'ghost', text: 'Clear' });
-  clear.addEventListener('click', () => {
-    pick.values.clear();
-    fillPick(pick, { quiet: true });
-    // Clearing a narrowing group unmakes what it narrowed: the groups below go back to
-    // pending, and their picks go with them. That is the resolver's job, not a re-render's.
-    if (read.narrows) refreshVariables();
-    else renderVariables();
-  });
-  group.append(el('div', { class: 'vocab-foot' }, [count, clear]));
-
-  const say = () => {
-    const n = pick.values.size;
-    if (!n) count.textContent = 'Nothing picked.';
-    else if (read.narrows) count.textContent = `Narrowed to ${[...pick.values][0]}.`;
-    else if (!pick.multi) count.textContent = `${[...pick.values][0]} is in the field.`;
-    else count.textContent = `${n} picked — the form is sent ${n} time${n === 1 ? '' : 's'}.`;
-    clear.disabled = !n;
-  };
-  pick.say = say;
-  say();
-  return group;
-}
-
-/**
- * Take a buried pick's value back out of the form.
- *
- * The other half of "a pick lives as long as its group is on screen". Change the continent
- * and the country picked under the old one stops existing — but the form is still holding
- * it, and a template expanding to `.../africa/countries/nepal/animals` is a read that will
- * miss. The value has to go where the pick went.
- *
- * **Only what this pick put there.** A value you typed over it is yours, and a pick dying
- * elsewhere in the column is no reason to take it away. Strictly bound, like every other
- * write: a field carrying the variable's name, or nothing.
- */
-function buryField(pick) {
-  const control = controlFor(pick.variable, { strict: true });
-  if (!control || control.value !== pickDisplay([...pick.values])) return;
-  control.value = '';
-  // As a keystroke would, so the expansion line and the problems recompute — the whole
-  // point is that the form stops claiming a value it no longer has.
-  control.dispatchEvent(new Event('input', { bubbles: true }));
-  control.dispatchEvent(new Event('change', { bubbles: true }));
-  markFanned(control, false);
-}
-
-/** The pick state for one vocabulary, created on first sight. */
-function pickFor(uri, variable) {
-  let pick = picks.get(uri);
-  if (!pick) {
-    pick = { variable, multi: false, values: new Set(), say: () => {} };
-    picks.set(uri, pick);
-  }
-  pick.variable = variable;   // a re-read may have moved the listing to another template
-  return pick;
-}
-
-function modeButton(pick, multi, label) {
-  const button = el('button', {
-    type: 'button',
-    class: `vocab-mode${pick.multi === multi ? ' on' : ''}`,
-    text: label,
-    'aria-pressed': String(pick.multi === multi),
-    title: multi
-      ? 'Pick several; the form is sent once per value'
-      : 'Pick one; it fills the field',
-  });
-  button.addEventListener('click', () => {
-    if (pick.multi === multi) return;
-    pick.multi = multi;
-    // Narrowing keeps the first pick rather than dropping the lot: `many` -> `one` after
-    // picking three is a change of mind about the fan-out, not about the animals.
-    if (!multi) {
-      const first = [...pick.values][0];
-      pick.values = new Set(first === undefined ? [] : [first]);
-    }
-    fillPick(pick, { quiet: true });
-    renderVariables();
-  });
-  return button;
-}
-
-/**
- * One value, as the control the current mode calls for.
- *
- * A radio in `one` and a box in `many`, both inside the same chip. The pair is the point:
- * picking looks like picking either way, and the shape of the control is what says whether
- * this vocabulary spends one value or several.
- */
-function valueChoice(pick, group, variable, item, narrows) {
-  const chosen = pick.values.has(item.value);
-  const box = el('input', {
-    type: pick.multi ? 'checkbox' : 'radio',
-    // Radios need a shared name to be one group, and the listing's URI is the one name a
-    // vocabulary already has that no other vocabulary shares.
-    name: `vocab:${group}`,
-    checked: chosen,
-  });
-  const wrap = el('label', {
-    class: `vocab-value${chosen ? ' on' : ''}`,
-    title: narrows
-      ? `Narrow what follows to ${item.value}`
-      : (pick.multi
-        ? `Send the form once with ${item.value}`
-        : `Put ${item.value} in ${variable}`),
-  }, [
-    box,
-    el('span', { text: item.label || item.value }),
-    item.label ? el('code', { text: item.value }) : null,
-  ]);
-
-  box.addEventListener('change', () => {
-    if (pick.multi) {
-      if (box.checked) pick.values.add(item.value);
-      else pick.values.delete(item.value);
-    } else {
-      // The browser has already unchecked the other radio; this is the same fact in the
-      // pick.
-      pick.values = new Set(box.checked ? [item.value] : []);
-    }
-    for (const chip of wrap.parentElement.children) {
-      chip.classList.toggle('on', chip.querySelector('input').checked);
-    }
-    pick.say();
-    // `many` writes the whole set, and only where the set can be fanned out from. `one`
-    // writes the value, and may fall back to the field you were last typing in.
-    if (pick.multi) fillPick(pick);
-    else if (box.checked) fillField(variable, item.value);
-    updateSendLabel();
-    // What this value bought is another listing, and which one depends on the value — so
-    // the group below has to be resolved again and read. The read is keyed by the expanded
-    // URI, so coming back to a continent you already opened costs nothing.
-    if (narrows) refreshVariables();
-  });
-  return wrap;
-}
-
-/** How a set reads in a field it does not fit in: `[axolotl, capybara]`. */
-function pickDisplay(values) {
-  return values.length > 1 ? `[${values.join(', ')}]` : (values[0] ?? '');
-}
-
-/**
- * Show a whole pick in the field it binds to.
- *
- * One value goes in as itself. Several go in as `[a, b]` — not a value the form will ever
- * send, and not pretending to be one: it is the fan-out, written where the fan-out will
- * happen, so the form shows what the send button's `×6` is counting. Every reader of the
- * form knows to ask what it means: the template expands one line per value, the wire
- * preview shows the first call, and the send writes the real values in one at a time.
- *
- * Strictly bound, like the fan-out itself. A set written into a field that merely had focus
- * is a set that would be sent literally, since the fan-out would not rewrite it.
- */
-function fillPick(pick, { quiet = false } = {}) {
-  // Every pick change comes through here, whether or not a form is open to take it -- so
-  // this is the one place the clipboard has to be told about one. Debounced there.
-  clipboardChanged();
-  const values = [...pick.values];
-  const say = quiet ? () => {} : varsNote;
-  const control = controlFor(pick.variable, { strict: true });
-  //: Nothing in the open form takes this variable -- or nothing is open yet. That is an
-  //: ordinary way to work, not a mistake to report: you pick the values you want and then
-  //: open the thing to spend them on. The group's own foot line already says how many are
-  //: picked, and the send button counts them the moment a form that takes them is open.
-  if (!control) {
-    say(null);
-    return;
-  }
-  // A select takes one of its own options, and a number input silently drops text it
-  // cannot parse. Neither can hold a set, so both show the value the first call will use.
-  const oneOnly = control.tagName === 'SELECT' || PARSED_INPUTS.has(control.type);
-  say(putValue(control, oneOnly ? (values[0] ?? '') : pickDisplay(values)));
-  markFanned(control, !oneOnly && values.length > 1);
-}
-
-/**
- * The picks that are still on screen, as `[key, pick]`.
- *
- * `vocabularyGroups` already drops the rest, but it only runs when the column resolves, and
- * the fan-out reads `picks` directly — so this is what keeps a pick made a moment before a
- * group closed out of a send that happens a moment after.
- */
-function livePicks() {
-  return [...picks.entries()].filter(([key]) => liveKeys.has(key));
-}
-
-/**
- * Write every pick into the open form. The form is new, or the values moved.
- *
- * **Every pick, not only the fanned-out ones.** This used to write `many` picks alone, on
- * the assumption that a single value had already gone into the form at the moment it was
- * clicked — true when the form was open first and the value picked second.
- *
- * A cascade reverses that order. You cannot pick a country until you have picked its
- * continent, so by the time the template that takes them is open, all three picks are
- * already made and clicking them again is exactly what nobody should have to do. The whole
- * chain is written in here instead.
- *
- * Safe because `fillPick` binds strictly: a value goes in a field that carries its name, or
- * it goes nowhere. Opening a form can therefore never scatter picks into whatever fields it
- * happened to have.
- */
-function applyPicks() {
-  for (const [, pick] of livePicks()) {
-    if (pick.values.size) fillPick(pick, { quiet: true });
-  }
-  updateSendLabel();
-}
-
-/** The open form's fields that hold a set, as `fieldName -> values`. */
-function fannedFields() {
-  const fanned = new Map();
-  for (const { control, values } of boundPicks()) {
-    if (values.length < 2) continue;
-    const field = control.closest('[data-field]');
-    if (field) fanned.set(field.dataset.field, values);
-  }
-  return fanned;
-}
-
-/** `{id: '[a, b]'}` and `{id: ['a','b']}` -> `[{id: 'a'}, {id: 'b'}]`. */
-function spread(values, fanned) {
-  let combos = [values];
-  for (const [name, picked] of fanned) {
-    if (!(name in values)) continue;
-    // The picked value is always a string; the collected one says what the field's schema
-    // made of it, and the preview should not turn a number into a quoted one.
-    const like = (value) => (typeof values[name] === 'number' ? Number(value) : value);
-    combos = combos.flatMap((combo) => picked.map((value) => ({ ...combo, [name]: like(value) })));
-  }
-  return combos;
-}
-
-/** The field wears the fact that it is holding a set rather than a value. */
-function markFanned(control, fanned) {
-  control.closest('.field')?.classList.toggle('field-fanned', fanned);
-}
-
-// ── Fanning a form out over several values ─────────────────────────────────────
-//
-// Nothing here reaches inside a form. Each combination is written into the controls as an
-// `input` event and the form is then collected and sent exactly as a click would collect
-// and send it — so a fanned-out call is byte-identical to the one you would have made by
-// typing the value yourself, which is the same reason the middle column speaks MCP.
-
-/** The picks that name a field in the open form, as `[{variable, control, values}]`. */
-function boundPicks() {
-  const bound = [];
-  for (const [, pick] of livePicks()) {
-    if (!pick.multi || !pick.values.size) continue;
-    const control = controlFor(pick.variable, { strict: true });
-    if (control) bound.push({ variable: pick.variable, control, values: [...pick.values] });
-  }
-  return bound;
-}
-
-/** Every combination of the bound picks, as `[[{control, value}, …], …]`. */
-function combinations() {
-  let combos = [[]];
-  for (const { control, values } of boundPicks()) {
-    combos = combos.flatMap((combo) => values.map((value) => [...combo, { control, value }]));
-  }
-  return combos.length === 1 && !combos[0].length ? [] : combos;
-}
-
-/** Run `once` for each combination, or exactly once when nothing is fanned out. */
-async function fanOut(once) {
-  const combos = combinations();
-  if (!combos.length) return once();
-  if (combos.length > FAN_OUT_ASKS_ABOVE
-      && !confirm(`This sends the form ${combos.length} times. Go ahead?`)) return;
-  for (const combo of combos) {
-    for (const { control, value } of combo) putValue(control, value);
-    await once();                 // sequential: the result cards land in the order picked
-  }
-  // The form is left holding the last combination otherwise, which reads as though the
-  // picks had collapsed to whatever went out last.
-  applyPicks();
-}
-
-/** Name the send button so a fan-out can say how many calls it is. */
-function registerSend(button, base) {
-  sendControl = { button, base };
-  updateSendLabel();
-}
-
-function setSendBase(base) {
-  if (sendControl) sendControl.base = base;
-  updateSendLabel();
-}
-
-function updateSendLabel() {
-  if (!sendControl || !$('detail').contains(sendControl.button)) return;
-  const n = combinations().length;
-  sendControl.button.textContent = n > 1 ? `${sendControl.base} ×${n}` : sendControl.base;
-}
-
-// ── Putting a value in a form ──────────────────────────────────────────────────
-
-/**
- * The control in the open form that `name` belongs in, or null.
- *
- * The form may be a tool's, a prompt's or a template's — they all tag their fields with
- * `data-field`, so one lookup covers the three. The loosening below stops at the point
- * where a wrong guess would be worse than none: an exact name, then the same name spelt in
- * another case or with other separators, then a field whose name ends in it (`animalId` for
- * `id`), then whatever you were last typing in.
- */
-function controlFor(name, { strict = false } = {}) {
-  const detail = $('detail');
-  const fields = [...detail.querySelectorAll('[data-field]')];
-  const norm = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
-  const target = fields.find((f) => f.dataset.field === name)
-    || fields.find((f) => norm(f.dataset.field) === norm(name))
-    || fields.find((f) => norm(f.dataset.field).endsWith(norm(name)) && norm(name).length > 1);
-
-  // `strict` drops the last-focused fallback. Filling a field you were just typing in is a
-  // helpful guess; *fanning a form out* into it because a box is ticked somewhere is not.
-  const fallback = !strict && detail.contains(lastFocused) ? lastFocused : null;
-  return target?.querySelector('input:not([readonly]), select, textarea') || fallback;
-}
-
-/** Put `value` in `control`, the way a keystroke would. Returns why not, or null. */
-function putValue(control, value) {
-  if (control.tagName === 'SELECT') {
-    // Matched on either spelling. A boolean or a `null` select wears its value directly; a
-    // schema `enum` wears the choice's *index*, because `{"enum": [0, 1, 3, 5]}` has to
-    // come back as the number 3 rather than the string "3" -- so `schema_form.js` carries
-    // the choice's own spelling on `dataset.value` for exactly this comparison. Matching
-    // only `option.value` rejected every enum field, about values it plainly offered.
-    const option = [...control.options]
-      .find((candidate) => candidate.value === value || candidate.dataset.value === value);
-    if (!option) {
-      return `${value} is not one of the choices this field offers.`;
-    }
-    control.value = option.value;
-  } else if (control.type === 'checkbox') {
-    return 'That field is a checkbox, so a value cannot be put in it.';
-  } else {
-    control.value = value;
-  }
-
-  // The forms recompute their preview and their problems off `input`, so the value has to
-  // arrive the way a keystroke would rather than by assignment alone.
-  control.dispatchEvent(new Event('input', { bubbles: true }));
-  control.dispatchEvent(new Event('change', { bubbles: true }));
-
-  const field = control.closest('.field') || control;
-  // Whatever this field was holding, it is holding a plain value now. `fillPick` puts the
-  // mark back when what it just wrote is a set.
-  field.classList.remove('field-fanned');
-  field.classList.remove('field-filled');
-  void field.offsetWidth;               // restart the animation on a second pick
-  field.classList.add('field-filled');
-  field.scrollIntoView({ block: 'nearest' });
-  return null;
-}
-
-/** Put `value` in the open form's `name` field, if the open form has one. */
-function fillField(name, value) {
-  const control = controlFor(name);
-  //: Nowhere to put it, which is not news -- the same reasoning as `fillPick`. Picking a
-  //: value before opening the thing that takes it is how the column is meant to be used,
-  //: and a line of complaint under the heading every time you do it is the column talking
-  //: over the work. What `putValue` reports below is different: those are cases where there
-  //: *is* a field and the value cannot go in it, which is worth a word.
-  if (!control) {
-    varsNote(null);
-    return;
-  }
-  varsNote(putValue(control, value));
-  updateSendLabel();
-}
-
-/** A line under the column head, or nothing. The only place this column talks back. */
-function varsNote(text) {
-  const line = $('vars-note');
-  line.textContent = text || '';
-  line.hidden = !text;
-}
-
-$('btn-vars-refresh').addEventListener('click', () => {
-  vocabularies.clear();
-  varsNote(null);
-  refreshVariables();
-});
-
-// ── Suggestions for one argument ───────────────────────────────────────────────
-//
-// `completion/complete` is the protocol's own answer to the question the variables column
-// answers by hand: what may go in this box? The two are worth having side by side. The
-// column is how a *person* browses a vocabulary — every value visible, several pickable,
-// the fan-out counted on the button. This is how a box gets filled while you are typing in
-// it, which is the thing a model does and a person does more often.
-//
-// It is a `<datalist>` rather than a `<select>` on purpose. `putValue` refuses a value that
-// is not among a select's options, so a constraining control here would break the column's
-// own fill — and the `[a, b]` a fan-out writes into a field is not a value any server would
-// ever suggest. A datalist offers without constraining, which is what a *suggestion* is.
-
-//: How long after a keystroke the suggestion is asked for. Long enough that typing a word
-//: is one request rather than five, short enough not to arrive after you have stopped.
-const COMPLETE_DEBOUNCE_MS = 180;
-
-//: Every completion request in order, so a slow answer cannot overwrite a newer one. A
-//: WebSocket has no `AbortController`, so the sequence number is the whole mechanism.
-let completionSeq = 0;
-
-//: Ids for the datalists, counted apart from the requests: sharing one counter would let
-//: opening a form cancel a request that was already in flight for a different field.
-let completionLists = 0;
-
-function completionsEnabled() {
-  return !!(state.mcp?.capabilities || {}).completions;
-}
-
-/**
- * Offer server-suggested values in `input`, for the argument `name` of `ref`.
- *
- * `siblings()` is what makes this a cascade rather than a list: it returns the arguments of
- * the same form that are already filled in, and the server is free to narrow by them — the
- * countries of the continent above, rather than every country there is.
- *
- * Nothing here can fail loudly. A gateway that does not know the method, a backend that is
- * down, a request that times out: all of them clear the list and say so in the tooltip. A
- * suggestion that broke the form it was helping with would be worse than no suggestion.
- */
-function attachCompletions(input, { ref, name, siblings }) {
-  // Called after the input is in its field, because a `<datalist>` has to be *somewhere* in
-  // the document for the browser to find it by id, and an input that is not yet in one has
-  // nowhere to put it.
-  if (!completionsEnabled() || !input.parentElement) return;
-  const list = el('datalist', { id: `completions-${(completionLists += 1)}` });
-  input.setAttribute('list', list.id);
-  input.setAttribute('autocomplete', 'off');
-  input.parentElement.append(list);
-
-  let timer = null;
-  const ask = async () => {
-    const value = input.value;
-    // A field holding a fan-out holds `[a, b]`, which is not a prefix of anything.
-    if (value.startsWith('[')) return;
-    const seq = (completionSeq += 1);
-    try {
-      const result = await state.mcp.request('completion/complete', {
-        ref,
-        argument: { name, value },
-        context: { arguments: siblings() },
-      });
-      if (seq !== completionSeq) return;      // a later keystroke already asked
-      const values = result?.completion?.values || [];
-      list.replaceChildren(...values.map((v) => el('option', { value: String(v) })));
-      const more = result?.completion?.hasMore;
-      input.title = more ? `${values.length} of ${result.completion.total} suggestions` : '';
-    } catch (err) {
-      if (seq !== completionSeq) return;
-      list.replaceChildren();
-      input.title = `No suggestions: ${err.message || err}`;
-    }
-  };
-  const soon = () => {
-    clearTimeout(timer);
-    timer = setTimeout(ask, COMPLETE_DEBOUNCE_MS);
-  };
-  // On focus as well as on input, because the useful moment is the one before anything has
-  // been typed: an empty box is where a person most wants to be told what goes in it.
-  input.addEventListener('focus', soon);
-  input.addEventListener('input', soon);
-}
-
-/** Everything filled in beside `name`, as `context.arguments` wants it. */
-function siblingValues(values, name) {
-  const out = {};
-  for (const [key, value] of Object.entries(values)) {
-    if (key === name || value === '' || value === undefined || value === null) continue;
-    // A field holding a fan-out is holding several values; none of them is *the* one that
-    // narrows this, so it says nothing here rather than the wrong thing.
-    if (typeof value === 'string' && value.startsWith('[')) continue;
-    out[key] = String(value);
-  }
-  return out;
-}
-
-// ── The detail panel: a form, and the button that sends it ─────────────────────
-
-function openItem(kind, entry) {
-  state.item = { kind, entry };
-  renderPrimitives();
-  const detail = $('detail');
-  detail.replaceChildren();
-  // The old form's send button has just left the page; whatever replaces it registers
-  // itself below.
-  sendControl = null;
-
-  const head = el('div', { class: 'detail-head' }, [
-    el('h3', { text: localName(kind, entry) }),
-    el('code', { class: 'detail-id', text: itemId(entry) }),
-  ]);
-  detail.append(head);
-  if (entry.description) detail.append(el('p', { class: 'detail-desc', text: entry.description }));
-
-  // The form is built first and filled second: the picks are written into whatever fields
-  // it turns out to have, exactly as they would be if you had picked them now.
-  if (kind === 'tools') renderToolDetail(detail, entry);
-  else if (kind === 'prompts') renderPromptDetail(detail, entry);
-  else renderResourceDetail(detail, entry, kind === 'templates');
-  applyPicks();
-}
-
-function renderToolDetail(detail, entry) {
-  const preview = el('pre', { class: 'block preview' }, [el('code', { text: '{}' })]);
-  const problems = el('ul', { class: 'problems', hidden: true });
-
-  const form = buildForm(entry.inputSchema, { onChange: update });
-  detail.append(form.element);
-
-  if (entry.outputSchema) {
-    detail.append(el('details', { class: 'raw' }, [
-      el('summary', { text: 'outputSchema' }),
-      el('pre', { class: 'block' }, [el('code', { text: pretty(entry.outputSchema) })]),
-    ]));
-  }
-
-  const send = el('button', { type: 'button', class: 'primary', text: 'Call tool' });
-  const bar = el('div', { class: 'detail-actions' }, [
-    send,
-    el('details', { class: 'raw preview-wrap' }, [el('summary', { text: 'Wire payload' }), preview]),
-  ]);
-  detail.append(problems, bar);
-
-  function update() {
-    try {
-      // The first of the calls, when a field is holding a set: the payload of a fan-out is
-      // n payloads, and the first one is the only honest single thing to show.
-      const [args] = spread(form.collect(), fannedFields());
-      preview.firstChild.textContent = pretty({
-        method: 'tools/call', params: { name: entry.name, arguments: args },
-      });
-      const found = form.problems();
-      problems.replaceChildren(...found.map((text) => el('li', { text })));
-      problems.hidden = found.length === 0;
-      // Advice, not a gate. The button stays live: the gateway and the backend are the
-      // authority on what is acceptable, and a form that refused to send would be
-      // pretending to be one.
-      setSendBase(found.length ? 'Call anyway' : 'Call tool');
-    } catch (err) {
-      preview.firstChild.textContent = String(err.message);
-      problems.replaceChildren(el('li', { text: err.message }));
-      problems.hidden = false;
-      setSendBase('Call tool');
-    }
-  }
-  registerSend(send, 'Call tool');
-  update();
-
-  // Collected inside the loop, not outside it: a fan-out writes each value into the form
-  // and this reads the form back, so every call is the one the visible form describes.
-  const once = async () => {
-    let args;
-    try {
-      args = form.collect();
-    } catch (err) {
-      problems.replaceChildren(el('li', { text: err.message }));
-      problems.hidden = false;
-      return;
-    }
-    await invoke({
-      title: entry.name,
-      subtitle: 'tools/call',
-      method: 'tools/call',
-      params: { name: entry.name, arguments: args },
-      render: renderToolResult,
-      // A tool-level failure arrives as a *successful* result carrying isError, which is
-      // MCP's contract. The card is marked failed so it reads as one, without pretending
-      // the JSON-RPC call failed.
-      failedIf: (result) => !!result.isError,
-    }, send);
-  };
-  send.addEventListener('click', () => fanOut(once));
-}
-
-function renderPromptDetail(detail, entry) {
-  const form = buildPromptForm(entry.arguments, { onChange: () => {} });
-  detail.append(form.element);
-  // The namespaced name, which the gateway splits: a prompt ref is routed exactly the way
-  // `prompts/get` is. `collect()` already drops the empty fields, so what is left is what
-  // has actually been decided — the cascade's context, without having to say so.
-  for (const { name, input } of form.fields || []) {
-    attachCompletions(input, {
-      ref: { type: 'ref/prompt', name: entry.name },
-      name,
-      siblings: () => siblingValues(form.collect(), name),
-    });
-  }
-  const send = el('button', { type: 'button', class: 'primary', text: 'Get prompt' });
-  detail.append(el('div', { class: 'detail-actions' }, [send]));
-  registerSend(send, 'Get prompt');
-  send.addEventListener('click', () => fanOut(() => invoke({
-    title: entry.name,
-    subtitle: 'prompts/get',
-    method: 'prompts/get',
-    // Read per call, so a fan-out sends the arguments it just wrote rather than the first
-    // set it collected.
-    params: { name: entry.name, arguments: form.collect() },
-    render: renderPromptResult,
-  }, send)));
-}
-
-function renderResourceDetail(detail, entry, isTemplate) {
-  const meta = [entry.mimeType, entry.size ? `${entry.size} B` : null].filter(Boolean).join(' · ');
-  if (meta) detail.append(el('p', { class: 'detail-desc', text: meta }));
-
-  let uriOf = () => entry.uri;
-
-  if (isTemplate) {
-    const names = templateVariables(entry.uriTemplate);
-    const inputs = new Map();
-    const wrap = el('div', { class: 'fields' });
-    const resolved = el('code', { class: 'detail-id expansions' });
-    const valuesNow = () => {
-      const values = {};
-      for (const [name, input] of inputs) values[name] = input.value;
-      return values;
-    };
-    // A field holding `[a, b]` expands to a line per value rather than to one URI with a
-    // bracket in it: what a fan-out is about to read is what this should show.
-    const refresh = () => {
-      const combos = spread(valuesNow(), fannedFields());
-      const shown = combos.slice(0, EXPANSIONS_SHOWN)
-        .map((values) => expandTemplate(entry.uriTemplate, values));
-      if (combos.length > shown.length) shown.push(`…and ${combos.length - shown.length} more`);
-      resolved.textContent = shown.join('\n');
-    };
-    for (const name of names) {
-      const input = el('input', { type: 'text', spellcheck: false });
-      input.addEventListener('input', refresh);
-      inputs.set(name, input);
-      wrap.append(el('div', { class: 'field field-string', dataset: { field: name } }, [
-        el('label', { class: 'field-label' }, [el('span', { class: 'field-name', text: name })]),
-        input,
-      ]));
-      // The gateway's own unexpanded spelling: `ref/resource` names the *template*, which
-      // is exactly what `router.complete` decodes back into the backend's. Every other
-      // field of this same template is the context, which is what makes `{continent}`
-      // narrow `{country}` rather than the two being filled in independently.
-      attachCompletions(input, {
-        ref: { type: 'ref/resource', uri: entry.uriTemplate },
-        name,
-        siblings: () => siblingValues(valuesNow(), name),
-      });
-    }
-    if (!names.length) wrap.append(el('p', { class: 'note', text: 'This template names no variables.' }));
-    detail.append(wrap, el('p', { class: 'note' }, [el('span', { text: 'Expands to ' }), resolved]));
-    refresh();
-    // Expanded here rather than sent as a template: `resources/read` takes a URI, and the
-    // expansion is the client's job in MCP exactly as it is in RFC 6570. Read off the
-    // inputs rather than off the line above, which may be showing six of them.
-    uriOf = () => expandTemplate(entry.uriTemplate, valuesNow());
-  }
-
-  const send = el('button', { type: 'button', class: 'primary', text: 'Read resource' });
-  detail.append(el('div', { class: 'detail-actions' }, [send]));
-  registerSend(send, 'Read resource');
-  // `uriOf` is read per call: a template fanned out over six ids expands six times.
-  send.addEventListener('click', () => fanOut(() => invoke({
-    title: localName(isTemplate ? 'templates' : 'resources', entry),
-    subtitle: 'resources/read',
-    method: 'resources/read',
-    params: { uri: uriOf() },
-    render: renderResourceResult,
-  }, send)));
-}
-
-/** Send one MCP request and put the answer on the right. */
-async function invoke({ title, subtitle, method, params, render, failedIf }, button) {
-  const started = performance.now();
-  if (button) button.disabled = true;
-  try {
-    const result = await state.mcp.request(method, params);
-    pushCard({
-      title,
-      subtitle,
-      request: { method, params },
-      body: render(result),
-      elapsedMs: performance.now() - started,
-      raw: result,
-      failed: failedIf ? failedIf(result) : false,
-    });
-  } catch (err) {
-    const error = err instanceof RpcError
-      ? { code: err.code, message: err.message, data: err.data }
-      : { code: -32000, message: String(err.message || err), data: null };
-    pushCard({
-      title,
-      subtitle,
-      request: { method, params },
-      body: renderError(error),
-      elapsedMs: performance.now() - started,
-      raw: { error },
-      failed: true,
-    });
-  } finally {
-    if (button) button.disabled = false;
-  }
-}
+// In `detail.js`, with the form port it exports and the fan-out that drives it. What is left
+// here is the wiring: `installs` at the foot of this file hand it the frame and hand the
+// column its port, composed out of this file's catalogue helpers and that file's form.
 
 // ── The results column ─────────────────────────────────────────────────────────
-
-const RESULTS_EMPTY = 'Invoke a tool, get a prompt, or read a resource.';
-
-/** Put the column back to its empty state. One definition, three callers. */
-function clearResults() {
-  $('results').replaceChildren(el('p', { class: 'empty', text: RESULTS_EMPTY }));
-}
-
-function pushCard(options) {
-  const results = $('results');
-  const empty = results.querySelector('.empty');
-  if (empty) empty.remove();
-  // A card deletes itself; what it cannot know is that it was the last one, and a column
-  // left with nothing in it at all reads as broken rather than as empty.
-  const card = resultCard({
-    ...options,
-    onRemove: () => {
-      if (!results.querySelector('.card')) clearResults();
-      clipboardChanged();
-    },
-  });
-  // What the card is *about*, kept beside the card rather than in a list of its own. The
-  // column is the list: a card that is deleted takes its record with it, and there is no
-  // second structure to fall out of step with what is on screen. See `clipboardSnapshot`.
-  resultRecords.set(card, {
-    title: options.title,
-    subtitle: options.subtitle || '',
-    method: options.request?.method || '',
-    params: options.request?.params ?? {},
-    raw: options.raw,
-    failed: !!options.failed,
-    elapsed_ms: options.elapsedMs,
-    at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
-  });
-  results.append(card);
-  // Appended rather than prepended, so the column reads in the order the calls were made
-  // -- and then scrolled, because an answer below the fold is an answer nobody saw. The
-  // scroll is unconditional on purpose: a card arrives because a person just pressed Send,
-  // which is not the situation where being left where you were is the kindness. The log
-  // pane pins itself to the bottom the same way, for a different reason.
-  results.scrollTop = results.scrollHeight;
-  clipboardChanged();
-}
-
-$('btn-clear-results').addEventListener('click', () => { clearResults(); clipboardChanged(); });
+//
+// In `results.js`, which is handed nothing at all.
 
 // ── The clipboard ──────────────────────────────────────────────────────────────
 //
@@ -2367,36 +811,8 @@ function clipboardSnapshot() {
   // neither, and the document is kept to evidence about the calls. The server name is in
   // every entry regardless -- tool names are `server__tool`.
   return {
-    results: [...$('results').querySelectorAll('.card')]
-      .map((card) => resultRecords.get(card))
-      .filter(Boolean),
-    variables: lastGroups.map(snapshotGroup).filter(Boolean),
-  };
-}
-
-/** One vocabulary group: where its values came from, what they are, and what was picked. */
-function snapshotGroup(group) {
-  const read = vocabularies.get(group.uri) || {};
-  const pick = picks.get(group.uri);
-  // A group the column drew but never read is still worth reporting -- "this parameter is
-  // waiting on a pick above it" is a fact about the session, and a snapshot that dropped it
-  // would make the document disagree with the screen.
-  const note = group.pending === 'pick'
-    ? `Waiting on a pick in ${group.from} above.`
-    : group.pending
-      ? `Needs ${group.from}, which nothing above it publishes.`
-      : read.loading ? 'Still being read.'
-        : read.error ? `Could not be read: ${read.error}` : '';
-  return {
-    variable: group.variable || '',
-    listing: group.listing || '',
-    spends: read.narrows || read.readOne || group.template || '',
-    narrows: !!read.narrows,
-    multi: !!pick?.multi,
-    context: group.context || {},
-    picked: pick ? [...pick.values] : [],
-    values: note ? [] : (read.values || []),
-    note,
+    results: results.snapshot(),
+    variables: variables.snapshot(),
   };
 }
 
@@ -2408,7 +824,7 @@ installClipboard({
 });
 
 $('btn-reload').addEventListener('click', () => admin('admin.reload', {}));
-$('btn-refresh').addEventListener('click', async () => { await refreshAdmin(); await refreshListings(); });
+$('btn-refresh').addEventListener('click', async () => { await refreshAdmin(); await primitives.refreshListings(); });
 
 // ── The server editor ──────────────────────────────────────────────────────────
 
@@ -2619,6 +1035,40 @@ showTheme(window.__theme.get());
 
 // ── Go ─────────────────────────────────────────────────────────────────────────
 
+// The injectable values column, handed exactly what it may touch. Written out here rather
+// than reached for on the other side, because this object *is* the seam: it is the whole
+// list of what the Basics screen's biggest piece may do to the rest of the page, and a
+// reader who wants to know should find it in one place.
+// The Basics screen's two extracted pieces, each handed exactly what it may touch.
+//
+// The column's port is *composed* here rather than implemented: what it needs to know about
+// the catalogue comes from this file, and every way it may touch an open form comes from the
+// panel that owns the form. Neither module can reach the other except through this object,
+// and neither can reach back into this one at all.
+primitives.install({
+  state,
+  openItem: detail.openItem,
+  clearDetail: detail.clear,
+  //: What stood on the old listings and has to be reconsidered. One callback rather than an
+  //: import, so the column that re-read them does not have to know the other exists.
+  listingsChanged: () => {
+    variables.vocabularies.clear();
+    variables.refreshVariables();
+  },
+});
+
+detail.install({
+  state,
+  selectionChanged: primitives.render,
+  pushCard: results.pushCard,
+});
+
+variables.install({
+  state,
+  ownListings: primitives.ownListings,
+  ...detail.formPort,
+});
+
 state.key = initialKey();
 
 // In the shell, the host knows things the page cannot: that the gateway is still importing,
@@ -2665,9 +1115,21 @@ connect();
 // in being looked at.
 export {
   state,
+  SCREENS,
+  SCREEN_MODULES,
+  showScreen,
   EDITOR_GROUPS,
   applyBranding,
   openEditor,
+
+  clipboardSnapshot,
+};
+
+// The variables column's half, passed straight through rather than re-wrapped: these are
+// live bindings, and `opened`, `liveKeys` and `refreshing` are all reassigned inside
+// `variables.js` as a cascade resolves. A suite that imported a copy would see the value
+// they had when the module loaded, forever.
+export {
   refreshing,
   vocabularies,
   picks,
@@ -2689,14 +1151,14 @@ export {
   buryField,
   fannedFields,
   spread,
-  controlFor,
-  putValue,
-  fillField,
-  openItem,
-  gatewayUri,
-  pushCard,
-  clearResults,
-  clipboardSnapshot,
-  renderPrimitives,
-  hideTooltip,
-};
+} from './variables.js';
+
+//: The detail panel's share of the seam, passed straight through for the same reason.
+export { openItem, controlFor, putValue, fillField } from './detail.js';
+
+//: And the left column's, under the name the suites already call it by.
+export { render as renderPrimitives, hideTooltip } from './primitives.js';
+export { gatewayUri } from './naming.js';
+
+//: And the middle column's.
+export { pushCard, clearResults } from './results.js';

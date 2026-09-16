@@ -1,7 +1,7 @@
 """Serve the admin UI's static assets, on the same port as the two sockets.
 
 The UI is HTML, CSS and ES modules with no build step and no dependencies, so "serving it"
-is reading eight files off disk and answering a GET. That happens inside the WebSocket
+is reading one allowlisted file off disk and answering a GET. That happens inside the WebSocket
 server's `process_request` hook, which runs before the opening handshake and may return an
 ordinary HTTP response instead of upgrading -- the documented way to put a health check or
 a static page on a `websockets` port.
@@ -73,6 +73,26 @@ ASSETS: dict[str, str] = {
     # second copy of the assets that drifts. See `desktop/README.md`.
     "tauri-transport.js": "text/javascript; charset=utf-8",
     "schema_form.js": "text/javascript; charset=utf-8",
+    # One screen, one file. The header's selector is the register of screens and this is the
+    # register of their code; `screen_about.js` documents the contract both ends keep. The
+    # Basics screen is still inside `app.js` -- see python-mcp-gateway-sqo.
+    "screen_about.js": "text/javascript; charset=utf-8",
+    "screen_basics.js": "text/javascript; charset=utf-8",
+    # The Basics screen's injectable values column, the first piece of that screen to live
+    # outside `app.js`. It is handed a port rather than importing the frame; see its header.
+    "variables.js": "text/javascript; charset=utf-8",
+    # The form a primitive opens into, and the port the column above writes through.
+    "detail.js": "text/javascript; charset=utf-8",
+    # The left column and the hover tooltip that belongs to its rows.
+    "primitives.js": "text/javascript; charset=utf-8",
+    # The middle column: the result cards, and what each one was about.
+    "results.js": "text/javascript; charset=utf-8",
+    # The gateway's namespacing, undone -- `naming.py`'s mirror, in one file now that three
+    # modules take a listing apart.
+    "naming.js": "text/javascript; charset=utf-8",
+    # Display formatting for the fields `admin.status` answers with, shared by the footer and
+    # by a screen, so an uptime cannot read two ways in one window.
+    "format.js": "text/javascript; charset=utf-8",
     "render.js": "text/javascript; charset=utf-8",
     "clipboard.js": "text/javascript; charset=utf-8",
     "markdown.js": "text/javascript; charset=utf-8",
