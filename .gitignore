@@ -266,3 +266,8 @@ src/desktop/.staging/
 # tests/test_desktop_layout.py, which pins the stock config. See src/mcp_gateway/branding.md.
 src/desktop/src-tauri/tauri.brand.json
 src/desktop/src-tauri/icons/brand/
+
+# Passive export, deliberately untracked. Issues live in the local Dolt DB and sync
+# via refs/dolt/data on the same GitHub remote, so this file carries no data git does
+# not already move. `export.auto` stays on: it is still written fresh for local viewers.
+.beads/issues.jsonl
