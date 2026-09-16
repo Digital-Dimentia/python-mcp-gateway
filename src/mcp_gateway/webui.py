@@ -1,7 +1,7 @@
 """Serve the admin UI's static assets, on the same port as the two sockets.
 
 The UI is HTML, CSS and ES modules with no build step and no dependencies, so "serving it"
-is reading eight files off disk and answering a GET. That happens inside the WebSocket
+is reading one allowlisted file off disk and answering a GET. That happens inside the WebSocket
 server's `process_request` hook, which runs before the opening handshake and may return an
 ordinary HTTP response instead of upgrading -- the documented way to put a health check or
 a static page on a `websockets` port.
@@ -26,12 +26,20 @@ at all.
 
 ## An allowlist, not a path join
 
-`asset_for` resolves a request path against a fixed tuple of filenames. There is no
-`Path(root) / requested` anywhere in this module, so there is no traversal to get wrong --
-no `..`, no encoded separator, no symlink, no case-insensitive-filesystem surprise. The cost
-is that adding a file to `src/mcp_gateway_ui/` means adding its name here, and
+`asset_for` resolves a request path against a fixed set of names by equality. Nothing
+derived from a request is ever joined to a directory, so there is no traversal to get wrong
+-- no `..`, no encoded separator, no symlink, no case-insensitive-filesystem surprise. The
+cost is that adding a file to `src/mcp_gateway_ui/` means adding its name here, and
 `tests/test_webui.py` asserts the two agree, so the failure mode is a red test rather than
 a 404 nobody can explain.
+
+Some of those names now carry a `/`: the screens live in `screens/`, and `screens/basics/`
+holds the four columns that exist only to serve that screen. That changes nothing about the
+above and it is worth saying why, because "no path join" is the sentence this module used to
+be able to write and can no longer. `read_asset` walks the segments of a name to reach the
+file -- but it walks the segments of a name that is *already a key of `ASSETS`*, not of
+anything a client sent. A request for `screens/../webui.py` does not match a key, so it is a
+404 before any path exists; equality on the whole name is still the only test there is.
 """
 
 from __future__ import annotations
@@ -73,6 +81,26 @@ ASSETS: dict[str, str] = {
     # second copy of the assets that drifts. See `desktop/README.md`.
     "tauri-transport.js": "text/javascript; charset=utf-8",
     "schema_form.js": "text/javascript; charset=utf-8",
+    # One screen, one directory. The header's `<option>` list is the register of screens and
+    # this is the register of their code; `screens/about.js` documents the contract both ends
+    # keep. About is one file; Basics is a screen plus the four columns that only exist to
+    # serve it, which is what the second level says.
+    "screens/about.js": "text/javascript; charset=utf-8",
+    "screens/basics/screen.js": "text/javascript; charset=utf-8",
+    # The injectable values column: the vocabularies, the cascade, and what is picked.
+    "screens/basics/variables.js": "text/javascript; charset=utf-8",
+    # The form a primitive opens into, and the port the column above writes through.
+    "screens/basics/detail.js": "text/javascript; charset=utf-8",
+    # The left column and the hover tooltip that belongs to its rows.
+    "screens/basics/primitives.js": "text/javascript; charset=utf-8",
+    # The middle column: the result cards, and what each one was about.
+    "screens/basics/results.js": "text/javascript; charset=utf-8",
+    # The gateway's namespacing, undone -- `naming.py`'s mirror, in one file now that three
+    # modules take a listing apart.
+    "naming.js": "text/javascript; charset=utf-8",
+    # Display formatting for the fields `admin.status` answers with, shared by the footer and
+    # by a screen, so an uptime cannot read two ways in one window.
+    "format.js": "text/javascript; charset=utf-8",
     "render.js": "text/javascript; charset=utf-8",
     "clipboard.js": "text/javascript; charset=utf-8",
     "markdown.js": "text/javascript; charset=utf-8",
@@ -113,7 +141,16 @@ def read_asset(name: str) -> bytes:
     """
     if name not in ASSETS:  # pragma: no cover - callers resolve through `asset_for`
         raise KeyError(name)
-    return (resources.files(ASSET_PACKAGE) / name).read_bytes()
+    # Segment by segment, because a name in this dict may be `screens/basics/detail.js`. A
+    # `Traversable` is not a `Path`: `/` on one takes a single component by contract, and
+    # whether a given implementation happens to accept `a/b` is not something to rely on
+    # between a checkout (a real directory) and a wheel (which may be read through zipimport).
+    # The loop is the portable spelling, and the guard above is what makes it safe: these
+    # segments come from a key of `ASSETS`, never from a request.
+    target = resources.files(ASSET_PACKAGE)
+    for segment in name.split("/"):
+        target = target / segment
+    return target.read_bytes()
 
 
 def response(target: str) -> Response:

@@ -185,6 +185,13 @@ code, pre { font-family: var(--mono); }
   margin-right: -0.65rem;
 }
 
+/* The screen selector, between the name and the server row. `flex: none` because the row
+ * beside it is the thing that gets the leftover width; this control is one line wide
+ * whatever it is showing. */
+.screen-field { flex: none; display: flex; align-items: center; gap: 0.4rem; }
+.screen-label { color: var(--muted); font-size: 0.76rem; }
+.screen-field select { padding: 0.2rem 0.35rem; }
+
 /* The word is decoration for a button that already names itself to a screen reader, so it
  * is aria-hidden and the gap to the toggle is tightened below the bar's default. */
 .theme-label { color: var(--muted); font-size: 0.76rem; margin-right: -0.65rem; }
@@ -300,6 +307,27 @@ button:hover .bar-file { color: inherit; }
 
 .gate[data-mode="failed"] #gate-title { color: var(--danger); }
 
+/* ── The content panel, and the screens in it ────────────────────────────── */
+
+/* Everything between the bars. The height lives here rather than on a screen, so every
+ * screen is handed the same box and none of them has to know what the two bars cost. */
+.content { height: calc(100vh - var(--bar-h) - var(--foot-h)); }
+
+/* Which screen is showing is an attribute on <html>, written by `theme.js` while the head
+ * is parsing -- the same trick, and for the same reason, as the theme and the column split:
+ * a choice restored from a deferred module would show one frame of the wrong screen on
+ * every reload.
+ *
+ * CSS cannot ask whether one attribute equals another, so each alternate screen is named
+ * here once: hidden by default, shown when <html> is wearing its name, and hiding Basics
+ * when it is. Basics -- the columns, and the screen the page opens on -- is therefore what
+ * you get from *any* other value, including a slug left in storage by a build that had a
+ * screen this one does not. That is the failure this shape is chosen for: a rule that
+ * showed only an exactly-matching screen would answer an unknown slug with a blank page. */
+.screen[data-screen="about"] { display: none; }
+:root[data-screen="about"] .screen[data-screen="about"] { display: block; overflow: auto; }
+:root[data-screen="about"] .screen[data-screen="basics"] { display: none; }
+
 /* ── Three columns ───────────────────────────────────────────────────────── */
 
 /* The split is three `fr` numbers, and `theme.js` validates every one of them before it is
@@ -344,7 +372,7 @@ button:hover .bar-file { color: inherit; }
     minmax(var(--col-min), var(--col-1)) var(--gutter-w)
     minmax(var(--col-min), var(--col-2)) var(--gutter-w)
     minmax(var(--col-min), var(--col-3));
-  height: calc(100vh - var(--bar-h) - var(--foot-h));
+  height: 100%;
 }
 
 .col {
@@ -415,6 +443,7 @@ button:hover .bar-file { color: inherit; }
 /* Stacked, there is nothing to divide: one column has no edge that is also a control. The
  * stored widths are simply not named by this template, so they need no unwinding. */
 @media (max-width: 60rem) {
+  .content { height: auto; }
   .columns { grid-template-columns: 1fr; height: auto; }
   .col { border-bottom: 1px solid var(--rule); max-height: 70vh; }
   .gutter { display: none; }
@@ -1105,3 +1134,83 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 0.8rem; color: var(--muted); }
   line-height: 1.45;
   white-space: pre;
 }
+
+/* ── The About screen ───────────────────────────────────────────────────── */
+
+/* One column of cards on a readable measure, centred. The columns screen fills the window
+ * because it is three panes you work across; this one is a page you read, and a card of
+ * key/value pairs stretched to a 27-inch display is a card nobody can pair a label with. */
+.about-inner {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 1rem 1rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.about-card {
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.75rem 0.9rem;
+}
+.about-card > h2 { margin-bottom: 0.6rem; }
+
+/* Label above value, and the grid wraps rather than being told how many columns to have:
+ * the fields here are a version string next to an absolute path, and any fixed count is
+ * wrong for one of them at some window width. */
+.about-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.6rem 1.2rem;
+}
+.about-field { min-width: 0; }
+.about-field dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+/* Paths, addresses and commands are the long values, and every one of them is read from
+ * its own end: breaking anywhere beats a line that runs under the next card. */
+.about-field dd {
+  margin: 0.1rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+/* The servers, one row each: indicator, name, what it is, and its state. */
+.about-servers { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.about-server {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+}
+.about-server .dot { align-self: center; }
+.about-server.off { opacity: 0.6; }
+
+.about-name { font-weight: 600; }
+.about-desc { color: var(--muted); font-weight: 400; margin-left: 0.4rem; }
+.about-state { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* The third column of the row is one line; anything that needs a second -- the command, a
+ * startup error, the secrets that are not in `gateway.env` -- is a full-width line under
+ * it, which is why these span the grid. */
+.about-line {
+  grid-column: 1 / -1;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+.about-line.bad { color: var(--danger); }
+.about-line.warn { color: var(--warn); }
+
+.about-empty { color: var(--muted); }

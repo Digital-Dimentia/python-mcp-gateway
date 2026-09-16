@@ -25,6 +25,23 @@
   <img id="brand-icon" class="brand-icon" src="logo.svg" alt="">
   <h1 id="brand-title">MCP Gateway</h1>
 
+  <!-- Which screen the content panel is showing. A <select> rather than a row of tabs
+       because this sits between the name and the server row, both of which grow, and a
+       control that is always one line wide is the only kind that can live there.
+
+       The options are the register of screens: `theme.js` restores whatever was stored
+       onto <html data-screen> before the first paint, `style.css` names each alternate
+       screen once, and `app.js` reconciles the control with the stored value and falls
+       back to the first option when it does not recognise it. Adding a screen is an
+       <option>, a <section> below, and one pair of rules in the stylesheet. -->
+  <label class="screen-field">
+    <span class="screen-label">Screen:</span>
+    <select id="screen-select">
+      <option value="basics">Basics</option>
+      <option value="about">About</option>
+    </select>
+  </label>
+
   <!-- The configured servers themselves, one button each. The button carries only the
        indicator and the name; everything else about the server -- what it is, and what you
        can do to it -- is in the menu it drops. -->
@@ -49,7 +66,21 @@
   </form>
 </section>
 
-<main class="columns">
+<!-- The content panel: everything between the two bars, and the only part of the frame a
+     screen may replace. The header and the footer are the same on every screen -- the
+     servers, the sockets, the log, the two files -- because they are the gateway, not the
+     view of it. Each screen is a `<section data-screen>` in here, and exactly one is
+     displayed; see `.screen` in style.css for how one is chosen. -->
+<main class="content" id="content">
+
+<!-- ── Screen: Basics ──────────────────────────────────────────────────────────
+     The work surface, and the screen the page opens on. The class names the layout --
+     `.columns` is the three-track grid and the stylesheet is written around it -- while
+     `data-screen` names the screen, which is what the selector and `<html data-screen>`
+     speak in. Two names for two things: pick a primitive, invoke it, read what came back, and keep the
+     values the server publishes for its own parameters within reach. The two gutters
+     between the three columns are draggable and their split is stored. -->
+<section class="screen columns" data-screen="basics" aria-label="Basics">
 
   <!-- ── Left: the selected server's primitives ──────────────────────── -->
   <section class="col col-primitives" aria-label="Primitives">
@@ -103,6 +134,18 @@
     <p class="vars-note" id="vars-note" hidden></p>
     <div class="variables" id="variables"></div>
   </section>
+
+</section>
+
+<!-- ── Screen: About ──────────────────────────────────────────────────────────
+     What this gateway is and what it is running, on one page, for the moment before you
+     start working: the endpoint a client is pointed at, and a card per configured server
+     saying whether it came up and what it is. Every field here is already on the page in
+     some other form -- this screen adds no request of its own, it reads the same
+     `admin.status` and `admin.backends` the header and footer are drawn from. -->
+<section class="screen about" data-screen="about" aria-label="About">
+  <div class="about-inner" id="about"></div>
+</section>
 
 </main>
 

@@ -86,7 +86,16 @@ exclude = ["desktop*"]
 [tool.setuptools.package-data]
 # `*.svg` is the stock mark, which is package data for the same reason the stylesheet is:
 # the page ships everything it loads. See src/mcp_gateway/branding.md.
-"mcp_gateway_ui" = ["*.html", "*.css", "*.js", "*.svg"]
+#
+# The `screens/` patterns are spelled out a level at a time rather than as a recursive glob.
+# A directory of screens is a thing somebody adds to, and a `**` that silently swept in a
+# third level would be a wheel whose contents nobody chose; `tests/test_webui.py` checks the
+# built wheel against `webui.ASSETS`, so a level added without a line here is a red test.
+"mcp_gateway_ui" = [
+    "*.html", "*.css", "*.js", "*.svg",
+    "screens/*.js",
+    "screens/basics/*.js",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

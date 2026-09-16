@@ -43,6 +43,48 @@
 
   apply(stored());
 
+  // ── The screen ─────────────────────────────────────────────────────────────
+  //
+  // Which layout the content panel is showing, as an attribute on <html> that `style.css`
+  // reads. Here rather than in `app.js` for the reason everything else in this file is
+  // here: restored from a deferred module, every reload of a page parked on another screen
+  // would paint the columns first and then swap.
+  //
+  // This file deliberately does *not* know what the screens are. The register is the
+  // `<option>` list in `index.html`, which is also the control; a name is stored if it
+  // looks like a name, and `app.js` -- which can see the options, because by then the body
+  // is parsed -- is what rejects one that is not on the list. The stylesheet makes an
+  // unrecognised value show the columns rather than nothing, so the gap between the two is
+  // a screen you did not ask for and never a blank page.
+
+  var SCREEN = 'mcp-gateway-ui.screen';
+  var NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+  function storedScreen() {
+    try {
+      var value = localStorage.getItem(SCREEN);
+      return NAME.test(value || '') ? value : null;
+    } catch (_) {
+      return null;       // private window, or site data blocked
+    }
+  }
+
+  function applyScreen(name) {
+    if (name) document.documentElement.setAttribute('data-screen', name);
+    else document.documentElement.removeAttribute('data-screen');
+  }
+
+  window.__screen = {
+    get: storedScreen,
+    set: function (name) {
+      if (!NAME.test(name || '')) return;
+      applyScreen(name);
+      try { localStorage.setItem(SCREEN, name); } catch (_) { /* nothing to do */ }
+    },
+  };
+
+  applyScreen(storedScreen());
+
   // ── The column widths ──────────────────────────────────────────────────────
   //
   // Only ever an *override*: the defaults live in `style.css` and nowhere else, so resetting

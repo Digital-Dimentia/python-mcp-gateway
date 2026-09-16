@@ -45,6 +45,20 @@ def stage(mode: str) -> None:
     )
 
 
+def staged_names() -> set[str]:
+    """Every staged file, named the way `webui.ASSETS` names it.
+
+    A walk rather than a listing, and relative rather than by basename: the screens stage
+    into `screens/` and `screens/basics/`, so `results.js` and a hypothetical
+    `screens/basics/results.js` are two different entries and only one of them is allowed.
+    """
+    return {
+        q.relative_to(STAGING).as_posix()
+        for q in STAGING.rglob("*")
+        if q.is_file()
+    }
+
+
 # --- one copy of the UI -----------------------------------------------------------------
 
 
@@ -52,10 +66,10 @@ def test_a_copy_stage_is_byte_identical_to_the_source() -> None:
     """Every staged file came from `src/mcp_gateway_ui/` and was not touched on the way."""
     stage("copy")
     try:
-        staged = {p.name: p.read_bytes() for p in STAGING.iterdir() if p.is_file()}
+        staged = staged_names()
         assert staged, "nothing was staged"
-        for name, content in staged.items():
-            assert content == (UI / name).read_bytes(), name
+        for name in staged:
+            assert (STAGING / name).read_bytes() == (UI / name).read_bytes(), name
     finally:
         stage("link")
 
@@ -66,7 +80,7 @@ def test_the_stage_carries_the_allowlist_and_nothing_else() -> None:
     app either -- `__init__.py` is exactly such a file, and it is there for packaging."""
     stage("copy")
     try:
-        assert {p.name for p in STAGING.iterdir() if p.is_file()} == set(webui.ASSETS)
+        assert staged_names() == set(webui.ASSETS)
     finally:
         stage("link")
 

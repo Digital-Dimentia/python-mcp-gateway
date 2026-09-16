@@ -9,6 +9,7 @@ would pass with the hook unwired.
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import subprocess
 import zipfile
@@ -101,7 +102,11 @@ async def test_the_allowlist_and_the_directory_agree(tmp_path) -> None:
     assertion: a new file in `src/mcp_gateway_ui/` has to be named in the tuple or it is
     not served, and a deleted one has to leave it or it 500s.
     """
-    on_disk = {p.name for p in ASSET_DIR.iterdir() if p.is_file() and p.suffix != ".py"}
+    on_disk = {
+        p.relative_to(ASSET_DIR).as_posix()
+        for p in ASSET_DIR.rglob("*")
+        if p.is_file() and p.suffix != ".py" and "__pycache__" not in p.parts
+    }
     assert on_disk == set(webui.ASSETS), "src/mcp_gateway_ui/ and webui.ASSETS disagree"
 
 
@@ -114,6 +119,19 @@ async def test_the_allowlist_and_the_directory_agree(tmp_path) -> None:
         "/ui/%2e%2e/webui.py",
         "/ui/sub/app.js",
         "/ui/app.js/",
+        # The names in `ASSETS` carry a `/` now that the screens are in `screens/`, so a
+        # traversal has somewhere plausible to start from. All of these are 404 for the same
+        # reason every other line here is: the whole name has to *equal* a key, and none of
+        # them does. Verified against a client that does not normalise the path first --
+        # curl collapses `..` itself unless told `--path-as-is`, which is the kind of help
+        # that makes a test pass for the wrong reason.
+        "/ui/screens/../webui.py",
+        "/ui/screens/basics/../../app.js",
+        "/ui/screens/../../mcp_gateway/webui.py",
+        "/ui/screens/basics/%2e%2e/%2e%2e/app.js",
+        "/ui/screens//about.js",
+        "/ui/screens",
+        "/ui/screens/",
     ],
 )
 async def test_nothing_outside_the_allowlist_is_served(tmp_path, path) -> None:
@@ -179,6 +197,32 @@ def test_the_wheel_carries_the_assets() -> None:
         names = set(archive.namelist())
     for asset in webui.ASSETS:
         assert f"mcp_gateway_ui/{asset}" in names, asset
+
+
+def test_the_screen_modules_do_not_import_the_frame() -> None:
+    """The seam is one-way, and this is the only place that can say so.
+
+    `app.js` imports the screen modules and hands each one what it may touch -- the state it
+    renders, and for the variables column a named port of everything it may do to an open
+    form. Importing back the other way would work, and it is exactly what must not happen:
+    the cycle is the lesser problem, and a screen reaching into the frame's variables is the
+    real one, because it is what makes a screen impossible to move, test or delete on its
+    own. Nothing about that rule is visible from inside either file, so it is checked here.
+
+    Prose in these files mentions `app.js` constantly, which is why this matches an import
+    *of* it rather than the name -- and matches at any depth, since the screens moved into
+    `screens/` and a reach back up would now be spelt `../../app.js`.
+    """
+    for name in (
+        "screens/about.js",
+        "screens/basics/screen.js",
+        "screens/basics/primitives.js",
+        "screens/basics/results.js",
+        "screens/basics/variables.js",
+        "screens/basics/detail.js",
+    ):
+        text = (ASSET_DIR / name).read_text()
+        assert not re.search(r"""from\s+['"][^'"]*app\.js['"]""", text), name
 
 
 def test_the_modules_parse() -> None:

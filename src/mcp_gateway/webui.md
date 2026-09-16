@@ -11,7 +11,7 @@ One file exists only for the second host. [`tauri-transport.js`](../mcp_gateway_
 real `Authorization: Bearer` header, which a page cannot send. `index.html` loads it
 unconditionally and in a browser it finds no Tauri and returns, so this module serves a file
 that will never be used. That costs one small GET, and the alternative is a second copy of
-nine files that drifts.
+the whole directory that drifts.
 
 The transport seam in `rpc.js` is worth its own sentence, because it is not only for the
 shell: opening a socket is one replaceable function and everything else — reconnect, the
@@ -24,10 +24,15 @@ The Tauri window's content security policy is *narrower* than the one below: its
 form of "that page opens no sockets". `tests/test_desktop_layout.py` asserts it.
 
 
-The UI is eleven files: [`index.html`](../mcp_gateway_ui/index.html), [`style.css`](../mcp_gateway_ui/style.css),
+The UI is, in full: [`index.html`](../mcp_gateway_ui/index.html), [`style.css`](../mcp_gateway_ui/style.css),
 [`app.js`](../mcp_gateway_ui/app.js), [`rpc.js`](../mcp_gateway_ui/rpc.js), [`schema_form.js`](../mcp_gateway_ui/schema_form.js),
 [`render.js`](../mcp_gateway_ui/render.js), [`clipboard.js`](../mcp_gateway_ui/clipboard.js),
-[`markdown.js`](../mcp_gateway_ui/markdown.js), [`theme.js`](../mcp_gateway_ui/theme.js),
+[`markdown.js`](../mcp_gateway_ui/markdown.js), [`format.js`](../mcp_gateway_ui/format.js),
+[`screens/basics/variables.js`](../mcp_gateway_ui/screens/basics/variables.js), [`screens/basics/detail.js`](../mcp_gateway_ui/screens/basics/detail.js),
+[`screens/basics/primitives.js`](../mcp_gateway_ui/screens/basics/primitives.js), [`screens/basics/results.js`](../mcp_gateway_ui/screens/basics/results.js),
+[`naming.js`](../mcp_gateway_ui/naming.js), [`screens/about.js`](../mcp_gateway_ui/screens/about.js),
+[`screens/basics/screen.js`](../mcp_gateway_ui/screens/basics/screen.js),
+[`theme.js`](../mcp_gateway_ui/theme.js),
 [`tauri-transport.js`](../mcp_gateway_ui/tauri-transport.js) and [`logo.svg`](../mcp_gateway_ui/logo.svg). No build step,
 no bundler, no dependency — ES modules the browser loads directly. This module answers a GET
 for one of them.
@@ -40,10 +45,152 @@ package, and it reaches the page inline over `/admin` instead. See
 
 ## The frame
 
-A header with the name, the configured servers, and the theme toggle; three columns; and a
+A header with the name, the screen selector, the configured servers, and the theme toggle;
+a content panel; and a
 footer. The footer is
 where the socket pills, the gateway meta line and the global actions live: they are status
 and escape hatches, not the work, and the work is the columns.
+
+**The bars are the frame, and the content panel is the only part a screen replaces.** The
+header and the footer answer what the *gateway* is — which servers are configured, where it
+is listening, what it read, what it has been logging — and that is true whatever you are
+looking at, so a screen that redrew them would be redrawing the same answer in its own hand.
+Between them, exactly one `<section data-screen>` is displayed.
+
+There are two. **Basics** is the work surface — the three columns described below — and the
+screen any page opens on; its `<section>` keeps the class `columns`, because that class names
+the *layout* the stylesheet is written around and `data-screen` names the screen.
+**About** is a page *about* the gateway rather than a surface for driving it: the endpoint
+to point a client at, the two files it read, and a row per configured server — indicator,
+name, description, state, the command behind it, the secrets `gateway.env` does not have, and
+whatever the process said on the way down. Every one of those facts is already reachable from
+Basics, in the footer or behind a server's menu or a hover; what About adds is
+that they are all in one place and can be read in one pass, which is what you want in the
+minute *before* you start working. It asks the daemon nothing of its own — it is the
+`admin.status` and `admin.backends` the bars have already fetched — and it is redrawn only
+while it is the screen on the glass.
+
+Adding a screen is five things and no framework: an `<option>` in the header's selector, a
+`<section data-screen>` in the content panel, one pair of rules in `style.css`, a module that
+renders it, and its name in `ASSETS`. The `<option>` list is the register — `app.js` reads the
+screens off the control rather than carrying a list of its own, because the control, the
+sections and the stylesheet are already three places a screen has to be named and a fourth
+would be the one that drifts.
+
+**The screen contract.** A screen module default-exports one object and `app.js` keeps a
+registry keyed by its `id` — so dispatch is a lookup, not a branch, and a new screen is an
+edit to the registry and to no other line of existing code. `id` is the `<option>` value, the
+section's `data-screen` and the name `<html data-screen>` wears; `refresh(state)` redraws from
+the gateway's state and is called on being shown and again whenever the payloads move while
+the screen is the one on the glass; `show()` is optional and is for anything that needs the
+screen to actually be laid out. Basics is the only user of `show()`, and it is the reason the
+hook exists: a column cannot be measured while its screen is `display: none`, so the
+separators' announced values can only be recomputed once it is back.
+
+`refresh` is *handed* the state rather than importing it. `app.js` imports the screen, so
+importing `state` back out of `app.js` would be a cycle — and a screen that reads the frame's
+variables across a file boundary is not a screen you can move, test or delete on its own.
+
+[`screens/about.js`](../mcp_gateway_ui/screens/about.js) is the whole of About and the place the contract is
+written out. Basics is coming out of `app.js` a piece at a time, biggest first:
+[`screens/basics/screen.js`](../mcp_gateway_ui/screens/basics/screen.js) is the other, and it is the screen rather than the
+work: the three-column layout, the edges you drag between them, and `show`. What is *in* the
+columns is a module each — [`screens/basics/primitives.js`](../mcp_gateway_ui/screens/basics/primitives.js) with the hover tooltip that
+belongs to its rows, [`screens/basics/results.js`](../mcp_gateway_ui/screens/basics/results.js), [`screens/basics/variables.js`](../mcp_gateway_ui/screens/basics/variables.js),
+and [`screens/basics/detail.js`](../mcp_gateway_ui/screens/basics/detail.js) for the form a row opens into.
+
+**The directory.** `screens/` holds one file per screen, and `screens/basics/` the four
+columns that exist only to serve that screen — which is what the second level is saying, and
+the only thing it is saying. Everything a second screen would also want stays at the top:
+`naming.js`, `format.js`, `render.js`, `schema_form.js`, `clipboard.js`, `markdown.js`, and
+the three infrastructure files. The nesting costs four pieces of plumbing, each written down
+where it lives: `ASSETS` keys carry a `/`, `read_asset` walks a name's segments because a
+`Traversable` is not a `Path`, `pyproject.toml` names each level in `package-data` rather
+than sweeping with `**`, and both the allowlist check and the desktop staging compare a walk
+instead of a listing.
+
+What the `/` does **not** change is the security argument, and that is worth saying because
+"there is no path join in this module" was a sentence it used to be able to write. A name is
+still matched against `ASSETS` by equality, whole; the segments `read_asset` walks come from
+a key of that dict and never from a request. `/ui/screens/../webui.py` does not equal a key,
+so it is a 404 before any path exists — pinned in `tests/test_webui.py`, against a client
+told not to normalise the path first, since curl collapses `..` itself and would otherwise
+make that test pass for the wrong reason.
+
+**What each piece is handed, and what that buys.** Every one of them takes a port from
+`app.js` or takes nothing at all, and none of them imports the frame — `tests/test_webui.py`
+checks the last part, because nothing inside a file can show it. The ports are small and they
+are different from each other, which is the point: `screens/basics/primitives.js` gets the state, two things
+it may do to the panel, and a `listingsChanged` callback, so the column that re-read a listing
+never learns that vocabularies exist. `screens/basics/detail.js` gets the state, `selectionChanged` and
+`pushCard`. `screens/basics/variables.js` gets the state, `ownListings`, and the panel's own `formPort`.
+`screens/basics/results.js` and `screens/basics/screen.js` get nothing, and say so rather than growing an `install`
+to look like the others.
+
+That is what makes the wiring readable in one place. The whole of `app.js`'s involvement in
+the Basics screen is four calls at the foot of `Go`, and the middle one is the interesting
+one: the values column's port is *composed* out of this file's `ownListings` and the panel's
+form, so neither module can reach the other except through an object `app.js` wrote.
+
+[`naming.js`](../mcp_gateway_ui/naming.js) came out of that third cut rather than being planned: `naming.py`'s
+mirror — which server is this, what did the backend call it, what is a backend URI in the
+gateway's address space — was in the primitives section, and by then three modules wanted it.
+It is pure functions over one entry, so unlike everything else here it is *imported* rather
+than handed over: there is nothing in it to inject and nothing it could reach back into.
+`gatewayUri` takes the server as an argument for exactly that reason, where the copy in
+`app.js` read `state.selected` off the page.
+
+`screens/basics/detail.js` is where the two seams meet, and the shape is worth reading once. It is *handed*
+the frame it needs — the state, `label` and `idOf` off `naming.py`'s mirror, `selectionChanged`
+so the list can mark what is open, and `pushCard` — and it *hands out* `formPort`, the eight
+functions the variables column writes through. Those live with the form rather than in the
+frame because they **are** the form: a frame that knew how to put a value in a field would be
+a frame that owned the panel. So `app.js` composes the column's port out of its own catalogue
+helpers and that object, which is the whole of its involvement in either:
+
+```js
+variables.install({ state, ownListings, gatewayUri, ...detail.formPort });
+```
+
+The fan-out is the one thing that crosses both ways. A picked set lives in the column;
+sending the form once per value happens in the panel, which asks the column what the
+combinations are, writes each into the controls as an `input` event, and then collects and
+sends the form exactly as a click would — so a fanned-out call is byte-identical to the one
+you would have made by typing the value in yourself.
+
+**What the variables column is handed, and why it is a longer list.** About is a renderer of
+what it is given, so its whole interface is `refresh(state)`. The variables column *writes
+into a form* — that is the point of it — so a one-way seam has to name every way it may do
+so. `app.js` installs a port: the state and two things about the catalogue (`ownListings`,
+which replaces `ownerOf` and `localName` together so `naming.py`'s mirror stays in one file,
+and `gatewayUri` for the cascade), then eight form methods — `controlFor`, `putValue`,
+`fillField`, `holdsOneValue`, `markFanned`, `release`, `fieldName`, `updateSendLabel`. The
+column never touches the detail panel's DOM itself, and `tests/test_webui.py` asserts the
+import only goes one way, because nothing inside either file can show that it does.
+
+`release` is the one that names a rule rather than an action. A pick lives as long as its
+group is on screen; change the continent and the country picked under the old one stops
+existing, while the form is still holding it. So the value has to go where the pick went —
+but a value *you* typed over it is yours, and the form is asked to release what it was given
+and nothing else. That used to be `buryField` reaching into a control directly; as a port
+method it is the same code with the rule written on it. [`format.js`](../mcp_gateway_ui/format.js) exists because of that split — uptime is on the
+footer *and* on About, and a duration that reads `2h 14m` in one place and `8040s` in the
+other is a difference a person notices and cannot explain. The 12-line `el` DOM shim is still
+copied into each module that builds nodes, which is the older house rule and a deliberate
+contrast: a DOM constructor has no decisions in it to drift, and a formatter does.
+
+Which screen is showing is `data-screen` on `<html>`, written by `theme.js` before the first
+paint for the same reason the theme and the column split are (below): restored from a
+deferred module, a page parked on About would paint the columns first and then swap on every
+reload. That file deliberately knows no screen names — it stores a name if it *looks* like
+one, and `app.js`, which can see the options because the body is parsed by the time a module
+runs, is what rejects a name that is no longer a screen. CSS cannot ask whether one attribute
+equals another, so each alternate screen names itself in the stylesheet: hidden by default,
+shown when `<html>` wears its name, hiding Basics when it does. Basics is therefore
+what *any* unrecognised value shows — including a name left in storage by a build that had a
+screen this one does not — where a rule that showed only an exact match would answer that with
+a blank page. The name is written to storage by the gesture and not by the restore, so a page
+that has never been switched stores nothing and pins no default.
 
 The footer is three groups, and all of what they show comes from one `admin.status`.
 On the left, the log tab and the two socket pills, each pill carrying the whole endpoint —
@@ -522,6 +669,6 @@ see. The header is what stops a future edit from quietly adding one.
 ## What is not here
 
 This module does not serve the *data* and never touches the gateway. It answers GETs for
-nine files. Everything the UI shows comes over `/admin`
+the files in `ASSETS` and nothing else. Everything the UI shows comes over `/admin`
 ([`admin_channel.md`](admin_channel.md)) or `/mcp` ([`session.md`](session.md)), which is
 why the security argument above is about files rather than about access control.
