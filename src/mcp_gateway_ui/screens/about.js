@@ -31,7 +31,7 @@
 // except the registry, and it is the seam python-mcp-gateway-sqo has to hold to when the
 // much larger Basics screen comes out of `app.js` behind the same contract.
 
-import { formatDuration } from './format.js';
+import { formatDuration } from '../format.js';
 
 //: The same 12-line shim `app.js`, `render.js` and `schema_form.js` each carry. Copied
 //: rather than shared on purpose: it is a DOM constructor with no decisions in it, so there

@@ -28,17 +28,17 @@
 // would have made by typing the value yourself, which is the same reason the middle column
 // speaks MCP rather than `admin.*`.
 
-import { RpcError } from './rpc.js';
-import { buildForm, buildPromptForm, templateVariables, expandTemplate } from './schema_form.js';
+import { RpcError } from '../../rpc.js';
+import { buildForm, buildPromptForm, templateVariables, expandTemplate } from '../../schema_form.js';
 import {
   renderToolResult, renderPromptResult, renderResourceResult, renderError, pretty,
-} from './render.js';
-import { localName, itemId } from './naming.js';
+} from '../../render.js';
+import { localName, itemId } from '../../naming.js';
 import * as variables from './variables.js';
 
 const $ = (id) => document.getElementById(id);
 
-//: The same 12-line shim every module that builds DOM carries; `screen_about.js` says why it
+//: The same 12-line shim every module that builds DOM carries; `screens/about.js` says why it
 //: is copied rather than shared.
 const el = (tag, props = {}, children = []) => {
   const node = document.createElement(tag);

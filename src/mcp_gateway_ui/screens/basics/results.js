@@ -13,12 +13,12 @@
 // `clipboard.js` already exports a function for. So there is no `install` here, and adding
 // one to match the others would be ceremony rather than symmetry.
 
-import { resultCard } from './render.js';
-import { clipboardChanged } from './clipboard.js';
+import { resultCard } from '../../render.js';
+import { clipboardChanged } from '../../clipboard.js';
 
 const $ = (id) => document.getElementById(id);
 
-//: The same 12-line shim every module that builds DOM carries; `screen_about.js` says why it
+//: The same 12-line shim every module that builds DOM carries; `screens/about.js` says why it
 //: is copied rather than shared.
 const el = (tag, props = {}, children = []) => {
   const node = document.createElement(tag);

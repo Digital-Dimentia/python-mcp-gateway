@@ -82,7 +82,11 @@ def stage_copy(target: Path) -> list[str]:
         source = SOURCE / name
         if not source.is_file():
             raise SystemExit(f"stage_ui: webui.ASSETS names {name}, which is not in {SOURCE}")
-        shutil.copy2(source, target / name)
+        # A name may carry a `/` -- the screens are in `screens/`, and `screens/basics/` under
+        # that -- and `copy2` does not make the directory it is copying into.
+        destination = target / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
         staged.append(name)
     return staged
 

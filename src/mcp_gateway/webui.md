@@ -28,10 +28,10 @@ The UI is, in full: [`index.html`](../mcp_gateway_ui/index.html), [`style.css`](
 [`app.js`](../mcp_gateway_ui/app.js), [`rpc.js`](../mcp_gateway_ui/rpc.js), [`schema_form.js`](../mcp_gateway_ui/schema_form.js),
 [`render.js`](../mcp_gateway_ui/render.js), [`clipboard.js`](../mcp_gateway_ui/clipboard.js),
 [`markdown.js`](../mcp_gateway_ui/markdown.js), [`format.js`](../mcp_gateway_ui/format.js),
-[`variables.js`](../mcp_gateway_ui/variables.js), [`detail.js`](../mcp_gateway_ui/detail.js),
-[`primitives.js`](../mcp_gateway_ui/primitives.js), [`results.js`](../mcp_gateway_ui/results.js),
-[`naming.js`](../mcp_gateway_ui/naming.js), [`screen_about.js`](../mcp_gateway_ui/screen_about.js),
-[`screen_basics.js`](../mcp_gateway_ui/screen_basics.js),
+[`screens/basics/variables.js`](../mcp_gateway_ui/screens/basics/variables.js), [`screens/basics/detail.js`](../mcp_gateway_ui/screens/basics/detail.js),
+[`screens/basics/primitives.js`](../mcp_gateway_ui/screens/basics/primitives.js), [`screens/basics/results.js`](../mcp_gateway_ui/screens/basics/results.js),
+[`naming.js`](../mcp_gateway_ui/naming.js), [`screens/about.js`](../mcp_gateway_ui/screens/about.js),
+[`screens/basics/screen.js`](../mcp_gateway_ui/screens/basics/screen.js),
 [`theme.js`](../mcp_gateway_ui/theme.js),
 [`tauri-transport.js`](../mcp_gateway_ui/tauri-transport.js) and [`logo.svg`](../mcp_gateway_ui/logo.svg). No build step,
 no bundler, no dependency — ES modules the browser loads directly. This module answers a GET
@@ -91,22 +91,40 @@ separators' announced values can only be recomputed once it is back.
 importing `state` back out of `app.js` would be a cycle — and a screen that reads the frame's
 variables across a file boundary is not a screen you can move, test or delete on its own.
 
-[`screen_about.js`](../mcp_gateway_ui/screen_about.js) is the whole of About and the place the contract is
+[`screens/about.js`](../mcp_gateway_ui/screens/about.js) is the whole of About and the place the contract is
 written out. Basics is coming out of `app.js` a piece at a time, biggest first:
-[`screen_basics.js`](../mcp_gateway_ui/screen_basics.js) is the other, and it is the screen rather than the
+[`screens/basics/screen.js`](../mcp_gateway_ui/screens/basics/screen.js) is the other, and it is the screen rather than the
 work: the three-column layout, the edges you drag between them, and `show`. What is *in* the
-columns is a module each — [`primitives.js`](../mcp_gateway_ui/primitives.js) with the hover tooltip that
-belongs to its rows, [`results.js`](../mcp_gateway_ui/results.js), [`variables.js`](../mcp_gateway_ui/variables.js),
-and [`detail.js`](../mcp_gateway_ui/detail.js) for the form a row opens into.
+columns is a module each — [`screens/basics/primitives.js`](../mcp_gateway_ui/screens/basics/primitives.js) with the hover tooltip that
+belongs to its rows, [`screens/basics/results.js`](../mcp_gateway_ui/screens/basics/results.js), [`screens/basics/variables.js`](../mcp_gateway_ui/screens/basics/variables.js),
+and [`screens/basics/detail.js`](../mcp_gateway_ui/screens/basics/detail.js) for the form a row opens into.
+
+**The directory.** `screens/` holds one file per screen, and `screens/basics/` the four
+columns that exist only to serve that screen — which is what the second level is saying, and
+the only thing it is saying. Everything a second screen would also want stays at the top:
+`naming.js`, `format.js`, `render.js`, `schema_form.js`, `clipboard.js`, `markdown.js`, and
+the three infrastructure files. The nesting costs four pieces of plumbing, each written down
+where it lives: `ASSETS` keys carry a `/`, `read_asset` walks a name's segments because a
+`Traversable` is not a `Path`, `pyproject.toml` names each level in `package-data` rather
+than sweeping with `**`, and both the allowlist check and the desktop staging compare a walk
+instead of a listing.
+
+What the `/` does **not** change is the security argument, and that is worth saying because
+"there is no path join in this module" was a sentence it used to be able to write. A name is
+still matched against `ASSETS` by equality, whole; the segments `read_asset` walks come from
+a key of that dict and never from a request. `/ui/screens/../webui.py` does not equal a key,
+so it is a 404 before any path exists — pinned in `tests/test_webui.py`, against a client
+told not to normalise the path first, since curl collapses `..` itself and would otherwise
+make that test pass for the wrong reason.
 
 **What each piece is handed, and what that buys.** Every one of them takes a port from
 `app.js` or takes nothing at all, and none of them imports the frame — `tests/test_webui.py`
 checks the last part, because nothing inside a file can show it. The ports are small and they
-are different from each other, which is the point: `primitives.js` gets the state, two things
+are different from each other, which is the point: `screens/basics/primitives.js` gets the state, two things
 it may do to the panel, and a `listingsChanged` callback, so the column that re-read a listing
-never learns that vocabularies exist. `detail.js` gets the state, `selectionChanged` and
-`pushCard`. `variables.js` gets the state, `ownListings`, and the panel's own `formPort`.
-`results.js` and `screen_basics.js` get nothing, and say so rather than growing an `install`
+never learns that vocabularies exist. `screens/basics/detail.js` gets the state, `selectionChanged` and
+`pushCard`. `screens/basics/variables.js` gets the state, `ownListings`, and the panel's own `formPort`.
+`screens/basics/results.js` and `screens/basics/screen.js` get nothing, and say so rather than growing an `install`
 to look like the others.
 
 That is what makes the wiring readable in one place. The whole of `app.js`'s involvement in
@@ -122,7 +140,7 @@ than handed over: there is nothing in it to inject and nothing it could reach ba
 `gatewayUri` takes the server as an argument for exactly that reason, where the copy in
 `app.js` read `state.selected` off the page.
 
-`detail.js` is where the two seams meet, and the shape is worth reading once. It is *handed*
+`screens/basics/detail.js` is where the two seams meet, and the shape is worth reading once. It is *handed*
 the frame it needs — the state, `label` and `idOf` off `naming.py`'s mirror, `selectionChanged`
 so the list can mark what is open, and `pushCard` — and it *hands out* `formPort`, the eight
 functions the variables column writes through. Those live with the form rather than in the

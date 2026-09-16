@@ -9,7 +9,7 @@
 // What is left in this file is the part that is true on every screen: the two sockets and
 // the gate in front of them, the deployment's branding, the server bar and the editor it
 // drops, the log, the theme, and the registry that says which screen is showing. The Basics
-// screen is coming out of here a piece at a time -- `variables.js` and `detail.js` so far,
+// screen is coming out of here a piece at a time -- `screens/basics/variables.js` and `screens/basics/detail.js` so far,
 // the rest under python-mcp-gateway-8mm -- and each piece is *handed* what it may touch,
 // never given this file to import. The installs at the foot of `Go` are where that is done,
 // and they are the only place either module is named twice.
@@ -21,20 +21,20 @@ import { installClipboard, clipboardChanged } from './clipboard.js';
 import { basename, formatDuration } from './format.js';
 //: The screens. Each is one default export; the registry under `The screens` is what binds
 //: one to the `<option>` that selects it.
-import basicsScreen from './screen_basics.js';
-import aboutScreen from './screen_about.js';
+import basicsScreen from './screens/basics/screen.js';
+import aboutScreen from './screens/about.js';
 //: The injectable values column, which is the first piece of the Basics screen to live
 //: outside this file. It is handed what it may touch rather than importing it -- see
-//: the `variables.install` call in `Go`, and the header of `variables.js`.
-import * as variables from './variables.js';
+//: the `variables.install` call in `Go`, and the header of `screens/basics/variables.js`.
+import * as variables from './screens/basics/variables.js';
 //: The form a primitive opens into. It is handed the frame it needs, and hands back the
 //: eight functions the column above needs to write into whatever form is open -- so this
 //: file wires the two together and implements neither. See both modules' headers.
 //: The left column: what the selected server publishes, and the row that opens the panel.
 //: The middle column. It takes no port: see its header for why it is the one that does not.
-import * as results from './results.js';
-import * as primitives from './primitives.js';
-import * as detail from './detail.js';
+import * as results from './screens/basics/results.js';
+import * as primitives from './screens/basics/primitives.js';
+import * as detail from './screens/basics/detail.js';
 
 
 //: The gateway's own meta-tools live under this name and have no backend behind them, so
@@ -724,7 +724,7 @@ $('btn-log').addEventListener('click', () => {
 // is parsed by the time a module runs and the options can be looked at.
 //
 // A screen is one default-exported object -- `{ id, refresh(state), show() }` -- and this is
-// the registry of them. The contract is written out at the head of `screen_about.js`; what
+// the registry of them. The contract is written out at the head of `screens/about.js`; what
 // matters here is that dispatch is a lookup rather than a branch, so adding a screen touches
 // this object and nothing else in this file.
 //
@@ -776,14 +776,14 @@ showScreen(window.__screen.get(), false);
 
 // ── The primitives column ──────────────────────────────────────────────────────
 //
-// In `primitives.js`, with the hover tooltip that belongs to its rows. It is handed the
+// In `screens/basics/primitives.js`, with the hover tooltip that belongs to its rows. It is handed the
 // state, the two things it may do to the detail panel, and one callback for "the listings
 // were re-read" -- because what else stands on a listing is this file's business, not a
 // column's.
 
 // ── The injectable values column ───────────────────────────────────────────────
 //
-// In `variables.js`, not here. It is the largest single piece of the Basics screen, and the
+// In `screens/basics/variables.js`, not here. It is the largest single piece of the Basics screen, and the
 // first to be given a file of its own: the vocabularies a server publishes, the cascade
 // between them, and what is picked. It reaches this file only through the port installed in
 // `Go` at the foot of this one -- so the two directions are `variables.<name>()` from here,
@@ -791,13 +791,13 @@ showScreen(window.__screen.get(), false);
 
 // ── The detail panel ───────────────────────────────────────────────────────────
 //
-// In `detail.js`, with the form port it exports and the fan-out that drives it. What is left
+// In `screens/basics/detail.js`, with the form port it exports and the fan-out that drives it. What is left
 // here is the wiring: `installs` at the foot of this file hand it the frame and hand the
 // column its port, composed out of this file's catalogue helpers and that file's form.
 
 // ── The results column ─────────────────────────────────────────────────────────
 //
-// In `results.js`, which is handed nothing at all.
+// In `screens/basics/results.js`, which is handed nothing at all.
 
 // ── The clipboard ──────────────────────────────────────────────────────────────
 //
@@ -1127,7 +1127,7 @@ export {
 
 // The variables column's half, passed straight through rather than re-wrapped: these are
 // live bindings, and `opened`, `liveKeys` and `refreshing` are all reassigned inside
-// `variables.js` as a cascade resolves. A suite that imported a copy would see the value
+// `screens/basics/variables.js` as a cascade resolves. A suite that imported a copy would see the value
 // they had when the module loaded, forever.
 export {
   refreshing,
@@ -1151,14 +1151,14 @@ export {
   buryField,
   fannedFields,
   spread,
-} from './variables.js';
+} from './screens/basics/variables.js';
 
 //: The detail panel's share of the seam, passed straight through for the same reason.
-export { openItem, controlFor, putValue, fillField } from './detail.js';
+export { openItem, controlFor, putValue, fillField } from './screens/basics/detail.js';
 
 //: And the left column's, under the name the suites already call it by.
-export { render as renderPrimitives, hideTooltip } from './primitives.js';
+export { render as renderPrimitives, hideTooltip } from './screens/basics/primitives.js';
 export { gatewayUri } from './naming.js';
 
 //: And the middle column's.
-export { pushCard, clearResults } from './results.js';
+export { pushCard, clearResults } from './screens/basics/results.js';
