@@ -94,6 +94,7 @@ exclude = ["desktop*"]
 "mcp_gateway_ui" = [
     "*.html", "*.css", "*.js", "*.svg",
     "screens/*.js",
+    "screens/about/*.js",
     "screens/basics/*.js",
 ]
 

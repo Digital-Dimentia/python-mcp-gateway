@@ -1,4 +1,15 @@
-// The About screen: what this gateway is and what it is running.
+// The About screen: what this gateway is, and what it is running.
+//
+// Two halves, and they answer two different questions. The tour is the first -- a deck of
+// slides saying what this thing is for, how it is put together, how it is configured and
+// what it is built on -- and the cards below it are the second: the endpoint, the two files,
+// and a row per configured server. A person opening the desktop app has never seen the
+// README; a person who has been running the daemon for a month wants the rows. Both are on
+// one screen because they are the same question asked at two distances.
+//
+// The deck is `tour.js` (the mechanism) and `slides.js` (what it says); this file is what
+// puts them together, which is the same split `screens/basics/` has and for the same
+// reason -- one screen, one directory, and the pieces inside it are only ever about it.
 //
 // The endpoint to point a client at, the two files it read, and one row per configured
 // server saying whether it came up. Every field here is already somewhere on the page -- in
@@ -31,25 +42,13 @@
 // except the registry, and it is the seam python-mcp-gateway-sqo has to hold to when the
 // much larger Basics screen comes out of `app.js` behind the same contract.
 
-import { formatDuration } from '../format.js';
-
-//: The same 12-line shim `app.js`, `render.js` and `schema_form.js` each carry. Copied
-//: rather than shared on purpose: it is a DOM constructor with no decisions in it, so there
-//: is nothing here that can drift, and one more module is one more asset and one more GET.
-//: What is *not* copied is anything that formats a value -- see `format.js`.
-const el = (tag, props = {}, children = []) => {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (v === undefined || v === null || v === false) continue;
-    if (k === 'class') node.className = v;
-    else if (k === 'text') node.textContent = v;
-    else if (k === 'dataset') Object.assign(node.dataset, v);
-    else if (k in node) node[k] = v;
-    else node.setAttribute(k, v);
-  }
-  for (const child of [].concat(children)) if (child) node.append(child);
-  return node;
-};
+import { formatDuration } from '../../format.js';
+//: `el` comes with it. Everywhere else in this UI that 12-line DOM shim is copied rather
+//: than shared -- it has no decisions in it, so it cannot drift, and one more module is one
+//: more asset and one more GET. Neither half of that holds here: `tour.js` is fetched by
+//: this screen whatever happens, so importing it costs nothing at all.
+import { deck, el } from './tour.js';
+import slides from './slides.js';
 
 /** One `<dt>`/`<dd>` pair, or nothing at all when there is no value to show. */
 function field(label, value, title = '') {
@@ -135,6 +134,12 @@ function serversCard(state) {
   ]);
 }
 
+//: Built once, on the first refresh, and kept. The deck holds which slide is showing, and
+//: About repaints whenever a payload moves -- so a deck rebuilt on every refresh would jump
+//: back to slide 1 the moment a backend changed state, which is precisely when somebody is
+//: watching. `replaceChildren` below re-appends this same node, so nothing in it is lost.
+let tour = null;
+
 export default {
   id: 'about',
 
@@ -143,6 +148,11 @@ export default {
   //: which is exactly the condition under which replacing the subtree is the simple
   //: version rather than the lazy one.
   refresh(state) {
-    document.getElementById('about').replaceChildren(gatewayCard(state), serversCard(state));
+    if (!tour) tour = deck(slides);
+    //: The live figures three slides quote, redrawn -- not the deck, and not the position.
+    tour.update(state);
+    document.getElementById('about').replaceChildren(
+      tour.node, gatewayCard(state), serversCard(state),
+    );
   },
 };

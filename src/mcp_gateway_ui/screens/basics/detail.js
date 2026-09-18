@@ -38,7 +38,7 @@ import * as variables from './variables.js';
 
 const $ = (id) => document.getElementById(id);
 
-//: The same 12-line shim every module that builds DOM carries; `screens/about.js` says why it
+//: The same 12-line shim every module that builds DOM carries; `screens/about/tour.js` says why it
 //: is copied rather than shared.
 const el = (tag, props = {}, children = []) => {
   const node = document.createElement(tag);

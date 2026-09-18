@@ -12,7 +12,7 @@
 // announce their position as a percentage of two measured widths. So coming back to this
 // screen is not a repaint, it is a *measurement* -- which is exactly the thing a renderer
 // called at any time cannot do. About has no such hook and needs none; see the contract at
-// the head of `screens/about.js`.
+// the head of `screens/about/screen.js`.
 //
 // Handed nothing, like `results.js`. The split is `theme.js`'s to restore before the first
 // paint and this file's to change afterwards, and neither of them needs the gateway.

@@ -152,3 +152,99 @@ describe('the About screen', () => {
     assert.match(rows[1].textContent, /No such file or directory/);
   });
 });
+
+// The deck at the top of About. What is asserted is the mechanism -- which slide is
+// showing, what moves it, and that a repaint does not move it -- plus the three figures a
+// slide quotes off the payloads. What a slide *says* is prose in `slides.js` and is not
+// something a test can hold still; the one content assertion here is the tag list, because
+// the deck losing a section is a regression and reordering its wording is not.
+describe('the tour', () => {
+  const tour = () => document.getElementById('tour');
+  const dots = () => [...tour().querySelectorAll('.tour-dot')];
+  const counter = () => tour().querySelector('.tour-counter').textContent;
+  const arrows = () => [...tour().querySelectorAll('.tour-arrow')];
+  const title = () => tour().querySelector('.tour-title h3').textContent;
+
+  const press = (key) => tour().dispatchEvent(
+    new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }),
+  );
+
+  it('sits above the cards, and opens on the first slide', () => {
+    ui.showScreen('about');
+    assert.ok(tour(), 'the deck is on the About screen');
+    //: DOCUMENT_POSITION_FOLLOWING: the explanation comes before the live cards.
+    const gateway = document.querySelector('#about .about-card:not(.tour)');
+    assert.equal(tour().compareDocumentPosition(gateway) & 4, 4);
+    assert.equal(counter(), `1 / ${dots().length}`);
+    assert.ok(dots()[0].classList.contains('on'));
+  });
+
+  it('covers every section the tour is for', () => {
+    const tags = new Set();
+    for (let i = 0; i < dots().length; i += 1) {
+      dots()[i].click();
+      tags.add(tour().querySelector('.tour-tag').textContent);
+    }
+    for (const section of ['What it is', 'The case', 'Architecture', 'Configuration', 'The admin UI', 'Technology']) {
+      assert.ok(tags.has(section), `the deck still has a ${section} slide`);
+    }
+    dots()[0].click();
+  });
+
+  it('moves with the arrows, the dots and the keyboard, and stops at both ends', () => {
+    const [back, forward] = arrows();
+    assert.equal(back.disabled, true, 'there is nothing before the first slide');
+
+    forward.click();
+    assert.equal(counter(), `2 / ${dots().length}`);
+    assert.equal(back.disabled, false);
+
+    press('ArrowLeft');
+    assert.equal(counter(), `1 / ${dots().length}`);
+    //: Clamped rather than wrapped: a deck that jumps to the end when you press back on
+    //: slide 1 has just thrown the reader out of the explanation they were following.
+    press('ArrowLeft');
+    assert.equal(counter(), `1 / ${dots().length}`);
+
+    press('End');
+    assert.equal(counter(), `${dots().length} / ${dots().length}`);
+    assert.equal(arrows()[1].disabled, true, 'there is nothing after the last slide');
+
+    dots()[2].click();
+    assert.equal(counter(), `3 / ${dots().length}`);
+    assert.ok(dots()[2].classList.contains('on'));
+  });
+
+  // The failure this pins: About repaints whenever a payload moves, and a deck rebuilt on
+  // every repaint would throw the reader back to slide 1 the moment a backend changed
+  // state -- which is exactly when somebody is watching the screen.
+  it('stays where it was when the screen repaints', () => {
+    const was = { counter: counter(), title: title() };
+    ui.SCREEN_MODULES.about.refresh(ui.state);
+    assert.equal(counter(), was.counter);
+    assert.equal(title(), was.title);
+  });
+
+  it('quotes the running gateway on its last slide', () => {
+    press('End');
+    const text = tour().querySelector('.tour-stage').textContent;
+    //: The fixtures above: three backends, one of them running, and two /mcp clients.
+    assert.match(text, /1 running of 3 configured/);
+    assert.match(text, /2 on \/mcp, 1 on \/admin/);
+    assert.match(text, /127\.0\.0\.1:8765\/mcp/);
+  });
+
+  it('reads before either socket has answered', () => {
+    //: The case a first-run user actually sees: no status, no backends, and every live
+    //: figure with nothing behind it. Every slide, because the failure mode of a tour that
+    //: quotes the payloads is one card in nine reading `undefined` on the first launch.
+    ui.SCREEN_MODULES.about.refresh({ backends: [], config: { servers: {} }, missing: {} });
+    for (let i = 0; i < dots().length; i += 1) {
+      dots()[i].click();
+      const text = tour().querySelector('.tour-stage').textContent;
+      assert.ok(text.length > 40, `slide ${i + 1} has something on it`);
+      assert.doesNotMatch(text, /undefined|NaN|\[object/, `slide ${i + 1} is readable`);
+    }
+    assert.match(tour().textContent, /not listening yet/);
+  });
+});

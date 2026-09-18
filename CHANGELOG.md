@@ -9,6 +9,28 @@ nobody reads.
 
 ## Unreleased
 
+**The app explains itself now: About opens with a tour.** A deck of nine slides at the top
+of the About screen, for the person who has the window open and has not read the README —
+which, for anyone who launched the desktop app, is everyone. What this is and what it is
+for; the case for running one at all; the three ways to attach a client; how a call travels
+from the transport through the session and the router to a backend; the two config files and
+the rule that keeps values out of the committed one; what happens to a secret, and the four
+places it never goes; the layout of this page and what each of the three columns is for; and
+what the whole thing is built on. Move with the arrows, the dots, or the keyboard once the
+deck has focus.
+
+It asks the gateway for nothing. Three of the slides quote the payloads About already has —
+the endpoint, how many backends came up of how many configured, who is attached — and every
+one of them reads before either socket has answered, which is the moment a first-run user is
+looking at it. The deck keeps its place while the screen repaints, so watching a backend
+change state does not throw you back to slide 1.
+
+Slides are content in one file (`screens/about/slides.js`) and the deck is mechanism in
+another (`tour.js`), because the half that goes stale should be editable without reading a
+keyboard handler. Nothing on a slide is the only place a fact is written: each is the short
+form of something in README.md, GET_STARTED.md, ARCHITECTURE.md or a module's own `.md`, and
+when they disagree the Markdown is right.
+
 **The admin UI has screens, and an About screen to read the gateway off.** A selector sits in the header
 after the name; the bars stay exactly as they are and only the panel between them changes.
 **Basics** is the work you already had — primitives, results, injectable values — and still

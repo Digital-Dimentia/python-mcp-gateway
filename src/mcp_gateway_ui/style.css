@@ -1214,3 +1214,135 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 0.8rem; color: var(--muted); }
 .about-line.warn { color: var(--warn); }
 
 .about-empty { color: var(--muted); }
+
+/* ── The tour: the slide deck at the top of About ───────────────────────── */
+
+/* A card like the two below it, with a fixed frame and one changing middle. The frame is
+ * the point: the title sits in the same place on every slide and the controls never move,
+ * so pressing next nine times is nine readings of one card rather than nine layouts. */
+.tour:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.tour-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.tour-sub { color: var(--muted); font-size: 0.78rem; margin: 0; }
+
+/* The one part that changes. A floor rather than a fixed height: the shortest slide must
+ * not let the controls ride up under the title, and the longest must not be cut off. */
+.tour-stage {
+  min-height: 15rem;
+  padding: 0.7rem 0 0.4rem;
+}
+@media (max-width: 40rem) { .tour-stage { min-height: 0; } }
+
+.tour-title { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.tour-title h3 { margin: 0; font-size: 1.05rem; }
+
+/* Which of the six questions this slide answers — architecture, credentials, technology.
+ * It is the deck's table of contents, one word at a time. */
+.tour-tag {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+}
+
+.tour-stack { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 0.6rem; }
+.tour-p { margin: 0; font-size: 0.86rem; color: var(--ink-soft); line-height: 1.5; max-width: 46rem; }
+
+/* Four claims of equal weight. `auto-fit` rather than a column count: at the width this
+ * screen is read on it is two by two, and on a laptop split down the middle it is one. */
+.tour-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.6rem;
+}
+.tour-card {
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+  background: var(--panel-2);
+  padding: 0.55rem 0.65rem;
+}
+.tour-card h4 { margin: 0 0 0.2rem; font-size: 0.82rem; }
+.tour-card p { margin: 0; font-size: 0.78rem; color: var(--ink-soft); line-height: 1.45; }
+
+/* Name on the left, one line about it on the right — and stacked once there is no room for
+ * two columns, because a term squeezed to four characters is not a term. */
+.tour-pairs {
+  display: grid;
+  grid-template-columns: minmax(7rem, 14rem) minmax(0, 1fr);
+  gap: 0.35rem 0.9rem;
+  margin: 0;
+  align-items: baseline;
+}
+.tour-pairs dt { font-weight: 600; font-size: 0.82rem; }
+.tour-pairs dd { margin: 0; font-size: 0.8rem; color: var(--ink-soft); line-height: 1.45; }
+@media (max-width: 34rem) {
+  .tour-pairs { grid-template-columns: minmax(0, 1fr); gap: 0.1rem; }
+  .tour-pairs dd { margin-bottom: 0.4rem; }
+}
+
+.tour-code {
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+/* Boxes and arrows, built out of the DOM because the page ships what it serves and a
+ * diagram that was an image would be a second thing to keep true. It wraps; `.down` is the
+ * same row turned vertical, for the one diagram that is a stack rather than a pipeline. */
+.tour-flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0.4rem; }
+.tour-flow.down { flex-direction: column; align-items: flex-start; }
+
+.tour-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 10rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--panel-2);
+  padding: 0.45rem 0.6rem;
+  min-width: 0;
+}
+.tour-flow.down .tour-box { flex: 0 0 auto; min-width: 16rem; }
+.tour-box strong { font-size: 0.82rem; }
+.tour-note { font-size: 0.72rem; color: var(--muted); line-height: 1.4; }
+
+.tour-to { align-self: center; color: var(--accent); font-size: 0.9rem; }
+
+/* The controls, on one row and always in the same place: back on the left, forward on the
+ * right, and the dots between them so the length of the deck is visible from slide 1. */
+.tour-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-top: 1px solid var(--rule-soft);
+  padding-top: 0.5rem;
+}
+.tour-arrow { font-size: 1.1rem; line-height: 1; padding: 0.1rem 0.5rem; }
+.tour-counter { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.tour-dots { display: flex; gap: 0.3rem; flex: 1 1 auto; flex-wrap: wrap; }
+.tour-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  background: transparent;
+}
+.tour-dot:hover { border-color: var(--accent); }
+.tour-dot.on { background: var(--accent); border-color: var(--accent); }
+
+/* A slide arrives rather than replacing the one before it mid-sentence. Cosmetic, and off
+ * entirely for a reader who asked for less motion. */
+.tour-stage > * { animation: tour-in 140ms ease-out; }
+@keyframes tour-in { from { opacity: 0; transform: translateY(2px); } }
+@media (prefers-reduced-motion: reduce) { .tour-stage > * { animation: none; } }

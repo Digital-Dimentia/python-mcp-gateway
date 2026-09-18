@@ -22,7 +22,7 @@ import { basename, formatDuration } from './format.js';
 //: The screens. Each is one default export; the registry under `The screens` is what binds
 //: one to the `<option>` that selects it.
 import basicsScreen from './screens/basics/screen.js';
-import aboutScreen from './screens/about.js';
+import aboutScreen from './screens/about/screen.js';
 //: The injectable values column, which is the first piece of the Basics screen to live
 //: outside this file. It is handed what it may touch rather than importing it -- see
 //: the `variables.install` call in `Go`, and the header of `screens/basics/variables.js`.
@@ -724,7 +724,7 @@ $('btn-log').addEventListener('click', () => {
 // is parsed by the time a module runs and the options can be looked at.
 //
 // A screen is one default-exported object -- `{ id, refresh(state), show() }` -- and this is
-// the registry of them. The contract is written out at the head of `screens/about.js`; what
+// the registry of them. The contract is written out at the head of `screens/about/screen.js`; what
 // matters here is that dispatch is a lookup rather than a branch, so adding a screen touches
 // this object and nothing else in this file.
 //

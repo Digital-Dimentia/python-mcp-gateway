@@ -139,10 +139,14 @@
 
 <!-- ── Screen: About ──────────────────────────────────────────────────────────
      What this gateway is and what it is running, on one page, for the moment before you
-     start working: the endpoint a client is pointed at, and a card per configured server
-     saying whether it came up and what it is. Every field here is already on the page in
-     some other form -- this screen adds no request of its own, it reads the same
-     `admin.status` and `admin.backends` the header and footer are drawn from. -->
+     start working. Two halves: a slide deck saying what the thing is for -- the value, the
+     architecture, the two config files, the admin UI's own layout, what it is built on --
+     and below it the endpoint a client is pointed at plus a card per configured server
+     saying whether it came up. Every live field here is already on the page in some other
+     form: this screen adds no request of its own, it reads the same `admin.status` and
+     `admin.backends` the header and footer are drawn from, and the deck is static content
+     that quotes three figures off them. The panel is empty in the markup because
+     `screens/about/screen.js` builds all of it. -->
 <section class="screen about" data-screen="about" aria-label="About">
   <div class="about-inner" id="about"></div>
 </section>

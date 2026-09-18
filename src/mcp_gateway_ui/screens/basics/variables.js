@@ -17,7 +17,7 @@
 //
 // Everything below runs against `port`, installed once by `app.js`. Nothing in this file
 // imports the frame, reads `state` out of it, or touches the detail panel's DOM -- the same
-// rule `screens/about.js` keeps, and the reason either file can be read on its own. The
+// rule `screens/about/screen.js` keeps, and the reason either file can be read on its own. The
 // difference is that About is a renderer of what it is given, and this is a column that
 // *writes into a form*, so what it is handed is bigger and worth naming:
 //
@@ -51,7 +51,7 @@ import { clipboardChanged } from '../../clipboard.js';
 
 const $ = (id) => document.getElementById(id);
 
-//: The same 12-line shim every module that builds DOM carries; `screens/about.js` says why it
+//: The same 12-line shim every module that builds DOM carries; `screens/about/tour.js` says why it
 //: is copied rather than shared.
 const el = (tag, props = {}, children = []) => {
   const node = document.createElement(tag);

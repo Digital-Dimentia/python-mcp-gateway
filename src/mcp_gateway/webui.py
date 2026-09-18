@@ -82,10 +82,15 @@ ASSETS: dict[str, str] = {
     "tauri-transport.js": "text/javascript; charset=utf-8",
     "schema_form.js": "text/javascript; charset=utf-8",
     # One screen, one directory. The header's `<option>` list is the register of screens and
-    # this is the register of their code; `screens/about.js` documents the contract both ends
-    # keep. About is one file; Basics is a screen plus the four columns that only exist to
-    # serve it, which is what the second level says.
-    "screens/about.js": "text/javascript; charset=utf-8",
+    # this is the register of their code; `screens/about/screen.js` documents the contract
+    # both ends keep, and each screen's directory holds the pieces that exist only to serve
+    # it -- About's slide deck, Basics' four columns.
+    "screens/about/screen.js": "text/javascript; charset=utf-8",
+    # The deck on the About screen: `tour.js` is the mechanism -- slide n of m, and the way
+    # to n+1 -- and `slides.js` is what it says about this project, which is the half that
+    # goes stale and so is kept in one file with nothing else in it.
+    "screens/about/tour.js": "text/javascript; charset=utf-8",
+    "screens/about/slides.js": "text/javascript; charset=utf-8",
     "screens/basics/screen.js": "text/javascript; charset=utf-8",
     # The injectable values column: the vocabularies, the cascade, and what is picked.
     "screens/basics/variables.js": "text/javascript; charset=utf-8",
