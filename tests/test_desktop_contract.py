@@ -206,6 +206,38 @@ async def test_the_same_client_without_the_key_is_refused(tmp_path) -> None:
         await harness.close()
 
 
+async def test_remote_mode_reaches_a_daemon_that_asks_for_nothing(tmp_path) -> None:
+    """The fifth coupling, and the newest: the shell's *other* connection mode.
+
+    In remote mode the daemon is on another machine, bound to its own `127.0.0.1`, started
+    by somebody else with no access key -- and reached through an SSH forward. So what
+    `proxy.rs` sends is the same `tokio-tungstenite` request as above with the
+    `Authorization` header omitted entirely, and `session::authorization` is the one line
+    that decides it. An omitted header, not an empty one: an empty `Bearer` would be a key
+    that matches nothing.
+
+    Tightening either side of this breaks a deployment nothing in Rust would notice.
+    """
+    harness = await daemon(tmp_path)
+    try:
+        socket = await websockets.connect(harness.url("/admin", key=None))
+        await socket.close()
+    finally:
+        await harness.close()
+
+
+def test_the_shell_only_omits_the_header_for_a_remote_gateway() -> None:
+    """The Rust half of the decision above, named so it cannot quietly become unconditional.
+
+    A shell that stopped sending the header in *local* mode would hand a keyed daemon's
+    401 to the window as "the gateway could not start", and a shell that started sending
+    one in remote mode would put a key on a socket to a machine that never issued it.
+    """
+    source = (REPO_ROOT / "src" / "desktop" / "src-tauri" / "src" / "session.rs").read_text()
+    assert "Mode::Local => Some(key.header())" in source
+    assert "Mode::Remote => None" in source
+
+
 # --- where the key comes from ---------------------------------------------------------------
 
 

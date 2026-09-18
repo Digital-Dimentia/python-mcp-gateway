@@ -49,6 +49,76 @@ design was right, and both assumptions are pinned from the Python side in
 `tests/test_desktop_contract.py` so that tightening either one fails a Python test rather
 than someone's window.
 
+## Two connection modes
+
+The gateway does not have to be a child of this app. The **Connection** screen chooses:
+
+- **Local** — the child described above. Unchanged, and what you get when nothing is
+  configured: there is no settings file until somebody writes one, and its absence *is* the
+  default.
+- **Remote** — a daemon somebody else is running on another machine, reached through an SSH
+  port forward this host opens and supervises. The backends and every credential stay over
+  there. The app never starts, stops or restarts that daemon; it manages the tunnel and
+  nothing else.
+
+```
+MCP-Gateway.app                      build-box
+├── the window                       ┌──────────────────────────────┐
+│        │ ipc                       │ mcp-gateway, bound to        │
+├── the host ── ssh -N -L ───────────┼─→ 127.0.0.1:8765, no key     │
+│        │ ws 127.0.0.1:8765         └──────────────────────────────┘
+│        ▼   (the near end of the forward)
+└── same two sockets, same admin methods
+```
+
+The forward is what makes this small: a forwarded loopback port is indistinguishable from a
+local one at the socket layer, so `proxy.rs` still dials `ws://127.0.0.1:<port>` and nothing
+downstream of it knows which machine answered.
+
+```
+ssh -N -T
+    -o ExitOnForwardFailure=yes      # a forward that cannot bind must fail, not "connect"
+    -o BatchMode=yes                 # stdin is null; a prompt would be a hang
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3   # notice a sleeping laptop
+    -o ConnectTimeout=10
+    -o ControlMaster=no -o ControlPath=none              # this child's life is the tunnel's
+    -L 127.0.0.1:<local>:127.0.0.1:<remote>
+    <destination>
+```
+
+`StrictHostKeyChecking` is deliberately not set. `accept-new` would be the app vouching for
+a host key on the user's behalf, on the one connection that is also its entire
+authentication story; first contact with a host is made once, by hand, in a terminal.
+
+### Why remote mode carries no key
+
+The same argument as the local one, arrived at from the other end. Locally the key exists
+and the window never sees it. Remotely there *is* no key: the daemon over there binds
+loopback, and only someone SSH already trusts can reach it. So `session::authorization`
+returns `None`, `proxy::open` omits the header — omitted, not empty, which a keyed daemon
+would answer with a 401 that reads like a broken tunnel — and nothing secret is stored on
+this machine. `connection.json` in the app data directory holds a destination and two port
+numbers, and is the first file in there this app owns rather than seeds.
+
+`tests/test_desktop_contract.py` pins both halves from the Python side: a keyless loopback
+daemon accepts a client with neither `Origin` nor `Authorization`, and `session.rs` still
+says `Mode::Remote => None`.
+
+### When it will not open
+
+`ssh`'s stderr is classified — never parsed for a value — into the kinds that want different
+things done about them: authentication, a host key, an unresolvable name, a busy local port,
+a far side that refused the channel, and the transient network. The first four stop at once,
+because retrying a wrong host key five times is five identical failures and a worse message.
+The last two keep trying: a closed laptop lid is not a broken configuration, and a daemon
+that somebody has not started yet is not this app's failure at all — the tunnel stays up and
+the window says so.
+
+Readiness is a probe rather than a guess. `ssh -L` accepts locally the moment it has
+authenticated and only *then* asks the far side to connect, so a bare TCP connect proves
+nothing; `tunnel::probe` sends an HTTP request through the forward, which needs no key, and
+tells a gateway from an empty tunnel from an unbound port.
+
 ## Why the gateway is a bundled interpreter and not a frozen binary
 
 Both of the gateway's runtime dependencies are pure Python *by decision* — `ruamel.yaml`

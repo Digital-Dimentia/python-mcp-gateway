@@ -32,6 +32,7 @@ The UI is, in full: [`index.html`](../mcp_gateway_ui/index.html), [`style.css`](
 [`screens/basics/primitives.js`](../mcp_gateway_ui/screens/basics/primitives.js), [`screens/basics/results.js`](../mcp_gateway_ui/screens/basics/results.js),
 [`naming.js`](../mcp_gateway_ui/naming.js), [`screens/about/screen.js`](../mcp_gateway_ui/screens/about/screen.js),
 [`screens/about/tour.js`](../mcp_gateway_ui/screens/about/tour.js), [`screens/about/slides.js`](../mcp_gateway_ui/screens/about/slides.js),
+[`screens/connection/screen.js`](../mcp_gateway_ui/screens/connection/screen.js),
 [`screens/basics/screen.js`](../mcp_gateway_ui/screens/basics/screen.js),
 [`theme.js`](../mcp_gateway_ui/theme.js),
 [`tauri-transport.js`](../mcp_gateway_ui/tauri-transport.js) and [`logo.svg`](../mcp_gateway_ui/logo.svg). No build step,
@@ -96,7 +97,13 @@ variables across a file boundary is not a screen you can move, test or delete on
 written out; beside it, [`screens/about/tour.js`](../mcp_gateway_ui/screens/about/tour.js) is the slide deck at the
 top of that screen — slide n of m, and the way to n+1 — and
 [`screens/about/slides.js`](../mcp_gateway_ui/screens/about/slides.js) is everything it says about this project,
-which is the half that goes stale and so has a file to itself. Basics is coming out of `app.js` a piece at a time, biggest first:
+which is the half that goes stale and so has a file to itself.
+[`screens/connection/screen.js`](../mcp_gateway_ui/screens/connection/screen.js) is the odd one: it is served to a
+browser like every other screen, and it is the only screen a browser never shows. Its
+subject is the desktop host — the child process it starts, or the SSH forward it opens to a
+gateway on another machine — and a browser has neither, so `app.js` removes its `<option>`
+when there is no shell behind the page. One copy of the UI, two hosts, and the same rule
+`tauri-transport.js` follows. Basics is coming out of `app.js` a piece at a time, biggest first:
 [`screens/basics/screen.js`](../mcp_gateway_ui/screens/basics/screen.js) is the other, and it is the screen rather than the
 work: the three-column layout, the edges you drag between them, and `show`. What is *in* the
 columns is a module each — [`screens/basics/primitives.js`](../mcp_gateway_ui/screens/basics/primitives.js) with the hover tooltip that

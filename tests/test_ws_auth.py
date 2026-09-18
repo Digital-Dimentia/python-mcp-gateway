@@ -165,3 +165,47 @@ async def test_the_key_value_is_never_logged(tmp_path, caplog) -> None:
             await harness.close()
     assert KEY not in caplog.text
     assert "characters" in caplog.text  # the length, which distinguishes the two mistakes
+
+
+# --- the keyless loopback deployment ------------------------------------------------------
+
+
+async def test_a_keyless_loopback_daemon_accepts_a_client_with_no_headers_at_all(
+    tmp_path,
+) -> None:
+    """The remote-backend deployment, stated once as a proposition.
+
+    A gateway on another machine, reached through an SSH port forward, binds `127.0.0.1` and
+    is started with no access key: SSH access *is* the authentication, and there is no
+    credential on the client's machine at all. What arrives through that forward is a client
+    with **no `Origin` and no `Authorization`** -- and both of those have to be accepted
+    together for the deployment to work.
+
+    Every half of that is already covered: `test_loopback_binds_without_a_key`,
+    `test_neither_source_means_no_key`, `tests/test_ws_origin.py::test_no_origin_is_allowed`.
+    None of them says the whole thing, which until now passed by construction rather than by
+    intent. It is intent now -- see `src/desktop/README.md` and `src/desktop/src-tauri/src/
+    tunnel.rs` -- so tightening `_access_check` should fail a Python test here rather than
+    somebody's window in a month.
+
+    Both paths, because `/admin` is where the config editing that makes remote mode useful
+    actually happens.
+    """
+    harness = await daemon(tmp_path)
+    try:
+        for path in ("/mcp", "/admin"):
+            socket = await websockets.connect(f"ws://127.0.0.1:{harness.port}{path}")
+            await socket.close()
+    finally:
+        await harness.close()
+
+
+def test_the_only_keyless_door_is_loopback() -> None:
+    """And the reason the advice is "bind loopback and tunnel" rather than "bind the LAN".
+
+    A forward's far end is always `127.0.0.1` on the machine the daemon runs on, so remote
+    mode never needs -- and must never encourage -- the exposed bind this refuses.
+    """
+    ws.refuse_unauthenticated_bind("127.0.0.1", None, False)
+    with pytest.raises(ws.UnauthenticatedBindError):
+        ws.refuse_unauthenticated_bind("0.0.0.0", None, False)

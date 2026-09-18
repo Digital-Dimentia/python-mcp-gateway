@@ -536,6 +536,53 @@ make tauri-brand ARGS=--clear                        # back to stock
 That writes a gitignored overlay beside `tauri.conf.json`; the committed config, and the
 tests that pin it, are untouched. See [`branding.md`](src/mcp_gateway/branding.md).
 
+### Running the gateway on another machine
+
+The daemon does not have to be on the machine you are looking at. Run it on the Linux box
+you already keep things on, and reach it from your laptop through an SSH port forward: the
+backends, their processes and every credential stay over there, and what crosses is the same
+two WebSockets a local gateway answers on.
+
+On that machine, bind loopback and set no access key:
+
+```bash
+make run NO_KEY=1          # 127.0.0.1:8765, no key
+curl http://127.0.0.1:8765/ui/   # from that machine, to prove it is up
+```
+
+**Do not bind anything but `127.0.0.1` for this.** SSH is what carries the connection and
+SSH is what authenticates it; a LAN bind would need an access key and would be a second,
+weaker door into the same credentials. The daemon refuses an unauthenticated non-loopback
+bind for exactly that reason.
+
+Then, from your laptop:
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 you@build-box
+```
+
+That is the whole mechanism. With the forward up, everything on the laptop attaches exactly
+as it would to a local gateway — `http://127.0.0.1:8765/ui/` in a browser, and
+
+```bash
+claude mcp add gateway -- mcp-gateway-connect --url ws://127.0.0.1:8765/mcp
+```
+
+for a client — with no key, because the daemon over there has none.
+
+The desktop app runs that same forward for you, from its **Connection** screen: pick *On
+another machine, over SSH*, give it the destination and the two ports, and it opens the
+tunnel, reopens it when the network drops, and says which of the two ends is at fault when
+it cannot. It never answers an SSH prompt on your behalf, so make sure `ssh build-box`
+works in a terminal first — key in the agent, host key accepted. And it never starts or
+stops the daemon over there: that is yours.
+
+Forward to the *same* port number at both ends unless something on the laptop already has
+it. A mismatched forward works for the desktop app and for `mcp-gateway-connect`, but a
+**browser** at the forwarded port is refused: the daemon's `Origin` allowlist names the port
+it bound, and it cannot know what a tunnel did with it. `MCP_GATEWAY_WS_ALLOWED_ORIGINS` on
+the remote is the way out if you need one.
+
 ### Running in the background
 
 `make run` is foreground and does not daemonize. For a persistent daemon on macOS, adapt the
@@ -549,6 +596,33 @@ launchctl load ~/Library/LaunchAgents/com.dbuschman7.mcp-gateway.plist
 
 launchd owns restart and log rotation. There is also a `Containerfile` and
 `make container-image` / `make package`.
+
+On the Linux box, a **user** unit rather than a system one — the daemon holds every
+credential in `gateway.env` and spawns the commands in `servers.yaml`, and running it as
+yourself is the whole security model:
+
+```ini
+# ~/.config/systemd/user/mcp-gateway.service
+[Unit]
+Description=MCP Gateway
+After=network.target
+
+[Service]
+ExecStart=%h/src/python-mcp-gateway/.venv/bin/mcp-gateway --config %h/.config/mcp-gateway/servers.yaml --host 127.0.0.1 --port 8765
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now mcp-gateway
+loginctl enable-linger "$USER"     # or it stops with your last session
+```
+
+`loginctl enable-linger` is the line everyone forgets, and without it the tunnel from your
+laptop connects to nothing the moment you log out.
 
 ### The gate you should not open casually
 
@@ -565,6 +639,9 @@ anything that has it.
 | A tool call answers "GitHub is not configured" instead of failing | Working as designed: a call to a down backend comes back as readable content with `isError`, so the model can tell you rather than dying on a protocol error. `prompts/get`, `resources/read` and `completion/complete` have no such escape hatch and answer `-32603`, `-32002` and `-32603`. |
 | The UI's gate says "Starting…" for a while | The daemon binds its socket only after every backend is up, so the first client finds a warm pool. A cold `npx` is the usual reason. |
 | The browser cannot connect but the daemon is running | The access key. The UI URL needs `?key=…`; `make run` prints the whole URL with it attached. |
+| The tunnel is open and both pills stay red | Nothing is listening on the far side. Start the daemon on that machine — `systemctl --user status mcp-gateway`, or `make run` in a checkout. The desktop app says this in so many words. |
+| `ssh` in the desktop app fails with "Permission denied" | It runs `ssh` in batch mode and will never prompt you: no password, no passphrase, no host-key question. Run `ssh <destination>` once in a terminal, get it working there — key in the agent, host key accepted — and the app will work afterwards. |
+| A browser at a forwarded port is refused but the desktop app is fine | The remote's `Origin` allowlist names the port *it* bound, not the one your forward landed on. Forward to the same number, or set `MCP_GATEWAY_WS_ALLOWED_ORIGINS` on the remote. |
 | A WebSocket from a page is refused | Its `Origin` names somewhere other than this server. WebSocket has no same-origin policy, so any page you visit could otherwise dial `127.0.0.1:8765`. Non-browser clients send no `Origin` and are unaffected. |
 | The Injectable values column says the server publishes no pairing | No template's fixed prefix matches a published resource URI. See the [checklist](#checklist). |
 | A vocabulary group says the listing is not JSON | The listing's body must parse as JSON in one of three shapes. Prose is refused deliberately. |

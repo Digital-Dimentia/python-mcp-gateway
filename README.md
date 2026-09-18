@@ -42,6 +42,13 @@ make tauri-bundle     # desktop/src-tauri/target/release/bundle/
 make tauri-artifacts  # the same, renamed for this platform, in artifacts/
 ```
 
+The gateway does not have to be on the same machine as the window. The app's **Connection**
+screen can point it at a daemon you run on another box, over an SSH port forward it opens
+and supervises: backends and credentials stay over there, your own MCP clients attach
+through the same tunnel, and nothing secret is stored on the laptop — the daemon binds
+loopback with no access key, and SSH is the authentication. See
+[GET_STARTED.md](GET_STARTED.md#running-the-gateway-on-another-machine).
+
 macOS, Linux and Windows — a `.app`, a `.deb` and an AppImage, and an NSIS installer, one
 per release from its own runner. Unsigned, and a first cut. See
 [`src/desktop/README.md`](src/desktop/README.md).

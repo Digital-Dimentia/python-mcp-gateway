@@ -213,6 +213,29 @@ already allowed — that branch exists for the bridge and for Claude Desktop, an
 WebSocket client falls into it. What a browser-hosted page could not do, a host process
 simply does.
 
+The same host can also drive a gateway it did **not** start. In remote mode it supervises an
+`ssh -N -L` instead of a child, and dials the near end of that forward:
+
+```mermaid
+flowchart LR
+    window2["the window"]
+    host2["the Rust host"]
+    ssh["ssh -N -L 8765:127.0.0.1:8765"]
+    remote["mcp-gateway on another machine, 127.0.0.1, no key"]
+
+    window2 -->|"ipc"| host2
+    host2 -->|"supervises"| ssh
+    host2 -->|"ws 127.0.0.1:8765, no Authorization"| remote
+    ssh --> remote
+```
+
+**And the daemon needed no change for that either.** A forwarded loopback port is
+indistinguishable from a local one at the socket layer, a keyless bind on loopback is
+already what the daemon does when nobody sets a key, and a client with no `Origin` is
+already allowed. What changes is one line in the host — whether the header goes on — and
+what is being supervised. SSH is the authentication, so nothing secret is stored on the
+machine with the window on it.
+
 It is built on macOS, Linux and Windows, one runner each, and nothing cross-compiles. The
 only part that cannot be written once is orphan control — a gateway that outlives its window
 still holds every credential in `gateway.env` — so macOS uses a process group and a pidfile,

@@ -190,10 +190,21 @@ def test_the_rust_and_python_port_file_readers_are_twinned() -> None:
 def test_the_shell_no_longer_reads_the_port_off_a_log_line() -> None:
     """The point of python-mcp-gateway-9p3. A log line is a sentence written for a human,
     and the moment something parses it for a port it can never be reworded again -- so this
-    fails if the scrape comes back rather than only if the file mechanism breaks."""
-    rust = (TAURI / "src" / "supervisor.rs").read_text()
-    code = "\n".join(line for line in rust.splitlines() if not line.lstrip().startswith("//"))
-    assert "listening on ws://" not in code
+    fails if the scrape comes back rather than only if the file mechanism breaks.
+
+    Every Rust file, not just `supervisor.rs`, because the shell now supervises a second
+    child. `ssh -L 0:...` reports the port it was given with `Allocated port N for local
+    forward`, and reading that would be the same mistake in a second language -- which is
+    one of the reasons remote mode's local port is a number the person chose and not one
+    ssh picked. See `tunnel.rs`.
+    """
+    for source in sorted((TAURI / "src").glob("*.rs")):
+        code = "\n".join(
+            line for line in source.read_text().splitlines()
+            if not line.lstrip().startswith("//")
+        )
+        assert "listening on ws://" not in code, source.name
+        assert "Allocated port" not in code, source.name
 
 
 @pytest.mark.parametrize("name", ["servers.yaml", "gateway.env.template"])

@@ -9,6 +9,44 @@ nobody reads.
 
 ## Unreleased
 
+**The desktop app can drive a gateway on another machine.** Run the daemon on the Linux box
+you already keep things on; the app opens an SSH port forward to it and talks to the
+forwarded loopback port exactly as it talks to a child it started. A new **Connection**
+screen is where you choose: local — unchanged, and still what you get when nothing is
+configured — or a destination and two port numbers. The backends, their processes and every
+credential stay on that machine.
+
+**Nothing secret is stored on the laptop, because there is nothing to store.** The daemon
+over there binds `127.0.0.1` with no access key — the mode it has always supported — and SSH
+is the authentication: if you can open a forward to that machine, you are already someone it
+trusts. So there is no key field anywhere in the Connection screen, no password field, and no
+identity-file field; anything beyond a hostname belongs in `~/.ssh/config` under a `Host`
+block whose alias you type in. The app never answers an SSH prompt on your behalf, which is
+why a host you have never connected to has to be visited once in a terminal first.
+
+Your own clients come through the same tunnel. The local end of the forward is a port you
+choose and it stays put, so the screen can hand you a `claude mcp add` line that is still
+true tomorrow — and local mode can now pin its port for the same reason, which is the first
+time the desktop app has been able to tell you how to attach a client to it at all.
+
+The window says which machine it is driving, because remote mode keeps every editing power
+the local one has: a rule along the top of the header, the destination in the footer, a
+Machine field on the About screen, and — in the dialog where it matters most — a sentence
+saying that the command, its arguments and its working directory are paths on *that* machine
+and that saving writes *its* `servers.yaml`.
+
+When the tunnel will not open, the app says which end is at fault and what to do: an SSH key
+that needs loading, a host key that changed, a local port something else is holding, or the
+common one — the tunnel is open and the gateway over there is simply not running, which is
+not a failure of anything here. A failed connection still leaves a way back to the Connection
+screen, which matters more than it sounds: the gate covers the header, and a mistyped
+destination would otherwise hide the only control that could fix it.
+
+**The daemon needed no change at all.** A keyless loopback bind and a client that sends no
+`Origin` were both already supported — `tests/test_ws_auth.py` and `tests/test_ws_origin.py`
+are where that was already written down, and there is now a test saying the whole
+proposition rather than its two halves.
+
 **The app explains itself now: About opens with a tour.** A deck of nine slides at the top
 of the About screen, for the person who has the window open and has not read the README —
 which, for anyone who launched the desktop app, is everyone. What this is and what it is
