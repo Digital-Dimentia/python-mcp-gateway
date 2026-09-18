@@ -103,21 +103,6 @@ const TERM_GRACE: Duration = Duration::from_secs(5);
 /// Lines of the child's stderr kept for the UI and for a bug report.
 pub const LOG_LINES: usize = 500;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum State {
-    Idle,
-    Starting,
-    Listening {
-        port: u16,
-    },
-    Restarting {
-        attempt: u32,
-    },
-    /// Gave up. `reason` is what the daemon last said, which is the part worth showing.
-    Failed {
-        reason: String,
-    },
-}
 
 /// The port in a port file, or `None` if it is absent, empty or not a port.
 ///
@@ -203,21 +188,50 @@ impl Layout {
     pub fn portfile(&self) -> PathBuf {
         self.data_dir.join("gateway.port")
     }
+
+    /// The forward's pidfile, kept apart from the daemon's.
+    ///
+    /// Two children, two records. A Force Quit that leaves an `ssh` holding the forwarded
+    /// port would otherwise make the next launch's preflight blame the user for this app's
+    /// own corpse. See `appdata::reap_previous`.
+    pub fn tunnel_pidfile(&self) -> PathBuf {
+        self.data_dir.join("tunnel.pid")
+    }
+
+    /// The bridge inside this bundle: what a client on this machine is pointed at.
+    ///
+    /// Named here rather than assembled in the page, because the page does not know where
+    /// the app was installed and a line that only works from `/Applications` is worse than
+    /// no line at all. See `session::connect_command`.
+    pub fn bridge(&self) -> PathBuf {
+        if cfg!(windows) {
+            self.python_root.join("Scripts").join("mcp-gateway-connect.exe")
+        } else {
+            self.python_root.join("bin").join("mcp-gateway-connect")
+        }
+    }
 }
 
 /// The argv the gateway is started with.
 ///
-/// A function so it is testable, and so the one place that decides `--port 0` is visible.
+/// A function so it is testable, and so the one place that decides the port is visible.
 /// `--env` is deliberately absent: `cli.default_env_path` resolves `gateway.env` beside the
 /// resolved config, which is where the seeding put it. One fewer path to keep in sync.
-pub fn argv(config: &Path, port_file: &Path) -> Vec<String> {
+///
+/// `port` is `0` unless someone has asked for a fixed one in `connection.json`, and `0` is
+/// what this app passed for its whole life before that file existed: let the OS pick, and
+/// read the answer back out of the port file. The reason to allow a number is that an
+/// ephemeral port cannot be written into a client's config -- `mcp-gateway-connect --url
+/// ws://127.0.0.1:<n>/mcp` has to name a port that is still there tomorrow. See
+/// `settings::Connection::local_port`.
+pub fn argv(config: &Path, port_file: &Path, port: u16) -> Vec<String> {
     vec![
         "-m".into(),
         "mcp_gateway.cli".into(),
         "--host".into(),
         "127.0.0.1".into(),
         "--port".into(),
-        "0".into(),
+        port.to_string(),
         "--port-file".into(),
         port_file.to_string_lossy().into_owned(),
         "--config".into(),
@@ -248,10 +262,10 @@ pub fn environment(key: &str, path: &str) -> Vec<(String, String)> {
 }
 
 /// Spawn the gateway. stdout is discarded; stderr is the channel everything is read from.
-pub fn spawn(layout: &Layout, key: &str, path: &str) -> std::io::Result<Child> {
+pub fn spawn(layout: &Layout, key: &str, path: &str, port: u16) -> std::io::Result<Child> {
     let mut command = Command::new(layout.interpreter());
     command
-        .args(argv(&layout.config(), &layout.portfile()))
+        .args(argv(&layout.config(), &layout.portfile(), port))
         .envs(environment(key, path))
         // The gateway does not read stdin, and a pipe it never reads is a file descriptor
         // to leak. Null, so anything that did read gets EOF rather than blocking.
@@ -260,6 +274,21 @@ pub fn spawn(layout: &Layout, key: &str, path: &str) -> std::io::Result<Child> {
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
+    spawn_hardened(&mut command)
+}
+
+/// Spawn a child that cannot outlive this app, whatever happens to either of them.
+///
+/// The three layers in the module docs, in one place: its own process group so `terminate`
+/// can signal the whole tree, `PR_SET_PDEATHSIG` on Linux for the SIGKILL no exit handler
+/// survives, and a Job Object on Windows, which has neither. The caller brings argv, the
+/// environment and the stdio; this brings the orphan control.
+///
+/// Extracted when the shell learned to supervise a second kind of child -- an `ssh` holding
+/// a port forward, in `tunnel.rs`. A tunnel that outlives the window is the same bug as a
+/// gateway that does, and a second copy of this code is how one of them would quietly stop
+/// being true.
+pub fn spawn_hardened(command: &mut Command) -> std::io::Result<Child> {
     #[cfg(unix)]
     unsafe {
         // Captured here, in the parent, because the child cannot ask what it used to be.
@@ -574,18 +603,31 @@ mod tests {
 
     // --- how the child is started ------------------------------------------------------
 
+    /// `0` is what `settings::Connection::default()` carries, and what this app passed for
+    /// its whole life before that file existed. The port is now a parameter -- somebody who
+    /// wants to point a client at this app's own daemon needs a number that survives a
+    /// restart -- so this pins the default rather than the only possibility.
     #[test]
-    fn the_child_is_told_to_let_the_os_pick_the_port() {
+    fn the_child_is_told_to_let_the_os_pick_the_port_unless_asked_otherwise() {
         let args = argv(
             Path::new("/data/servers.yaml"),
             Path::new("/data/gateway.port"),
+            0,
         );
         let port = args.iter().position(|a| a == "--port").expect("--port");
         assert_eq!(
             args[port + 1],
             "0",
-            "a fixed port would collide with `make run`"
+            "a fixed port by default would collide with `make run`"
         );
+
+        let pinned = argv(
+            Path::new("/data/servers.yaml"),
+            Path::new("/data/gateway.port"),
+            8765,
+        );
+        let port = pinned.iter().position(|a| a == "--port").expect("--port");
+        assert_eq!(pinned[port + 1], "8765");
     }
 
     #[test]
@@ -593,6 +635,7 @@ mod tests {
         let args = argv(
             Path::new("/data/servers.yaml"),
             Path::new("/data/gateway.port"),
+            0,
         );
         assert!(args.contains(&"/data/servers.yaml".to_string()));
         // `cli.default_env_path` finds `gateway.env` beside the config. Passing `--env`
@@ -606,6 +649,7 @@ mod tests {
         let args = argv(
             Path::new("/data/servers.yaml"),
             Path::new("/data/gateway.port"),
+            0,
         );
         assert!(
             !args.iter().any(|a| a.contains(key)),

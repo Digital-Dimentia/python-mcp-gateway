@@ -58,7 +58,7 @@ async fn start(layout: &Layout, key: &str) -> (tokio::process::Child, u16, Daemo
     let port_file = layout.portfile();
     let _ = std::fs::remove_file(&port_file);
 
-    let mut child = supervisor::spawn(layout, key, &std::env::var("PATH").unwrap())
+    let mut child = supervisor::spawn(layout, key, &std::env::var("PATH").unwrap(), 0)
         .expect("the bundled interpreter should start");
 
     let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -126,7 +126,7 @@ async fn the_bundled_gateway_starts_and_answers_the_shell() {
     // Exactly what `gw_open` does, including the header and the absence of an `Origin`.
     let frames: Arc<Mutex<Vec<Frame>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = frames.clone();
-    let outbound = match proxy::open(port, "/admin", key.header(), move |frame| {
+    let outbound = match proxy::open(port, "/admin", Some(key.header()), move |frame| {
         sink.lock().unwrap().push(frame)
     })
     .await
@@ -186,7 +186,7 @@ async fn the_key_is_required_and_the_window_cannot_name_another_path() {
 
     // Without the header: the daemon refuses. If this ever passes, the app is handing the
     // machine's whole credential store to anything that can reach loopback.
-    let refused = proxy::open(port, "/admin", "Bearer not-the-key".into(), |_| {}).await;
+    let refused = proxy::open(port, "/admin", Some("Bearer not-the-key".into()), |_| {}).await;
     assert!(refused.is_err(), "a wrong key must not get in");
     let reason = refused.unwrap_err();
     // A refusal is only evidence if it came from the daemon. A dead daemon refuses every
@@ -201,7 +201,7 @@ async fn the_key_is_required_and_the_window_cannot_name_another_path() {
     );
 
     // The path allowlist is enforced before anything is dialled.
-    let blocked = proxy::open(port, "/ui/", key.header(), |_| {}).await;
+    let blocked = proxy::open(port, "/ui/", Some(key.header()), |_| {}).await;
     assert!(blocked.is_err());
 
     supervisor::terminate(&mut child).await;
@@ -227,5 +227,97 @@ async fn stopping_the_app_stops_the_gateway() {
     assert!(
         rebind.is_ok(),
         "port {port} is still held; pid {pid} may have survived"
+    );
+}
+
+/// What remote mode actually reaches, without needing a second machine.
+///
+/// The far side of an SSH forward is a daemon somebody else started, bound to loopback with
+/// **no access key at all** -- SSH is the authentication -- and what arrives through the
+/// forward is a client with no `Origin` and no `Authorization`. Both of those are properties
+/// of the Python, tested there; what is tested here is that this app's own client really
+/// does get in without a header, and that `tunnel::probe` can tell a gateway on the far end
+/// from a forward with nothing behind it.
+///
+/// The keyless daemon is the whole point, so it is spawned the way remote mode's really is:
+/// with an empty `MCP_GATEWAY_WS_KEY`, which `access_key_from_env` reads as unset.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_keyless_gateway_is_what_remote_mode_reaches() {
+    let Some((layout, seed)) = layout("keyless") else {
+        return;
+    };
+    appdata::ensure(&layout.data_dir, &seed).expect("first-run seeding");
+
+    let (mut child, port, daemon) = start(&layout, "").await;
+
+    // No header, and it gets in. If this ever fails, remote mode has no way to connect at
+    // all -- and if it were to start *requiring* one, the failure would look like a broken
+    // tunnel rather than like a policy change.
+    let frames: Arc<Mutex<Vec<Frame>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = frames.clone();
+    let opened = proxy::open(port, "/admin", None, move |frame| {
+        sink.lock().unwrap().push(frame)
+    })
+    .await;
+    assert!(
+        opened.is_ok(),
+        "{}",
+        daemon.explain(
+            &mut child,
+            &format!(
+                "a keyless daemon should accept a header-less client, got: {:?}",
+                opened.as_ref().err()
+            )
+        )
+    );
+
+    // The probe, against the three things it has to tell apart -- the live one first,
+    // because it is the only one that needs a real gateway.
+    assert_eq!(
+        crate::tunnel::probe(port, Duration::from_secs(2)).await,
+        crate::tunnel::Probe::Alive,
+        "{}",
+        daemon.explain(&mut child, "the daemon should answer the probe like a gateway")
+    );
+
+    supervisor::terminate(&mut child).await;
+
+    // And once it is gone, the same port is nothing at all. This is the shape of the
+    // question the tunnel supervisor asks every quarter second.
+    assert_eq!(
+        crate::tunnel::probe(port, Duration::from_millis(500)).await,
+        crate::tunnel::Probe::NoListener
+    );
+}
+
+/// A tunnel is a child like any other: it dies with the app.
+///
+/// `ssh` is not available to a test as a *forwarding* process without a second machine, but
+/// the property that matters here is not ssh's -- it is `spawn_hardened`'s, which is what
+/// both supervisors use and what the three layers of teardown rest on. So this drives it
+/// with a stand-in child that does the one thing an unsupervised tunnel would do: outlive us.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hardened_child_that_is_not_the_daemon_still_cannot_outlive_us() {
+    let mut command = tokio::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+    if cfg!(windows) {
+        command.args(["/C", "ping -n 30 127.0.0.1"]);
+    } else {
+        command.args(["-c", "sleep 30"]);
+    }
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    let mut child = supervisor::spawn_hardened(&mut command).expect("the stand-in starts");
+    let pid = child.id().expect("a running child has a pid");
+    supervisor::terminate(&mut child).await;
+
+    // Reaped, rather than left for the OS. A tunnel that survived its window would keep a
+    // forwarded port open with nobody watching it.
+    assert!(
+        child.try_wait().expect("waitable").is_some(),
+        "pid {pid} should be gone"
     );
 }

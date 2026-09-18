@@ -115,26 +115,45 @@ pub fn endpoint(port: u16, path: &str) -> String {
 ///
 /// `on_frame` is called for the open, every inbound frame, and exactly one close. The
 /// returned sender is how the window writes; dropping it closes the socket.
+/// The request one socket is opened with, and the one decision in it.
+///
+/// `authorization` is an `Option` rather than a string that may be empty, because the two
+/// cases are different in kind and the difference is the remote design. Local mode dials a
+/// daemon this app started with a key it minted, and sends it. Remote mode dials a forwarded
+/// port whose far end binds loopback with **no key at all** -- SSH is the authentication --
+/// and so must send no header rather than an empty one, which the daemon would read as a key
+/// that matches nothing. Separated out from `open` so that decision is testable without a
+/// listener on the other end.
+pub fn request(
+    port: u16,
+    path: &str,
+    authorization: Option<String>,
+) -> Result<tokio_tungstenite::tungstenite::handshake::client::Request, String> {
+    if !permitted(path) {
+        return Err(format!("{path} is not one of {ALLOWED_PATHS:?}"));
+    }
+    let mut request = endpoint(port, path)
+        .into_client_request()
+        .map_err(|err| format!("could not build the request: {err}"))?;
+    if let Some(authorization) = authorization {
+        request.headers_mut().insert(
+            "Authorization",
+            authorization.parse().map_err(|_| "bad header")?,
+        );
+    }
+    Ok(request)
+}
+
 pub async fn open<F>(
     port: u16,
     path: &str,
-    authorization: String,
+    authorization: Option<String>,
     mut on_frame: F,
 ) -> Result<mpsc::UnboundedSender<String>, String>
 where
     F: FnMut(Frame) + Send + 'static,
 {
-    if !permitted(path) {
-        return Err(format!("{path} is not one of {ALLOWED_PATHS:?}"));
-    }
-
-    let mut request = endpoint(port, path)
-        .into_client_request()
-        .map_err(|err| format!("could not build the request: {err}"))?;
-    request.headers_mut().insert(
-        "Authorization",
-        authorization.parse().map_err(|_| "bad header")?,
-    );
+    let request = request(port, path, authorization)?;
 
     let (socket, _response) = tokio_tungstenite::connect_async(request)
         .await
@@ -209,8 +228,39 @@ mod tests {
     fn the_window_never_names_a_host_or_a_port() {
         // Both come from the supervisor's Listening state. The page passes a path and
         // nothing else, which is what keeps "the window cannot reach the network" true.
+        //
+        // The Connection screen now shows a machine name, and that does not weaken this:
+        // the invariant is that the page cannot *choose* the socket's address. What it shows
+        // is a destination the person typed and the host echoed back, and every socket still
+        // goes to a loopback port this process picked -- in remote mode, the near end of a
+        // forward the host opened.
         assert_eq!(endpoint(49613, "/admin"), "ws://127.0.0.1:49613/admin");
         assert!(endpoint(1, "/mcp").starts_with("ws://127.0.0.1:"));
+    }
+
+    #[test]
+    fn a_local_socket_carries_the_key_and_a_remote_one_carries_no_header_at_all() {
+        // The two modes, in the one line of code that tells them apart. Local dials a daemon
+        // this app started with a key it minted; remote dials the near end of an SSH forward
+        // whose far side binds loopback with no key, because SSH is the authentication.
+        let local = request(8765, "/mcp", Some("Bearer s3cret".into())).expect("a request");
+        assert_eq!(
+            local.headers().get("Authorization").unwrap(),
+            "Bearer s3cret"
+        );
+
+        // Absent, not empty. An empty header is a key that matches nothing, which a daemon
+        // that *does* have a key would answer with a 401 -- a failure that would read as
+        // "the tunnel is broken" rather than "you configured a key over there".
+        let remote = request(8765, "/mcp", None).expect("a request");
+        assert!(remote.headers().get("Authorization").is_none());
+    }
+
+    #[test]
+    fn the_path_allowlist_is_checked_before_a_request_exists() {
+        // Before the header decision and before anything is dialled, in both modes.
+        assert!(request(8765, "/ui/", None).is_err());
+        assert!(request(8765, "/ui/", Some("Bearer s3cret".into())).is_err());
     }
 
     #[test]

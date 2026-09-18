@@ -14,7 +14,10 @@ pub mod appdata;
 pub mod key;
 pub mod pathenv;
 pub mod proxy;
+pub mod session;
+pub mod settings;
 pub mod supervisor;
+pub mod tunnel;
 
 #[cfg(test)]
 mod integration;
@@ -23,13 +26,14 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, RunEvent, State};
 
 use key::AccessKey;
 use proxy::{Frame, Link, Links};
-use supervisor::{Layout, State as GatewayState};
+use session::{Phase, Status};
+use settings::{Connection, Mode};
+use supervisor::Layout;
 
 /// The event the window listens on to learn what the gateway is doing.
 ///
@@ -45,44 +49,46 @@ pub struct Shell {
     inner: Arc<Inner>,
 }
 
-#[derive(Default)]
 struct Inner {
-    state: Mutex<GatewayStateCell>,
-    /// The child's stderr, most recent last. The only record of why a start failed.
+    phase: Mutex<Phase>,
+    /// The running child's stderr, most recent last -- the daemon's, or `ssh`'s. The only
+    /// record of why a start failed, and the same buffer for both because the window has one
+    /// log pane and a person has one question.
     log: Mutex<VecDeque<String>>,
     links: tokio::sync::Mutex<Links>,
-}
-
-struct GatewayStateCell(GatewayState);
-
-impl Default for GatewayStateCell {
-    fn default() -> Self {
-        Self(GatewayState::Idle)
-    }
-}
-
-/// The snapshot the window renders from.
-#[derive(Debug, Clone, Serialize)]
-pub struct Status {
-    /// `idle` | `starting` | `listening` | `restarting` | `failed`.
-    pub state: &'static str,
-    pub attempt: u32,
-    /// Why it is not running, when it is not. Shown in the gate.
-    pub reason: Option<String>,
-    /// The last few stderr lines, so a failed start explains itself.
-    pub log: Vec<String>,
+    /// Which gateway this window drives. Written by `conn_save`, read by the session loop
+    /// at the top of every start.
+    connection: Mutex<Connection>,
+    /// Bumped to ask the session loop to tear down what it is running and start again from
+    /// the settings. A `watch` rather than a flag because the loop has to be interruptible
+    /// *while awaiting*: a child's stderr does not close because somebody pressed Apply.
+    reconnect: tokio::sync::watch::Sender<u64>,
+    /// The bridge inside this bundle, for the line a client is given. See `Layout::bridge`.
+    bridge: std::path::PathBuf,
 }
 
 impl Inner {
-    fn set(&self, state: GatewayState) {
-        self.state.lock().unwrap().0 = state;
+    fn new(bridge: std::path::PathBuf, connection: Connection) -> Self {
+        Self {
+            phase: Mutex::new(Phase::Idle),
+            log: Mutex::new(VecDeque::new()),
+            links: tokio::sync::Mutex::new(Links::default()),
+            connection: Mutex::new(connection),
+            reconnect: tokio::sync::watch::channel(0).0,
+            bridge,
+        }
+    }
+
+    fn set(&self, phase: Phase) {
+        *self.phase.lock().unwrap() = phase;
     }
 
     fn port(&self) -> Option<u16> {
-        match self.state.lock().unwrap().0 {
-            GatewayState::Listening { port } => Some(port),
-            _ => None,
-        }
+        self.phase.lock().unwrap().port()
+    }
+
+    fn mode(&self) -> Mode {
+        self.connection.lock().unwrap().mode
     }
 
     fn record(&self, line: String) {
@@ -94,20 +100,15 @@ impl Inner {
     }
 
     fn status(&self) -> Status {
-        let state = self.state.lock().unwrap();
-        let (name, attempt, reason) = match &state.0 {
-            GatewayState::Idle => ("idle", 0, None),
-            GatewayState::Starting => ("starting", 0, None),
-            GatewayState::Listening { .. } => ("listening", 0, None),
-            GatewayState::Restarting { attempt } => ("restarting", *attempt, None),
-            GatewayState::Failed { reason } => ("failed", 0, Some(reason.clone())),
-        };
-        Status {
-            state: name,
-            attempt,
-            reason,
-            log: self.log.lock().unwrap().iter().cloned().collect(),
-        }
+        let phase = self.phase.lock().unwrap().clone();
+        let connection = self.connection.lock().unwrap().clone();
+        let log = self.log.lock().unwrap().iter().cloned().collect();
+        session::status_of(&phase, &connection, log, &self.bridge)
+    }
+
+    /// Ask the session loop to start over from whatever the settings now say.
+    fn ask_for_a_restart(&self) {
+        self.reconnect.send_modify(|generation| *generation += 1);
     }
 }
 
@@ -132,9 +133,14 @@ async fn gw_open(
         return Err("the gateway is not listening yet".into());
     };
 
+    //: Local mode dials a daemon this app started with a key it minted. Remote mode dials a
+    //: forwarded port whose far end has no key at all -- SSH is the authentication -- and
+    //: must therefore send no header rather than an empty one. See `session::authorization`.
+    let authorization = session::authorization(shell.inner.mode(), &shell.key);
+
     let inner = shell.inner.clone();
     let closing = id.clone();
-    let outbound = proxy::open(port, &path, shell.key.header(), move |frame| {
+    let outbound = proxy::open(port, &path, authorization, move |frame| {
         let done = matches!(frame, Frame::Close { .. });
         // A send that fails means the window went away mid-frame, which teardown handles.
         let _ = on_frame.send(frame);
@@ -175,9 +181,57 @@ fn gw_status(shell: State<'_, Shell>) -> Status {
     shell.inner.status()
 }
 
-// --- the supervisor loop --------------------------------------------------------------------
+/// What the Connection screen renders its form from.
+///
+/// Carries no secret, and there is none to carry: remote mode's whole authentication story
+/// is SSH, and local mode's key never leaves this process. See `settings`.
+#[tauri::command]
+fn conn_settings(shell: State<'_, Shell>) -> Connection {
+    shell.inner.connection.lock().unwrap().clone()
+}
 
-/// Keep the gateway running for as long as the app is.
+/// Validate and persist the settings, **without** applying them.
+///
+/// Two decisions, kept apart on purpose: a typo saved is a typo, and a typo applied is a
+/// window with no gateway behind it. The page saves, looks at what it wrote, and then asks
+/// for `conn_apply`.
+#[tauri::command]
+fn conn_save(shell: State<'_, Shell>, settings: Connection) -> Result<Connection, String> {
+    settings.validate()?;
+    settings::save(&shell.layout.data_dir, &settings).map_err(|err| err.to_string())?;
+    *shell.inner.connection.lock().unwrap() = settings.clone();
+    Ok(settings)
+}
+
+/// Tear down whatever is running and start again from the saved settings.
+///
+/// The only way to change mode while the app is open. It returns as soon as the loop has
+/// been *asked*, not when the gateway is up: what comes next arrives on `gateway-state`
+/// like every other transition, and the page already knows how to render that.
+#[tauri::command]
+fn conn_apply(shell: State<'_, Shell>) -> Status {
+    shell.inner.ask_for_a_restart();
+    shell.inner.status()
+}
+
+// --- the session loop ------------------------------------------------------------------------
+//
+// One loop, two things it can be supervising: the gateway as a child of this process, or an
+// `ssh` holding a port forward to a gateway somebody else is running. They are more alike
+// than they look. Both end in a port on `127.0.0.1` that speaks the gateway's protocol, both
+// die in ways that want a backoff, and both have to be interruptible by somebody pressing
+// Apply in the Connection screen. What differs is spelled out in the two functions below and
+// nowhere else.
+
+/// Why an inner loop returned.
+enum Outcome {
+    /// The settings changed. Start again from the top, at once.
+    Switch,
+    /// It will not work and retrying will not help. Park until somebody asks again.
+    GaveUp,
+}
+
+/// Keep a gateway reachable for as long as the app is open.
 async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner>) {
     // Taken out of managed state once, in a block, so the guard is not held across an
     // await. The key is copied rather than borrowed for the same reason -- this loop
@@ -189,11 +243,54 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
 
     // Asked once, at startup, and reused for every restart. See `pathenv`: an app launched
     // from Finder has a PATH with no `npx` on it, and a login shell is the only thing that
-    // knows better.
+    // knows better. `ssh` gets it too -- for `ssh-askpass` and anything a `ProxyCommand`
+    // needs -- along with the rest of the inherited environment.
     let path = pathenv::resolve();
 
-    let announce = |state: GatewayState| {
-        inner.set(state);
+    let mut rx = inner.reconnect.subscribe();
+
+    loop {
+        // Read at the top of every start rather than held: this is the line that makes
+        // `conn_apply` mean something.
+        let connection = inner.connection.lock().unwrap().clone();
+
+        let outcome = match connection.mode {
+            Mode::Local => {
+                run_local(&app, &inner, &layout, &secret, &path, connection.local_port, &mut rx).await
+            }
+            Mode::Remote => run_remote(&app, &inner, &layout, &connection, &path, &mut rx).await,
+        };
+
+        match outcome {
+            // The settings changed under us and the signal has already been consumed.
+            Outcome::Switch => continue,
+            // Parked. The window is showing why, and the only thing that can help is a
+            // person changing something -- which arrives here as a reconnect.
+            Outcome::GaveUp => {
+                if rx.changed().await.is_err() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// The gateway as a child of this process: spawn it, watch it, restart it.
+///
+/// This is the loop this app has always had. What is new is that every long await is raced
+/// against the reconnect signal, because a child's stderr does not close because somebody
+/// switched to remote mode.
+async fn run_local<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    inner: &Arc<Inner>,
+    layout: &Layout,
+    secret: &str,
+    path: &str,
+    port: u16,
+    rx: &mut tokio::sync::watch::Receiver<u64>,
+) -> Outcome {
+    let announce = |phase: Phase| {
+        inner.set(phase);
         let _ = app.emit(STATE_EVENT, inner.status());
     };
 
@@ -201,20 +298,20 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
     let mut failed_starts: u32 = 0;
 
     loop {
-        announce(GatewayState::Starting);
+        announce(Phase::StartingDaemon);
 
         // Any port file here is from a run that did not get to clean up after itself. Its
         // number is worse than useless -- something else may hold that port now -- so it
         // goes before the child that will write the real one.
         let _ = std::fs::remove_file(layout.portfile());
 
-        let mut child = match supervisor::spawn(&layout, &secret, &path) {
+        let mut child = match supervisor::spawn(layout, secret, path, port) {
             Ok(child) => child,
             Err(err) => {
-                announce(GatewayState::Failed {
+                announce(Phase::Failed {
                     reason: format!("could not start the gateway: {err}"),
                 });
-                return;
+                return Outcome::GaveUp;
             }
         };
 
@@ -234,7 +331,7 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
             tauri::async_runtime::spawn(async move {
                 match supervisor::wait_for_port(&path, supervisor::PORT_WAIT_TIMEOUT).await {
                     Some(port) => {
-                        announcer.set(GatewayState::Listening { port });
+                        announcer.set(Phase::Listening { port });
                         let _ = app.emit(STATE_EVENT, announcer.status());
                         true
                     }
@@ -244,11 +341,19 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
         };
 
         // Runs until the child's stderr closes, which is how this loop learns the child is
-        // going away. Every line is kept for the log buffer and for the failure reason.
-        if let Some(stderr) = child.stderr.take() {
+        // going away -- or until somebody presses Apply, which is the other way out.
+        let switched = {
             let recorder = inner.clone();
-            supervisor::pump_stderr(stderr, |line| recorder.record(line)).await;
-        }
+            let pump = async {
+                if let Some(stderr) = child.stderr.take() {
+                    supervisor::pump_stderr(stderr, |line| recorder.record(line)).await;
+                }
+            };
+            tokio::select! {
+                _ = pump => false,
+                _ = rx.changed() => true,
+            }
+        };
 
         // stderr is closed, so the child is gone and the watcher will not find a port it has
         // not found already. Aborting rather than awaiting the full timeout is what keeps a
@@ -256,19 +361,16 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
         watcher.abort();
         let reached_listening = matches!(watcher.await, Ok(true));
 
-        // stderr closed, so the child is on its way out. Reap it rather than leaving a
-        // zombie, and take its process group with it in case a backend outlived it.
-        supervisor::terminate(&mut child).await;
-        appdata::clear_pidfile(&layout.pidfile());
+        stop_child(inner, layout, &mut child, &layout.pidfile()).await;
         // The daemon removes this itself on a clean exit. Doing it again covers the one it
         // cannot -- a `SIGKILL` -- and a stale port would aim the next run's sockets at
         // whatever has taken that port since.
         let _ = std::fs::remove_file(layout.portfile());
 
-        // Every socket pointed at a port that no longer exists. Dropping the registry's
-        // senders ends each pump, which sends the window a close frame -- and that is what
-        // makes `rpc.js` start its own reconnect rather than waiting on a dead socket.
-        inner.links.lock().await.drain();
+        if switched {
+            announce(Phase::Idle);
+            return Outcome::Switch;
+        }
 
         if supervisor::resets_backoff(reached_listening, started.elapsed()) {
             attempt = 0;
@@ -278,22 +380,227 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
         }
 
         if failed_starts >= supervisor::MAX_FAILED_STARTS {
-            let reason = inner
-                .log
-                .lock()
-                .unwrap()
-                .iter()
-                .rev()
-                .find(|line| !line.trim().is_empty())
-                .cloned()
-                .unwrap_or_else(|| "the gateway exited before it could serve".into());
-            announce(GatewayState::Failed { reason });
-            return;
+            announce(Phase::Failed {
+                reason: last_word(inner)
+                    .unwrap_or_else(|| "the gateway exited before it could serve".into()),
+            });
+            return Outcome::GaveUp;
         }
 
         attempt += 1;
-        announce(GatewayState::Restarting { attempt });
-        tokio::time::sleep(supervisor::backoff(attempt)).await;
+        announce(Phase::Restarting { attempt, why: None });
+        if wait_or_switch(supervisor::backoff(attempt), rx).await {
+            announce(Phase::Idle);
+            return Outcome::Switch;
+        }
+    }
+}
+
+/// A gateway on another machine, reached through an `ssh` forward this app opens.
+///
+/// The shape is `run_local`'s and the differences are the interesting part:
+///
+/// * **Nothing over there is ours to start.** A far side that is not listening is not a
+///   failure to retry -- it is a sentence for the window and a tunnel to keep open.
+/// * **Readiness is a probe, not a file.** `ssh -L` accepts locally the moment it has
+///   authenticated, so "the port accepts connections" says nothing about whether a gateway
+///   is behind it. See `tunnel::probe`.
+/// * **Permanent failures stop at once.** A wrong host key retried five times is five
+///   identical failures and a worse message; a closed laptop lid is not a broken config and
+///   retries for as long as the window is open. See `tunnel::Fault::permanent`.
+async fn run_remote<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    inner: &Arc<Inner>,
+    layout: &Layout,
+    connection: &Connection,
+    path: &str,
+    rx: &mut tokio::sync::watch::Receiver<u64>,
+) -> Outcome {
+    let announce = |phase: Phase| {
+        inner.set(phase);
+        let _ = app.emit(STATE_EVENT, inner.status());
+    };
+
+    let program = tunnel::program();
+    let mut attempt: u32 = 0;
+
+    loop {
+        announce(Phase::OpeningTunnel);
+
+        // Asked before spawning, purely so the answer can be a sentence. `ssh`'s own
+        // `ExitOnForwardFailure` is the authority, and it reports through one line of a log
+        // somebody would have to go and read.
+        if let Err(why) = tunnel::preflight(connection.local_port) {
+            announce(Phase::Failed { reason: why });
+            return Outcome::GaveUp;
+        }
+
+        let mut child = match tunnel::spawn(
+            &program,
+            &connection.destination,
+            connection.local_port,
+            connection.remote_port,
+            path,
+        ) {
+            Ok(child) => child,
+            Err(err) => {
+                announce(Phase::Failed {
+                    reason: format!("could not run {}: {err}", program.display()),
+                });
+                return Outcome::GaveUp;
+            }
+        };
+
+        if let Some(pid) = child.id() {
+            let _ = appdata::write_pidfile(&layout.tunnel_pidfile(), pid);
+        }
+
+        let started = Instant::now();
+        let fault: Arc<Mutex<Option<tunnel::Fault>>> = Arc::new(Mutex::new(None));
+
+        // Asks the far side what is behind the forward, for as long as the tunnel lives.
+        // It keeps running after `Listening` because the answer can change under us: the
+        // daemon over there can be stopped and started by somebody else, and this is the
+        // only thing that would notice.
+        let prober = {
+            let inner = inner.clone();
+            let app = app.clone();
+            let port = connection.local_port;
+            tauri::async_runtime::spawn(async move {
+                let mut reached = false;
+                loop {
+                    let next = match tunnel::probe(port, tunnel::PROBE_TIMEOUT).await {
+                        tunnel::Probe::Alive => {
+                            reached = true;
+                            Phase::Listening { port }
+                        }
+                        tunnel::Probe::FarSideRefused => Phase::FarSideSilent { port },
+                        tunnel::Probe::NoListener => Phase::TunnelUp { port },
+                    };
+                    // `TunnelUp` before anything has answered means "ssh has not bound yet",
+                    // which is the ordinary first half-second; once it has, a refused connect
+                    // is the far side and not the near one.
+                    let next = match next {
+                        Phase::TunnelUp { port } if reached => Phase::FarSideSilent { port },
+                        other => other,
+                    };
+                    if *inner.phase.lock().unwrap() != next {
+                        inner.set(next);
+                        let _ = app.emit(STATE_EVENT, inner.status());
+                    }
+                    tokio::time::sleep(tunnel::PROBE_INTERVAL).await;
+                }
+            })
+        };
+
+        let switched = {
+            let recorder = inner.clone();
+            let seen = fault.clone();
+            let pump = async {
+                if let Some(stderr) = child.stderr.take() {
+                    supervisor::pump_stderr(stderr, |line| {
+                        if let Some(kind) = tunnel::classify(&line) {
+                            *seen.lock().unwrap() = Some(kind);
+                        }
+                        recorder.record(line);
+                    })
+                    .await;
+                }
+            };
+            tokio::select! {
+                _ = pump => false,
+                _ = rx.changed() => true,
+            }
+        };
+
+        prober.abort();
+        let _ = prober.await;
+        stop_child(inner, layout, &mut child, &layout.tunnel_pidfile()).await;
+
+        if switched {
+            announce(Phase::Idle);
+            return Outcome::Switch;
+        }
+
+        let fault = *fault.lock().unwrap();
+
+        // A tunnel that came up and stayed up for a while and then dropped is a fresh
+        // problem, not a continuation of the last one.
+        if supervisor::resets_backoff(true, started.elapsed()) {
+            attempt = 0;
+        }
+
+        if let Some(kind) = fault.filter(|kind| kind.permanent()) {
+            announce(Phase::Failed {
+                reason: format!(
+                    "{} {}",
+                    last_word(inner).unwrap_or_else(|| "The tunnel could not be opened.".into()),
+                    kind.hint()
+                ),
+            });
+            return Outcome::GaveUp;
+        }
+
+        attempt += 1;
+        announce(Phase::Restarting {
+            attempt,
+            why: Some(match fault {
+                Some(kind) => format!(
+                    "{} {}",
+                    last_word(inner).unwrap_or_else(|| "The tunnel dropped.".into()),
+                    kind.hint()
+                ),
+                None => format!(
+                    "The tunnel to {} dropped; reopening (attempt {attempt})…",
+                    connection.destination
+                ),
+            }),
+        });
+        if wait_or_switch(supervisor::backoff(attempt), rx).await {
+            announce(Phase::Idle);
+            return Outcome::Switch;
+        }
+    }
+}
+
+/// Reap a child and drop every socket that was pointed through it.
+///
+/// Shared by both loops, because it is the same job either way: the daemon is gone, or the
+/// forward is, and in both cases every live socket now points at a port that no longer
+/// answers. Dropping the registry's senders ends each pump, which sends the window a close
+/// frame -- and that is what makes `rpc.js` start its own reconnect rather than waiting on a
+/// socket that will never speak again.
+async fn stop_child(
+    inner: &Arc<Inner>,
+    _layout: &Layout,
+    child: &mut tokio::process::Child,
+    pidfile: &std::path::Path,
+) {
+    supervisor::terminate(child).await;
+    appdata::clear_pidfile(pidfile);
+    inner.links.lock().await.drain();
+}
+
+/// The last thing the child said that was worth repeating.
+fn last_word(inner: &Arc<Inner>) -> Option<String> {
+    inner
+        .log
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .cloned()
+}
+
+/// Sleep, unless somebody presses Apply first. `true` means they did.
+async fn wait_or_switch(
+    how_long: std::time::Duration,
+    rx: &mut tokio::sync::watch::Receiver<u64>,
+) -> bool {
+    tokio::select! {
+        _ = tokio::time::sleep(how_long) => false,
+        _ = rx.changed() => true,
     }
 }
 
@@ -303,7 +610,13 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            gw_open, gw_send, gw_close, gw_status
+            gw_open,
+            gw_send,
+            gw_close,
+            gw_status,
+            conn_settings,
+            conn_save,
+            conn_apply
         ])
         .setup(|app| {
             let resource_dir = app.path().resource_dir()?;
@@ -318,8 +631,20 @@ pub fn run() {
             // `gateway.env`. Neither the exit handler nor `kill_on_drop` can reach that
             // case, so the pidfile does.
             appdata::reap_previous(&layout.pidfile(), &layout.interpreter());
+            // And the same for a forward: an `ssh` nobody killed still holds the local port,
+            // which would make this launch's preflight blame the user for the last launch's
+            // corpse.
+            appdata::reap_previous(&layout.tunnel_pidfile(), &tunnel::program());
 
-            let inner = Arc::new(Inner::default());
+            // A file that is there and unusable is not the same as no file at all, so a
+            // complaint goes into the log ring the gate already shows rather than being
+            // swallowed on the way to the local default.
+            let (connection, complaint) = settings::load(&data_dir);
+            let inner = Arc::new(Inner::new(layout.bridge(), connection));
+            if let Some(complaint) = complaint {
+                inner.record(complaint);
+            }
+
             app.manage(Shell {
                 key: AccessKey::mint(),
                 layout,
@@ -339,6 +664,8 @@ pub fn run() {
             if let RunEvent::Exit = event {
                 let shell = app.state::<Shell>();
                 appdata::clear_pidfile(&shell.layout.pidfile());
+                // Two children, two records. See `Layout::tunnel_pidfile`.
+                appdata::clear_pidfile(&shell.layout.tunnel_pidfile());
             }
         });
 }
