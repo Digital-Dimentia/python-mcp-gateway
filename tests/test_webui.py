@@ -217,6 +217,7 @@ def test_the_screen_modules_do_not_import_the_frame() -> None:
         "screens/about/screen.js",
         "screens/about/tour.js",
         "screens/about/slides.js",
+        "screens/connection/screen.js",
         "screens/basics/screen.js",
         "screens/basics/primitives.js",
         "screens/basics/results.js",

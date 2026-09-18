@@ -201,3 +201,68 @@ describe('the window wears the deployment\'s name', () => {
     assert.deepEqual(host.titles(), ['Acme Internal Tools']);
   });
 });
+
+// Which machine the window is driving, once the gateway is somewhere else.
+//
+// Remote mode keeps every editing power the local one has -- `+ Add`, edit, remove, Reload
+// all act on the *remote* `servers.yaml` -- so saying which machine is the safety mechanism
+// rather than a decoration. What is asserted here is that each place says it, and, just as
+// importantly, that all of them go quiet again in local mode: this feature must cost the
+// local window nothing.
+describe('which machine', () => {
+  const REMOTE = {
+    mode: 'remote',
+    label: 'dave@build-box',
+    localPort: 8765,
+    remotePort: 8765,
+    connectCommand: 'claude mcp add gateway -- /opt/bin/mcp-gateway-connect --url ws://127.0.0.1:8765/mcp',
+  };
+  const LOCAL = { mode: 'local', label: null, localPort: 0, remotePort: 8765, connectCommand: null };
+
+  const announce = (connection) => host.emit('gateway-state', {
+    state: 'listening', phase: 'listening', attempt: 0, reason: null, detail: null,
+    log: [], connection,
+  });
+
+  it('wears it in the footer, and on the header without being read', () => {
+    announce(REMOTE);
+    assert.equal(document.documentElement.dataset.connection, 'remote');
+    assert.equal(document.getElementById('pill-remote').hidden, false);
+    assert.equal(document.getElementById('remote-host').textContent, 'dave@build-box');
+    // The daemon's own `bind` is still on the two socket pills and still says
+    // `127.0.0.1:8765` -- which is exactly why something else has to say where that is.
+    assert.match(document.getElementById('bar-meta').textContent, /dave@build-box/);
+  });
+
+  it('says it in the dialog that edits the other machine\'s files', () => {
+    ui.openEditor('github');
+    const form = document.getElementById('server-form');
+    assert.match(form.querySelector('h2').textContent, /on dave@build-box/);
+    // The mistake this dialog invites: every field in it is a path or a process over there.
+    assert.match(form.textContent, /paths on dave@build-box/);
+    document.getElementById('server-dialog').close();
+  });
+
+  it('says it on the About card', () => {
+    ui.SCREEN_MODULES.about.refresh(ui.state);
+    const about = document.getElementById('about').textContent;
+    assert.match(about, /Machine/);
+    assert.match(about, /dave@build-box — over SSH/);
+  });
+
+  it('and the local window is exactly as it was', () => {
+    announce(LOCAL);
+    assert.equal(document.documentElement.dataset.connection, 'local');
+    assert.equal(document.getElementById('pill-remote').hidden, true);
+    assert.doesNotMatch(document.getElementById('bar-meta').textContent, /build-box/);
+
+    ui.openEditor('github');
+    const form = document.getElementById('server-form');
+    assert.equal(form.querySelector('h2').textContent, 'Edit github');
+    assert.doesNotMatch(form.textContent, /paths on/);
+    document.getElementById('server-dialog').close();
+
+    ui.SCREEN_MODULES.about.refresh(ui.state);
+    assert.doesNotMatch(document.getElementById('about').textContent, /Machine/);
+  });
+});

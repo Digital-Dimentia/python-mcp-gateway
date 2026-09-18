@@ -91,6 +91,12 @@ ASSETS: dict[str, str] = {
     # goes stale and so is kept in one file with nothing else in it.
     "screens/about/tour.js": "text/javascript; charset=utf-8",
     "screens/about/slides.js": "text/javascript; charset=utf-8",
+    # Which gateway the window is driving: the child the desktop host starts, or one on
+    # another machine reached through an SSH tunnel it opens. Served here like every other
+    # screen -- there is one copy of the admin UI and two hosts for it -- and inert in a
+    # browser, which has no host to run `ssh`: `app.js` removes its option when there is no
+    # shell behind the page. Same rule as `tauri-transport.js`.
+    "screens/connection/screen.js": "text/javascript; charset=utf-8",
     "screens/basics/screen.js": "text/javascript; charset=utf-8",
     # The injectable values column: the vocabularies, the cascade, and what is picked.
     "screens/basics/variables.js": "text/javascript; charset=utf-8",

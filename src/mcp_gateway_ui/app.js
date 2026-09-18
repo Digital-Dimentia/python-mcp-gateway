@@ -15,7 +15,9 @@
 // and they are the only place either module is named twice.
 
 import { AdminSocket, McpSocket, RpcError } from './rpc.js';
-import { gatewayStatus, inShell, onGatewayState, setShellTitle } from './tauri-transport.js';
+import {
+  connectionApply, gatewayStatus, inShell, onGatewayState, setShellTitle,
+} from './tauri-transport.js';
 import { renderError, resultCard, pretty } from './render.js';
 import { installClipboard, clipboardChanged } from './clipboard.js';
 import { basename, formatDuration } from './format.js';
@@ -23,6 +25,7 @@ import { basename, formatDuration } from './format.js';
 //: one to the `<option>` that selects it.
 import basicsScreen from './screens/basics/screen.js';
 import aboutScreen from './screens/about/screen.js';
+import connectionScreen from './screens/connection/screen.js';
 //: The injectable values column, which is the first piece of the Basics screen to live
 //: outside this file. It is handed what it may touch rather than importing it -- see
 //: the `variables.install` call in `Go`, and the header of `screens/basics/variables.js`.
@@ -90,7 +93,25 @@ const state = {
   listings: { tools: [], prompts: [], resources: [], templates: [] },
   item: null,
   everConnected: { admin: false, mcp: false },
+  //: The desktop host's last full answer -- the phase it is in, the sentence that goes with
+  //: it, and the tail of the child's stderr. Null in a browser. The Connection screen reads
+  //: it; the gate is driven from the same payload as it arrives.
+  shell: null,
+  //: What the desktop host says about *where* this gateway is: local, or a machine reached
+  //: through an SSH forward. Null in a browser and until the host's first answer.
+  //:
+  //: Deliberately not `admin.status.bind`. That is the daemon's own answer and a remote one
+  //: says `127.0.0.1:8765` exactly as a local one does -- so the single field that looks
+  //: like it says which machine you are driving is the one field that cannot. Only this
+  //: process's host knows, and this is where it lands.
+  connection: null,
 };
+
+/** ` on build-box`, or nothing at all. The suffix every warning about a remote gateway is built from. */
+function whereSuffix() {
+  const label = state.connection?.mode === 'remote' ? state.connection.label : null;
+  return label ? ` on ${label}` : '';
+}
 
 //: Which screen the content panel is showing. Chrome rather than gateway truth -- the same
 //: reason `openMenu` is not in `state` -- but at module scope so the refreshes can ask
@@ -149,15 +170,27 @@ const GATE_TITLES = {
 
 let gateMode = 'connecting';
 
-function showGate(message, mode = 'blocked') {
+//: Set when somebody presses "Connection settings" on a failed gate, and cleared the moment
+//: anything works again. Without it the next `gateway-state` -- which arrives within the
+//: second, still failing -- would put the panel straight back over the screen they just
+//: asked to see.
+let gateSuppressed = false;
+
+function showGate(message, mode = 'blocked', title = GATE_TITLES[mode]) {
   const gate = $('gate');
+  //: Deliberately checked before the rank guard: the suppression is a person's decision and
+  //: outranks everything the host has to say until it is lifted.
+  if (gateSuppressed && mode !== 'connecting') return;
+  if (gateSuppressed) gateSuppressed = false;
   // A late socket close must not drag a `failed` panel back to a splash. Equal ranks do
   // update, so a second `restarting` can refresh its attempt count.
   if (!gate.hidden && GATE_RANK[mode] < GATE_RANK[gateMode]) return;
   gateMode = mode;
   gate.dataset.mode = mode;
   gate.hidden = false;
-  $('gate-title').textContent = GATE_TITLES[mode];
+  //: `failed` covers two different failures now -- a daemon that would not start, and a
+  //: tunnel that would not open -- and they want different sentences above the same message.
+  $('gate-title').textContent = title;
   $('gate-message').textContent = message;
 
   // The key field exists for exactly one mode. Under the shell it never appears at all:
@@ -170,6 +203,12 @@ function showGate(message, mode = 'blocked') {
   // Nothing to retry while it is still coming up, and a button that does nothing is worse
   // than no button.
   submit.hidden = mode === 'connecting';
+
+  //: The escape hatch. This panel covers the header, and the header is where the Connection
+  //: screen is chosen -- so a mistyped destination would otherwise hide the only control
+  //: that could fix it. Shown for a failed remote connection and nothing else.
+  $('gate-settings').hidden = !(inShell && mode === 'failed' && state.connection?.mode === 'remote');
+
   if (asking) $('gate-key').focus();
 }
 
@@ -178,8 +217,25 @@ function hideGate() {
   gateMode = 'connecting';
 }
 
+$('gate-settings').addEventListener('click', () => {
+  gateSuppressed = true;
+  hideGate();
+  showScreen('connection');
+});
+
 $('gate-form').addEventListener('submit', (event) => {
   event.preventDefault();
+
+  //: In remote mode "Retry" has to mean *re-dial the tunnel*. Rebuilding the sockets alone
+  //: would aim them at a local port with nothing behind it, forever, on a backoff nobody
+  //: can see.
+  if (inShell && state.connection?.mode === 'remote') {
+    hideGate();
+    showGate('Reconnecting…', 'connecting');
+    connectionApply().catch(() => {});
+    return;
+  }
+
   const value = $('gate-key').value.trim();
   state.key = value || null;
   try {
@@ -291,6 +347,14 @@ function updateMeta() {
   else if (status?.version) bits.push(`gateway ${status.version}`);
   if (status) bits.push(`up ${formatDuration(status.uptime_seconds)}`);
 
+  //: Which machine, before what version and how long it has been up: the remote case is the
+  //: one somebody needs to know before they read anything else on the page.
+  const remote = state.connection?.mode === 'remote' ? state.connection.label : null;
+  if (remote) bits.push(remote);
+
+  //: Ambient, and read without attention -- see `:root[data-connection]` in the stylesheet.
+  document.documentElement.dataset.connection = remote ? 'remote' : 'local';
+
   const meta = $('bar-meta');
   meta.replaceChildren();
   bits.forEach((text, i) => {
@@ -312,6 +376,20 @@ function updateMeta() {
 function updateSockets() {
   const status = state.status;
   const addr = status?.bind || '';
+
+  //: The remote chip, before the two socket pills it qualifies. `bind` below is the address
+  //: the daemon answers on *its own* machine, which in remote mode is not this one -- so
+  //: without this the footer reads exactly like a local gateway's.
+  const remote = state.connection?.mode === 'remote' ? state.connection.label : null;
+  const chip = $('pill-remote');
+  chip.hidden = !remote;
+  if (remote) {
+    $('remote-host').textContent = remote;
+    chip.title = `This window is driving the gateway on ${remote}, through an SSH tunnel: `
+      + `127.0.0.1:${state.connection.localPort} here → 127.0.0.1:`
+      + `${state.connection.remotePort} there.`;
+  }
+
   for (const [id, path] of [['pill-mcp', '/mcp'], ['pill-admin', '/admin']]) {
     const pill = $(id);
     const clients = (status?.connections || []).filter((c) => c.path === path).length;
@@ -320,7 +398,7 @@ function updateSockets() {
     addrEl.hidden = !addr;
     const countEl = pill.querySelector('[data-count]');
     countEl.textContent = String(clients);
-    countEl.title = `${clients} client${clients === 1 ? '' : 's'} on ${path}`;
+    countEl.title = `${clients} client${clients === 1 ? '' : 's'} on ${path}${whereSuffix()}`;
   }
 }
 
@@ -334,18 +412,20 @@ function updateFiles() {
 
   const label = $('reload-file');
   label.textContent = status?.config_path ? basename(status.config_path) : 'config';
-  if (status?.config_path) label.title = status.config_path;
+  if (status?.config_path) label.title = `${status.config_path}${whereSuffix()}`;
   const paths = [status?.config_path, status?.env_path].filter(Boolean);
+  //: Whose files. Reload has always re-read the *daemon's* two files; in remote mode those
+  //: are on another machine, and the button that says so is cheaper than the surprise.
   $('btn-reload').title = paths.length
-    ? `Re-read ${paths.join(' and ')}`
-    : 'Re-read the config and env files';
+    ? `Re-read ${paths.join(' and ')}${whereSuffix()}`
+    : `Re-read the config and env files${whereSuffix()}`;
 
   const field = $('env-field');
   field.hidden = !status?.env_path;
   if (status?.env_path) {
     const file = $('env-file');
     file.textContent = basename(status.env_path);
-    file.title = status.env_path;
+    file.title = `${status.env_path}${whereSuffix()}`;
   }
 }
 
@@ -493,7 +573,7 @@ function serverEntry(backend, meta = false) {
     })));
     actions.append(action('Edit', () => { openMenu = null; openEditor(name); }));
     actions.append(action('Remove', () => {
-      if (!confirm(`Remove ${name} from servers.yaml?`)) return null;
+      if (!confirm(`Remove ${name} from servers.yaml${whereSuffix()}?`)) return null;
       openMenu = null;
       return admin('admin.backend.remove', { name });
     }, 'danger'));
@@ -742,6 +822,7 @@ const SCREENS = [...screenSelect.options].map((option) => option.value);
 const SCREEN_MODULES = {
   [basicsScreen.id]: basicsScreen,
   [aboutScreen.id]: aboutScreen,
+  [connectionScreen.id]: connectionScreen,
 };
 
 //: Every option must name a module, and every module an option. Cheap, and it fires on the
@@ -751,8 +832,24 @@ for (const name of SCREENS) {
   if (!SCREEN_MODULES[name]) console.warn(`no module registered for screen ${name}`);
 }
 
+//: ...and the subset *this host* can show. A screen marked `data-shell-only` is one whose
+//: whole subject is the desktop host -- the child process, the SSH tunnel -- and in a browser
+//: it would be a page of controls wired to nothing. The option is *removed* rather than
+//: disabled: a disabled option still reads as a thing you might one day be allowed to pick,
+//: and in a browser there is no such day.
+//:
+//: `SCREENS` stays the full register above, so the two checks that matter -- every option
+//: has a section, every option has a module -- still cover every screen this build has,
+//: whichever host is running it.
+const AVAILABLE = SCREENS.filter((name) => {
+  const option = screenSelect.querySelector(`option[value="${name}"]`);
+  if (!option?.hasAttribute('data-shell-only') || inShell) return true;
+  option.remove();
+  return false;
+});
+
 function showScreen(name, store = true) {
-  const screen = SCREENS.includes(name) ? name : SCREENS[0];
+  const screen = AVAILABLE.includes(name) ? name : AVAILABLE[0];
   activeScreen = screen;
   screenSelect.value = screen;
   //: Storage is written by the gesture, not by the restore. Writing on the way in would
@@ -761,7 +858,11 @@ function showScreen(name, store = true) {
   //: this build no longer has a screen for: the attribute `theme.js` put on <html> still
   //: names it, the stylesheet is answering it with Basics, and leaving the two saying
   //: different things is how a later screen with that name comes back from the dead.
-  if (store || (name && !SCREENS.includes(name))) window.__screen.set(screen);
+  //: The second half also covers a name this host cannot show -- `connection`, stored by
+  //: the desktop app and then met in a browser. Unlike a slug from a later build, the
+  //: stylesheet *recognises* that name, so leaving the attribute alone would show an empty
+  //: panel forever rather than falling through to Basics.
+  if (store || (name && !AVAILABLE.includes(name))) window.__screen.set(screen);
 
   //: Both hooks, in this order: draw from the payloads that moved while the screen was
   //: away, then do whatever needed the screen to actually be laid out.
@@ -879,13 +980,26 @@ function openEditor(name) {
   const form = $('server-form');
   form.replaceChildren();
 
-  form.append(el('h2', { text: name ? `Edit ${name}` : 'Add a server' }));
+  form.append(el('h2', {
+    text: (name ? `Edit ${name}` : 'Add a server') + whereSuffix(),
+  }));
   form.append(el('p', {
     class: 'note',
     text: 'This writes servers.yaml, which is committed. Credential values belong in '
       + 'gateway.env and are referenced here as ${NAME}; nothing in this dialog can read '
       + 'or write one.',
   }));
+  //: The mistake this whole dialog invites when the gateway is somewhere else. Everything
+  //: below is a path and a process on the *daemon's* machine, and every field here reads
+  //: like it means this one.
+  if (state.connection?.mode === 'remote') {
+    form.append(el('p', {
+      class: 'note warn',
+      text: `The command, its arguments and its working directory are paths on `
+        + `${state.connection.label}, not on this machine — and this writes that machine's `
+        + `servers.yaml.`,
+    }));
+  }
 
   const inputs = new Map();
   const columns = [];
@@ -1078,13 +1192,43 @@ state.key = initialKey();
 // the reason sitting unread in the host's log buffer.
 if (inShell) {
   const paint = (status) => {
-    if (!status || status.state === 'listening') return;  // the sockets speak for themselves
+    if (!status) return;
+
+    //: Stashed first and unconditionally, before any early return: the footer, the About
+    //: card, the server editor and the Connection screen all read it, and they have to be
+    //: right on a status that says everything is fine.
+    const moved = JSON.stringify(status.connection) !== JSON.stringify(state.connection);
+    state.shell = status;
+    state.connection = status.connection;
+    if (moved) {
+      //: A different connection is a different question, so a gate somebody dismissed for
+      //: the last one has no claim on this one.
+      gateSuppressed = false;
+      updateMeta();
+    }
+    //: The Connection screen is the one place that renders the phase rather than the gate's
+    //: five-word summary of it, and a tunnel coming up emits several times a second.
+    if (activeScreen === 'connection') SCREEN_MODULES.connection?.refresh?.(state);
+
+    if (status.state === 'listening') return;  // the sockets speak for themselves
     const last = status.log?.length ? status.log[status.log.length - 1] : '';
+    const remote = status.connection?.mode === 'remote';
+
     if (status.state === 'failed') {
-      showGate(status.reason || last || 'The gateway exited before it could serve.', 'failed');
+      //: A tunnel that would not open is not "the gateway could not start" -- nothing was
+      //: ever asked to start. The host's `detail` already carries the fix.
+      showGate(
+        status.detail || status.reason || last || `The gateway exited before it could serve${whereSuffix()}.`,
+        'failed',
+        remote ? 'Could not reach the remote gateway' : GATE_TITLES.failed,
+      );
       return;
     }
-    showGate({
+
+    //: `detail` first, because the host says something true in every phase now -- including
+    //: the one that is nobody's failure: the tunnel is open and the daemon over there is not
+    //: running. That reads as a broken app unless it is spelt out.
+    showGate(status.detail || {
       idle: 'Waiting for the gateway.',
       starting: 'Starting the gateway…',
       restarting: `The gateway stopped; restarting (attempt ${status.attempt})…`,
@@ -1116,6 +1260,7 @@ connect();
 export {
   state,
   SCREENS,
+  AVAILABLE,
   SCREEN_MODULES,
   showScreen,
   EDITOR_GROUPS,

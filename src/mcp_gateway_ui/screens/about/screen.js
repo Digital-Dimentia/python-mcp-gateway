@@ -50,6 +50,12 @@ import { formatDuration } from '../../format.js';
 import { deck, el } from './tour.js';
 import slides from './slides.js';
 
+/** A path's `title`: which machine it is on, when that is worth saying. */
+function whose(state, path) {
+  if (!path || state.connection?.mode !== 'remote') return '';
+  return `${path} on ${state.connection.label}`;
+}
+
 /** One `<dt>`/`<dd>` pair, or nothing at all when there is no value to show. */
 function field(label, value, title = '') {
   if (value === undefined || value === null || value === '') return null;
@@ -67,6 +73,19 @@ function gatewayCard(state) {
   const clients = (path) => (status?.connections || []).filter((c) => c.path === path).length;
 
   const fields = el('dl', { class: 'about-fields' }, [
+    //: First, and only when it is not this machine. `state.connection` comes from the
+    //: desktop host rather than from `admin.status`: a remote daemon answers `bind` with
+    //: `127.0.0.1:8765` exactly as a local one does, so the field that looks like it says
+    //: which machine you are reading is the one field that cannot.
+    field(
+      'Machine',
+      state.connection?.mode === 'remote'
+        ? `${state.connection.label} — over SSH`
+        : null,
+      state.connection?.mode === 'remote'
+        ? `127.0.0.1:${state.connection.localPort} here → 127.0.0.1:${state.connection.remotePort} there`
+        : '',
+    ),
     //: The header's title is the fallback rather than a literal, so a branded deployment
     //: reads as itself here before `/mcp` has finished its handshake. See branding.md.
     field('Name', info?.name || document.getElementById('brand-title').textContent),
@@ -77,8 +96,10 @@ function gatewayCard(state) {
     field('MCP', addr ? `${addr}/mcp` : null, `${clients('/mcp')} client(s)`),
     field('Admin', addr ? `${addr}/admin` : null, `${clients('/admin')} client(s)`),
     //: Full paths here, where the footer has only room for the basenames.
-    field('Config', status?.config_path),
-    field('Env', status?.env_path),
+    //: Whose files. Both paths are on the daemon's machine, which in remote mode is not
+    //: the one you are looking at.
+    field('Config', status?.config_path, whose(state, status?.config_path)),
+    field('Env', status?.env_path, whose(state, status?.env_path)),
   ]);
 
   return el('section', { class: 'about-card' }, [

@@ -328,6 +328,10 @@ button:hover .bar-file { color: inherit; }
 :root[data-screen="about"] .screen[data-screen="about"] { display: block; overflow: auto; }
 :root[data-screen="about"] .screen[data-screen="basics"] { display: none; }
 
+.screen[data-screen="connection"] { display: none; }
+:root[data-screen="connection"] .screen[data-screen="connection"] { display: block; overflow: auto; }
+:root[data-screen="connection"] .screen[data-screen="basics"] { display: none; }
+
 /* ── Three columns ───────────────────────────────────────────────────────── */
 
 /* The split is three `fr` numbers, and `theme.js` validates every one of them before it is
@@ -1346,3 +1350,85 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 0.8rem; color: var(--muted); }
 .tour-stage > * { animation: tour-in 140ms ease-out; }
 @keyframes tour-in { from { opacity: 0; transform: translateY(2px); } }
 @media (prefers-reduced-motion: reduce) { .tour-stage > * { animation: none; } }
+
+
+/* ── The Connection screen ──────────────────────────────────────────────────── */
+
+/* A form on a readable measure, like About and for the same reason: this is a page you read
+ * and type into once, not a surface you work across. */
+.conn-inner {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1rem 1rem 2rem;
+}
+.conn-inner-body { display: flex; flex-direction: column; gap: 1rem; }
+
+.conn-card {
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.75rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.conn-card > h2 { margin: 0; }
+
+/* Each mode is a whole sentence, not a word: the choice is about where your credentials
+ * live, and a radio labelled "Remote" would be the wrong amount of information. */
+.conn-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.conn-choice.on { border-color: var(--accent); background: var(--accent-soft); }
+.conn-choice input { width: auto; margin-top: 0.15rem; }
+.conn-choice strong { display: block; font-size: 0.86rem; }
+
+.conn-field { display: flex; flex-direction: column; gap: 0.2rem; }
+.conn-label { font-size: 0.78rem; font-weight: 600; }
+.conn-help { font-size: 0.74rem; color: var(--muted); line-height: 1.45; }
+
+.conn-state { display: flex; align-items: center; gap: 0.5rem; font-size: 0.84rem; }
+.conn-paste { display: flex; flex-direction: column; gap: 0.25rem; }
+
+/* The line somebody is about to copy. `user-select: all` so one click takes the whole
+ * command rather than a word of it -- this is the payoff of a port that stays put. */
+.conn-code {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  user-select: all;
+}
+
+.conn-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.conn-notice { font-size: 0.76rem; }
+.conn-notice.ok { color: var(--muted); }
+.conn-notice.bad { color: var(--danger); }
+.conn-note { color: var(--muted); }
+
+/* ── Driving another machine ────────────────────────────────────────────────── */
+
+/* Said once, quietly, and without reading: a rule along the top of the header whenever the
+ * gateway in this window is somewhere else. The footer, the About card, the server editor
+ * and the remove confirmation each say *which* machine in words; this is the part you see
+ * with your eyes rather than your attention, and it is what keeps somebody from editing the
+ * wrong machine's servers.yaml for ten minutes before noticing.
+ *
+ * Not a banner. A banner is noise on every screen forever, and this has to survive being
+ * looked at all day. */
+:root[data-connection="remote"] header.bar { box-shadow: inset 0 2px 0 var(--accent); }
+
+.pill-remote { color: var(--ink-soft); }
+.pill-remote .dot { margin-right: 0.3rem; }

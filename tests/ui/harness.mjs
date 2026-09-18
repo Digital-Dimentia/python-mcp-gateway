@@ -149,6 +149,14 @@ export function fakeTauri() {
   const channels = [];
   const listeners = new Map();
 
+  //: The settings the host would have read out of `connection.json`. Held here so the
+  //: Connection screen's save really does round-trip through something, and so a test can
+  //: start the page off in remote mode.
+  let connection = { version: 1, mode: 'local', destination: '', localPort: 0, remotePort: 8765 };
+  //: What the next `conn_save` should do. A string makes it reject with that message, which
+  //: is how the host reports a destination it will not run.
+  let refuseSave = null;
+
   class Channel {
     set onmessage(handler) { this._handler = handler; }
     get onmessage() { return this._handler; }
@@ -159,6 +167,12 @@ export function fakeTauri() {
       invoke(command, args) {
         calls.push({ command, args });
         if (command === 'gw_open') channels.push(args.onFrame);
+        if (command === 'conn_settings') return Promise.resolve({ ...connection });
+        if (command === 'conn_save') {
+          if (refuseSave) return Promise.reject(refuseSave);
+          connection = { ...connection, ...args.settings };
+          return Promise.resolve({ ...connection });
+        }
         return Promise.resolve();
       },
       Channel,
@@ -191,6 +205,12 @@ export function fakeTauri() {
     titles: () => calls.filter((c) => c.command === 'setTitle').map((c) => c.args.title),
     /** Push a frame at the socket opened by the nth `gw_open`. */
     deliver(index, frame) { channels[index].onmessage(frame); },
+    /** The settings the host is holding, as the page last left them. */
+    connection: () => ({ ...connection }),
+    /** Start the host off with different settings, before the screen asks for them. */
+    setConnection(next) { connection = { ...connection, ...next }; },
+    /** Make the next `conn_save` fail, the way a refused destination does. */
+    refuseNextSave(message) { refuseSave = message; },
     /** Fire a `gateway-state` event at the page. */
     emit(name, payload) {
       const handler = listeners.get(name);

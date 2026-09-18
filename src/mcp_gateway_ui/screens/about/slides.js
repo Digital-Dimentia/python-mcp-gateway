@@ -82,6 +82,21 @@ const stack = (children) => el('div', { class: 'tour-stack' }, children.filter(B
 
 const count = (value) => (Number.isFinite(value) ? String(value) : '—');
 
+/**
+ * The address a client *on this machine* should be pointed at.
+ *
+ * Not `status.bind`, which is where the daemon listens on its own machine -- a gateway
+ * reached through an SSH tunnel says `127.0.0.1:8765` exactly as a local one does, and
+ * pasting that into a client here would aim it at nothing. In remote mode the answer is the
+ * near end of the forward the desktop host opened; everywhere else the daemon's own bind is
+ * right, and the literal below is what to show before either socket has answered.
+ */
+function clientAddress(state) {
+  const conn = state.connection;
+  if (conn?.mode === 'remote') return `127.0.0.1:${conn.localPort}`;
+  return state.status?.bind || '127.0.0.1:8765';
+}
+
 /** How many backends are configured, and how many of them actually came up. */
 function backendTally(state) {
   const backends = state.backends || [];
@@ -155,7 +170,7 @@ export default [
     id: 'attach',
     title: 'Attach anything',
     tag: 'Clients',
-    render: () => stack([
+    render: (state) => stack([
       p('Three ways in, on one port, at the same time.'),
       pairs([
         ['WebSocket', 'ws://host:port/mcp — the native transport, and what the admin UI uses.'],
@@ -163,12 +178,15 @@ export default [
         ['stdio bridge', 'mcp-gateway-connect pumps stdin↔WebSocket for clients that speak only stdio, and reconnects on its own.'],
       ]),
       code(
-        'claude mcp add gateway -- mcp-gateway-connect --url ws://127.0.0.1:8765/mcp\n'
-        + 'claude mcp add --transport http gateway http://127.0.0.1:8765/mcp',
+        `claude mcp add gateway -- mcp-gateway-connect --url ws://${clientAddress(state)}/mcp\n`
+        + `claude mcp add --transport http gateway http://${clientAddress(state)}/mcp`,
       ),
       p(
         'The desktop app is the fourth door: the daemon, its backends and this UI in one '
-        + 'window, with the access key minted per launch and never written down.',
+        + 'window, with the access key minted per launch and never written down. It can '
+        + 'also drive a gateway on another machine — it opens an SSH tunnel and the '
+        + 'Connection screen hands you the line to paste. The daemon over there binds '
+        + 'loopback with no key, because SSH is the authentication.',
       ),
     ]),
   },
@@ -296,7 +314,10 @@ export default [
       const attached = (path) => (state.status?.connections || []).filter((c) => c.path === path).length;
       return stack([
         pairs([
-          ['Endpoint', addr ? `${addr}/mcp` : 'not listening yet'],
+          ['Endpoint', addr ? `${clientAddress(state)}/mcp` : 'not listening yet'],
+          ...(state.connection?.mode === 'remote'
+            ? [['Machine', `${state.connection.label} — over SSH`]]
+            : []),
           ['Backends', `${count(tally.running)} running of ${count(tally.configured)} configured`],
           ['Clients', `${count(attached('/mcp'))} on /mcp, ${count(attached('/admin'))} on /admin`],
           ['Version', state.mcp?.serverInfo?.version || state.status?.version || '—'],

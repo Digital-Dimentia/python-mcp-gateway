@@ -96,6 +96,7 @@ exclude = ["desktop*"]
     "screens/*.js",
     "screens/about/*.js",
     "screens/basics/*.js",
+    "screens/connection/*.js",
 ]
 
 [tool.pytest.ini_options]

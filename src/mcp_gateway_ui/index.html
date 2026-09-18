@@ -39,6 +39,12 @@
     <select id="screen-select">
       <option value="basics">Basics</option>
       <option value="about">About</option>
+      <!-- Only the desktop host can open an SSH tunnel or start a child, so `app.js`
+           removes this option when there is no host behind the page. It stays in the markup
+           unconditionally all the same: this list is the register of screens, and a screen
+           the markup does not mention is one the stylesheet and the module have no anchor
+           for. -->
+      <option value="connection" data-shell-only>Connection</option>
     </select>
   </label>
 
@@ -63,6 +69,12 @@
     <p id="gate-message">Waiting for the gateway.</p>
     <label id="gate-key-field">Key <input type="password" id="gate-key" autocomplete="off" spellcheck="false"></label>
     <button type="submit" id="gate-submit">Connect</button>
+    <!-- The way back out, and it is not a nicety: this panel is `position: fixed; inset: 0`
+         and covers the header, which is where the Connection screen is chosen. Without it a
+         mistyped SSH destination puts up a gate that hides the only control that could fix
+         it, and the app can only be recovered by hand-editing a JSON file nobody has been
+         told about. Shown for a failed remote connection and nowhere else. -->
+    <button type="button" id="gate-settings" hidden>Connection settings</button>
   </form>
 </section>
 
@@ -137,6 +149,19 @@
 
 </section>
 
+<!-- ── Screen: Connection ─────────────────────────────────────────────────────
+     Which gateway this window is driving: the child this app starts, or a daemon on another
+     machine reached through an SSH tunnel the host opens. Only the desktop shell can do
+     either, so the option above is removed in a browser -- and the sentence below is what a
+     browser shows for the one frame between `theme.js` restoring a stored screen name and
+     `app.js` correcting it. About's section can be empty because its name is never stored
+     by a host that cannot show it; this one's cannot. -->
+<section class="screen connection" data-screen="connection" aria-label="Connection">
+  <div class="conn-inner" id="connection">
+    <p class="conn-note">The Connection screen is part of the desktop app.</p>
+  </div>
+</section>
+
 <!-- ── Screen: About ──────────────────────────────────────────────────────────
      What this gateway is and what it is running, on one page, for the moment before you
      start working. Two halves: a slide deck saying what the thing is for -- the value, the
@@ -184,6 +209,11 @@
     <button type="button" id="btn-log" class="tab" aria-expanded="false" aria-controls="log-drawer">
       Log <span class="count" id="log-count">0</span>
     </button>
+    <!-- Which machine the two pills beside this one are really about. Hidden in local mode,
+         which is every window that has not been pointed somewhere else. -->
+    <span class="pill pill-remote" id="pill-remote" hidden>
+      <span class="dot dot-running"></span><span id="remote-host"></span>
+    </span>
     <span class="pill" id="pill-mcp" data-state="closed">
       <span class="pill-addr" data-addr>…</span>/mcp<span class="pill-count" data-count>0</span>
     </span>

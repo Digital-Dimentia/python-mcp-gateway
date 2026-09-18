@@ -96,6 +96,44 @@ export async function onGatewayState(handler) {
   return window.__TAURI__.event.listen('gateway-state', (event) => handler(event.payload));
 }
 
+// ── The connection ─────────────────────────────────────────────────────────────
+//
+// Which gateway this window drives: the child the host starts, or one on another machine
+// reached through an SSH forward the host opens and supervises. Three calls, and the reason
+// there are three rather than two is that saving and applying are different decisions -- a
+// typo saved is a typo, and a typo applied is a window with no gateway behind it.
+//
+// Every one of them is inert in a browser, like everything else in this file. A browser has
+// no host to run `ssh`, so the Connection screen is not shown there at all; see the
+// `data-shell-only` handling in `app.js`.
+
+/** The stored settings: mode, destination and the two ports. Never a credential. */
+export async function connectionGet() {
+  if (!inShell) return null;
+  try {
+    return await window.__TAURI__.core.invoke('conn_settings');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validate and store settings, without applying them.
+ *
+ * Rejects rather than swallowing, unlike the rest of this file: this one is a person
+ * pressing Save and waiting to be told whether what they typed is usable.
+ */
+export async function connectionSave(settings) {
+  if (!inShell) return null;
+  return window.__TAURI__.core.invoke('conn_save', { settings });
+}
+
+/** Tear down whatever is running and start again from the stored settings. */
+export async function connectionApply() {
+  if (!inShell) return null;
+  return window.__TAURI__.core.invoke('conn_apply');
+}
+
 /**
  * Put the deployment's own title on the desktop window. A no-op in a browser, where
  * `document.title` is the whole story.

@@ -39,7 +39,7 @@ describe('the selector', () => {
   });
 
   it('is the register of screens, and every option has a section and a module', () => {
-    assert.deepEqual(ui.SCREENS, ['basics', 'about']);
+    assert.deepEqual(ui.SCREENS, ['basics', 'about', 'connection']);
     for (const name of ui.SCREENS) {
       assert.ok(
         document.querySelector(`section.screen[data-screen="${name}"]`),
@@ -49,6 +49,18 @@ describe('the selector', () => {
       //: never registered: an empty section, and no error anywhere.
       assert.equal(ui.SCREEN_MODULES[name]?.id, name, `${name} has a module`);
     }
+  });
+
+  it('offers only the screens this host can show', () => {
+    //: Connection is the desktop shell's own subject -- the child process, the SSH tunnel --
+    //: and in a browser its controls would be wired to nothing. So the option is removed
+    //: rather than disabled: a disabled option reads as something you might one day be
+    //: allowed to pick, and in a browser there is no such day.
+    assert.deepEqual(ui.AVAILABLE, ['basics', 'about']);
+    assert.equal(document.querySelector('#screen-select option[value="connection"]'), null);
+    //: The register is still the full list, so the two checks above -- a section and a
+    //: module for every screen -- keep covering the one this host is not showing.
+    assert.ok(ui.SCREENS.includes('connection'));
   });
 
   it('opens on the first screen, and stores nothing until someone chooses', () => {
@@ -78,6 +90,17 @@ describe('choosing a screen', () => {
   // nothing to show for.
   it('falls back to the first screen when the name is not one of them, and corrects it', () => {
     ui.showScreen('a-screen-from-a-later-build');
+    assert.equal(document.getElementById('screen-select').value, 'basics');
+    assert.equal(html().getAttribute('data-screen'), 'basics');
+    assert.equal(stored(), 'basics');
+  });
+
+  // The other way a stored name goes stale: the desktop app stored `connection`, and the
+  // same profile is later opened in a browser. Unlike a slug from a later build, the
+  // stylesheet *recognises* this one -- so leaving the attribute alone would show an empty
+  // panel forever rather than falling through to Basics.
+  it('answers a screen this host cannot show the same way', () => {
+    ui.showScreen('connection');
     assert.equal(document.getElementById('screen-select').value, 'basics');
     assert.equal(html().getAttribute('data-screen'), 'basics');
     assert.equal(stored(), 'basics');
