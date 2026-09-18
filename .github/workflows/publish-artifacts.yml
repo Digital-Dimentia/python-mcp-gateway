@@ -3,12 +3,19 @@ name: Publish artifacts
 on:
   release:
     types: [published]
+  # A rehearsal: the desktop legs build exactly what a release would, and upload it as
+  # workflow artifacts instead of release assets. Four platforms have to agree before a
+  # release can carry four bundles, and cutting a release to find out is the wrong order.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   publish:
+    # The wheel and the image are already built on every push by `ci.yml`; a rehearsal
+    # has nowhere to attach them, so it has no reason to build them again.
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -59,8 +66,9 @@ jobs:
             label: macos-aarch64
             python: python3
           # Intel Macs are still the machine on a lot of desks, and a universal binary is
-          # not on offer here: the bundled interpreter is per-architecture.
-          - os: macos-13
+          # not on offer here: the bundled interpreter is per-architecture. `macos-13` was
+          # retired, and a leg on a retired label never starts -- it queues, it does not fail.
+          - os: macos-15-intel
             label: macos-x86_64
             python: python3
           # Pinned to the oldest supported image rather than `ubuntu-latest`, because the
@@ -160,5 +168,13 @@ jobs:
         run: make tauri-artifacts
 
       - uses: softprops/action-gh-release@v3
+        if: github.event_name == 'release'
         with:
           files: artifacts/*
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'release'
+        with:
+          name: desktop-${{ matrix.label }}
+          path: artifacts/*
+          if-no-files-found: error

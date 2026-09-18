@@ -12,8 +12,9 @@ name: Desktop shell
 # `appdata.rs`, the `cfg`-gated halves of `pathenv.rs`. A macOS developer cannot reach any
 # of it, and code that is never built is code that does not work.
 #
-# It builds no installer: that is `publish-artifacts.yml`, which runs on a release. This one
-# compiles, lints and tests, which is the part worth knowing about on every push.
+# It builds no installer: that is `publish-artifacts.yml`, which runs on a release, or by hand
+# as a rehearsal. This one compiles, lints and tests, which is the part worth knowing about on
+# every push.
 #
 # It does build the bundled interpreter, and not only because `tauri-build` validates
 # `bundle.resources` at compile time and will not build the crate without it. With the

@@ -380,6 +380,11 @@ Windows Job Object and the Linux `PDEATHSIG` are compiled and tested somewhere. 
 developer cannot reach either of them locally, and code no machine ever builds is code that
 does not work.
 
+The same workflow runs by hand (**Actions → Publish artifacts → Run workflow**) as a
+rehearsal: the four desktop legs build exactly what a release would and upload the bundles
+as workflow artifacts, and the wheel-and-image job sits it out. A release is the wrong place
+to learn that one platform does not build.
+
 Nothing cross-compiles. The bundle carries a python-build-standalone interpreter *and* a
 Tauri binary; each is happier built natively than cross-built against a webview SDK that is
 not the host's, and `uv python install` already knows every triple. So each leg builds for
