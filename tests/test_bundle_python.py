@@ -320,6 +320,101 @@ def test_a_staging_area_it_cannot_read_is_refused_rather_than_guessed(tmp_path: 
         bundle_python.choose_installed(two, TAG)
 
 
+# --- adopting an interpreter someone fetched by hand ------------------------------------------
+#
+# `--interpreter` exists because `uv python install` is the one step of the script that talks
+# to the network, and that step is what a corporate firewall breaks. The tests below are the
+# whole of what the flag decides: which directory in what it was handed is the interpreter,
+# that the thing handed over survives, and that a wrong answer stops rather than proceeds --
+# because everything after this point treats an adopted tree exactly like a fetched one.
+
+
+def fake_interpreter(root: Path) -> Path:
+    """A tree shaped like python-build-standalone's, at whatever paths this platform uses."""
+    interpreter = bundle_python.interpreter_path(root)
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_text("#!/bin/sh\n")
+    lib = root / ("Lib" if bundle_python.is_windows() else "lib/python3.13")
+    lib.mkdir(parents=True)
+    (lib / "os.py").write_text("")
+    return root
+
+
+def test_an_unpacked_tree_is_adopted_whichever_way_it_was_unpacked(tmp_path: Path) -> None:
+    """The tarball unpacks to `python/`, so a person holds that or the thing holding it."""
+    for name, source in (
+        ("direct", fake_interpreter(tmp_path / "direct")),
+        ("wrapped", fake_interpreter(tmp_path / "wrapped" / "python").parent),
+    ):
+        out = tmp_path / f"out-{name}"
+        bundle_python.adopt_interpreter(out, source)
+        assert bundle_python.interpreter_path(out).exists()
+        assert (bundle_python.stdlib_path(out) / "os.py").exists()
+
+
+def test_a_tarball_is_unpacked_rather_than_refused(tmp_path: Path) -> None:
+    """"Download it however you can, hand me the file" is the whole point of the flag."""
+    import tarfile
+
+    fake_interpreter(tmp_path / "staging" / "python")
+    archive = tmp_path / "cpython-3.13.15+20260901-x86_64-unknown-linux-gnu.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(tmp_path / "staging" / "python", arcname="python")
+
+    out = tmp_path / "out"
+    bundle_python.adopt_interpreter(out, archive)
+    assert bundle_python.interpreter_path(out).exists()
+    assert archive.exists(), "the download has to survive the build that used it"
+
+
+@pytest.mark.skipif(bundle_python.is_windows(), reason="no `bin/python3` symlink on Windows")
+def test_the_interpreters_own_symlink_is_not_resolved_into_a_second_copy(tmp_path: Path) -> None:
+    """`bin/python3` is a symlink to `python3.13`. Copying it flat ships two that can drift."""
+    source = fake_interpreter(tmp_path / "source")
+    real = source / "bin" / "python3.13"
+    real.write_text("#!/bin/sh\n")
+    (source / "bin" / "python3").unlink()
+    (source / "bin" / "python3").symlink_to("python3.13")
+
+    out = tmp_path / "out"
+    bundle_python.adopt_interpreter(out, source)
+    assert (out / "bin" / "python3").is_symlink()
+
+
+def test_what_was_adopted_is_copied_and_not_moved(tmp_path: Path) -> None:
+    """A tarball fetched by hand over a bad link must survive a build that fails later."""
+    source = fake_interpreter(tmp_path / "source")
+    bundle_python.adopt_interpreter(tmp_path / "out", source)
+    assert bundle_python.interpreter_path(source).exists()
+
+
+def test_a_tree_that_is_not_an_interpreter_stops_the_build(tmp_path: Path) -> None:
+    """Better here, with the path in the message, than three minutes later inside `verify`."""
+    empty = tmp_path / "empty"
+    (empty / "python").mkdir(parents=True)
+    with pytest.raises(SystemExit, match="expected an unpacked"):
+        bundle_python.adopt_interpreter(tmp_path / "out", empty)
+
+    with pytest.raises(SystemExit, match="no such interpreter"):
+        bundle_python.adopt_interpreter(tmp_path / "out", tmp_path / "nowhere")
+
+    zstd = tmp_path / "cpython-3.13.15+20260901-x86_64-unknown-linux-gnu.tar.zst"
+    zstd.write_bytes(b"")
+    with pytest.raises(SystemExit, match="not a .tar.gz"):
+        bundle_python.adopt_interpreter(tmp_path / "out", zstd)
+
+
+def test_an_interpreter_inside_the_output_is_refused_before_anything_is_deleted(
+    tmp_path: Path,
+) -> None:
+    """`--out` is emptied first, so pointing it at the source would destroy both."""
+    out = tmp_path / "out"
+    source = fake_interpreter(out / "unpacked" / "python")
+    with pytest.raises(SystemExit, match="is inside"):
+        bundle_python.adopt_interpreter(out, source)
+    assert bundle_python.interpreter_path(source).exists()
+
+
 # --- the version it pins -------------------------------------------------------------------
 
 

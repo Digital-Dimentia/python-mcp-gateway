@@ -94,6 +94,9 @@ make tauri-check      # cargo fmt --check, clippy -D warnings, cargo test
 
 `cargo tauri` comes from `cargo install tauri-cli --version "^2" --locked`.
 
+`make tauri-python` is the one step here that downloads anything other than a Python
+package, and the one a corporate network breaks: see *Building behind a firewall* below.
+
 **`make tauri-python` comes first, once, and `make tauri-check` needs it too.** `tauri-build`
 validates every path in `bundle.resources` at *compile* time, so the crate does not build at
 all until the interpreter is on disk — and what it says when it is not is `resource path
@@ -103,6 +106,71 @@ download, is handled for you.
 
 Neither `make test` nor `make build` depends on any of this. The daemon is the product and it
 ships without the app; a checkout with no Rust toolchain runs the entire Python suite.
+
+## Building behind a firewall
+
+One step of this build talks to the internet for something other than a Python package:
+`make tauri-python` runs `uv python install`, which downloads a python-build-standalone
+interpreter. Everything after it — the wheel, the strip, the byte-compile, the verification —
+is local. So when a corporate network breaks the desktop build, it breaks it there, and the
+fixes below are in the order worth trying.
+
+**First, assume TLS interception rather than a block.** uv ships its own certificate bundle
+and does not see a corporate CA, which fails as a certificate error that reads like an outage:
+
+```bash
+export UV_NATIVE_TLS=1                  # trust the OS store, where the corporate CA lives
+# or:  export SSL_CERT_FILE=/path/to/corp-ca-bundle.pem
+export HTTPS_PROXY=http://proxy.corp:8080
+make tauri-python
+```
+
+This is the same failure `PIP_TRUSTED_HOST` works around for `make venv`, arriving one layer
+down. `scripts/bundle_python.py` passes the environment through to uv untouched, so every uv
+variable works from your shell without a flag.
+
+**Then, a mirror.** `UV_PYTHON_INSTALL_MIRROR` replaces
+`https://github.com/astral-sh/python-build-standalone/releases/download` in the URL uv builds
+and keeps the `/<release>/<asset>` tail, so an internal Artifactory or Nexus needs nothing but
+the variable. It also accepts `file://`, which is how a machine with no egress at all still
+gets a bundle — fetch the tarball anywhere, carry it in, and build offline:
+
+```bash
+# Somewhere with network. uv names the exact asset it wants for this platform:
+uv python list --all-versions --output-format json \
+  | jq -r '.[] | select(.key == "cpython-3.13.15-macos-aarch64-none") | .url'
+
+# Lay it out as <mirror>/<release>/<asset>, keeping the filename's literal `+`:
+mkdir -p ~/pbs-mirror/20260901
+curl -Lo ~/pbs-mirror/20260901/'cpython-3.13.15+20260901-aarch64-apple-darwin-install_only_stripped.tar.gz' "$URL"
+
+# On the build machine:
+UV_PYTHON_INSTALL_MIRROR=file://$HOME/pbs-mirror make tauri-python
+```
+
+**Last, skip uv entirely.** `--interpreter` takes an interpreter that is already on the disk —
+an unpacked tree, or the `.tar.gz` as downloaded — and adopts it instead of fetching one. It
+is for the machine where uv cannot be installed or cannot be made to reach anything:
+
+```bash
+make build                                            # the wheel this installs
+.venv/bin/python scripts/bundle_python.py \
+    --interpreter ~/Downloads/cpython-3.13.15+20260901-aarch64-apple-darwin-install_only_stripped.tar.gz
+```
+
+What you hand over is copied, not moved, so a download that was difficult survives a build
+that fails. Take an `install_only` asset matching this machine's platform and architecture —
+nothing here cross-builds — and note that `.tar.zst` is refused: unpack that one yourself and
+pass the directory. Everything downstream is identical to a fetched interpreter, verification
+included, and `BUNDLE.json` records `"source"` so a bundle that misbehaves can be traced back
+to where its Python came from.
+
+The interpreter is not the only fetch in `make tauri-python` — the wheel's two dependencies
+come from PyPI — but that one is an ordinary package install and an internal index handles it.
+Note that the step runs `uv pip install`, which reads `UV_DEFAULT_INDEX` (or `UV_INDEX_URL`)
+and **not** `PIP_INDEX_URL`; `PIP_TRUSTED_HOST` is the exception, which
+`scripts/bundle_python.py` translates into uv's `--allow-insecure-host` so there is one
+variable to set rather than two.
 
 ## First run
 

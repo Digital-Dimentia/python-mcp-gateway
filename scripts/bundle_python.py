@@ -26,6 +26,13 @@ python-build-standalone, so using uv is not a second dependency on a second thin
 the same artifact with a downloader that already handles the platform triple, and one this
 project's contributors have installed anyway.
 
+`--interpreter` is the way past uv, and exists because that download is the one step here
+that a corporate firewall breaks -- everything after it is local. uv's own knobs come first:
+`UV_PYTHON_INSTALL_MIRROR` accepts a `file://` directory, so "download the tarball however
+you can, then build offline" needs no code at all. `--interpreter` is for underneath that,
+where uv cannot run; it adopts an unpacked tree or a `.tar.gz`, and then changes nothing --
+`verify` is still the gate. `src/desktop/README.md` has the recipes.
+
 Two edits are made to what uv hands over:
 
 * **`EXTERNALLY-MANAGED` is removed.** It exists to stop a person mutating uv's shared copy
@@ -305,6 +312,82 @@ def choose_installed(staging: Path, tag: str) -> Path:
     return candidates[0]
 
 
+def interpreter_root(candidate: Path) -> Path | None:
+    """The interpreter tree inside `candidate`, or `None` if there is not one.
+
+    python-build-standalone's `install_only` tarballs unpack to a single `python/` directory,
+    so someone who has just unpacked one by hand holds either that directory or the thing
+    containing it -- and which one they hold depends on how they unpacked it, not on anything
+    they chose. Both are accepted. Guessing right here is the difference between a flag that
+    works the first time and a flag with its own troubleshooting section.
+    """
+    for root in (candidate, candidate / "python"):
+        if interpreter_path(root).exists():
+            return root
+    return None
+
+
+def adopt_interpreter(out: Path, source: Path) -> Path:
+    """Install an interpreter fetched by hand, instead of asking uv for one.
+
+    The download in `fetch_interpreter` is the single step of this script that a corporate
+    firewall reliably breaks; everything after it is a local wheel, local file removal and
+    local subprocesses. uv's own escape hatches come first and cost no code --
+    `UV_PYTHON_INSTALL_MIRROR` accepts a `file://` directory and `UV_NATIVE_TLS=1` fixes the
+    intercepted-TLS case, both documented in `src/desktop/README.md`. This flag is for the
+    case underneath those: a machine where uv cannot fetch at all, handed a tarball that
+    someone carried in.
+
+    What arrives is **copied, not moved**. A tarball fetched once, by hand, over a link that
+    made it hard has to survive a build that fails at `verify`. Symlinks are preserved
+    because `bin/python3` is one, and a copy that resolved it would ship two interpreters
+    whose halves can drift.
+
+    Nothing downstream is special-cased: the adopted tree goes through the same `unmanage`,
+    `install_gateway`, `strip`, `compile_bytecode` and `verify` as a fetched one. `verify` is
+    the gate, so a hand-fetched interpreter is held to exactly the standard a fetched one is.
+    """
+    staging: Path | None = None
+    try:
+        if source.is_file():
+            if not source.name.endswith((".tar.gz", ".tgz")):
+                raise SystemExit(
+                    f"bundle_python: {source.name} is not a .tar.gz -- python-build-standalone's\n"
+                    "  `install_only` assets are, and its `.tar.zst` ones need a zstd this script\n"
+                    "  does not carry. Unpack that one yourself and pass the directory."
+                )
+            staging = Path(tempfile.mkdtemp(prefix="bundle_python-"))
+            log(f"unpacking {source.name}")
+            shutil.unpack_archive(str(source), str(staging))
+            tree = interpreter_root(staging)
+        elif source.is_dir():
+            tree = interpreter_root(source)
+        else:
+            raise SystemExit(f"bundle_python: no such interpreter: {source}")
+
+        if tree is None:
+            expected = interpreter_path(Path(".")).as_posix()
+            raise SystemExit(
+                f"bundle_python: {source} has no {expected} in it -- expected an unpacked\n"
+                "  python-build-standalone tree, or the directory its `python/` sits in."
+            )
+
+        # Checked before the `rmtree` below, which would otherwise delete the source along
+        # with the destination and leave a person holding neither.
+        if out == tree or out in tree.parents:
+            raise SystemExit(f"bundle_python: --interpreter {source} is inside --out {out}")
+
+        shutil.rmtree(out, ignore_errors=True)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(tree, out, symlinks=True)
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    log(f"adopted {source}")
+    return out
+
+
 def fetch_interpreter(out: Path, version: str) -> Path:
     """Install a standalone CPython at `out`, replacing whatever was there.
 
@@ -435,11 +518,22 @@ def verify(root: Path, config: Path) -> None:
     run([str(interpreter), "-m", "mcp_gateway.cli", "--check", "--config", str(config)])
 
 
-def write_manifest(root: Path, wheel: Path, version: str, removed: list[str]) -> dict[str, object]:
+def write_manifest(
+    root: Path,
+    wheel: Path,
+    version: str | None,
+    removed: list[str],
+    source: str,
+) -> dict[str, object]:
     """Record what this bundle is, so a bug report can name it.
 
     The shell logs this at startup. "Which Python, which wheel" is the first question about
     a bundle that misbehaves, and the answer must not require unpacking the `.app`.
+
+    `source` is the third question, and it arrived with `--interpreter`: an adopted tree is
+    whatever someone downloaded, so "which uv tag did this ask for" has no answer and
+    `python_requested` and `tag` are null rather than repeating a default nobody used.
+    `python` is read out of the interpreter either way, and is the field to trust.
     """
     interpreter = interpreter_path(root)
     reported = subprocess.run(
@@ -450,7 +544,8 @@ def write_manifest(root: Path, wheel: Path, version: str, removed: list[str]) ->
     manifest = {
         "python": reported,
         "python_requested": version,
-        "tag": uv_python_tag(version),
+        "tag": uv_python_tag(version) if version is not None else None,
+        "source": source,
         "wheel": wheel.name,
         "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
         "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -470,8 +565,21 @@ def main(argv: list[str] | None = None) -> int:
         description="Build the standalone interpreter the Tauri shell ships.",
     )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="Where the bundle lands.")
-    parser.add_argument("--python-version", default=DEFAULT_VERSION, help="CPython major.minor.")
+    parser.add_argument(
+        "--python-version",
+        default=DEFAULT_VERSION,
+        help="CPython major.minor. Unused with --interpreter, which brings its own.",
+    )
     parser.add_argument("--wheel", type=Path, help="Wheel to install (default: newest in dist/).")
+    parser.add_argument(
+        "--interpreter",
+        type=Path,
+        help=(
+            "Adopt an already-fetched standalone CPython -- an unpacked tree or a .tar.gz -- "
+            "instead of downloading one with uv. For builds behind a firewall; see "
+            "src/desktop/README.md."
+        ),
+    )
     parser.add_argument(
         "--config",
         type=Path,
@@ -495,14 +603,21 @@ def main(argv: list[str] | None = None) -> int:
     wheel = (args.wheel or newest_wheel()).resolve()
     log(f"wheel: {wheel.name}")
 
-    fetch_interpreter(out, args.python_version)
+    if args.interpreter is not None:
+        source = args.interpreter.resolve()
+        adopt_interpreter(out, source)
+        requested, recorded = None, str(source)
+    else:
+        fetch_interpreter(out, args.python_version)
+        requested, recorded = args.python_version, "uv"
+
     unmanage(out)
     install_gateway(out, wheel)
     removed = strip(out)
     log(f"stripped {len(removed)} paths")
     compile_bytecode(out)
     verify(out, args.config)
-    manifest = write_manifest(out, wheel, args.python_version, removed)
+    manifest = write_manifest(out, wheel, requested, removed, recorded)
 
     log(f"Python {manifest['python']} + {wheel.name} -> {out} ({megabytes(out)} MB)")
     return 0

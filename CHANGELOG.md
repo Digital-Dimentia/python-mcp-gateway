@@ -276,6 +276,16 @@ load-bearing should fail a test rather than someone's window.
   cannot import the gateway, find the UI assets through `importlib.resources`, or validate a
   config. Works because both runtime dependencies are pure Python by decision, so the
   interpreter is the only per-target artifact.
+- **The desktop build has a way through a corporate firewall.** `uv python install` is the
+  only step of `make tauri-python` that fetches an interpreter, and it is where a filtered
+  network stops the build — usually as a certificate error that reads like an outage.
+  `src/desktop/README.md` now says which knob to reach for: `UV_NATIVE_TLS=1` for intercepted
+  TLS, `UV_PYTHON_INSTALL_MIRROR` for an internal mirror or a `file://` directory of tarballs
+  carried in by hand. Underneath both, `scripts/bundle_python.py --interpreter` adopts a
+  standalone CPython that is already on the disk — an unpacked tree or the `.tar.gz` as
+  downloaded — for the machine where uv cannot reach anything at all. What it adopts is
+  copied rather than moved, and goes through the same strip, compile and verification as a
+  fetched one; `BUNDLE.json` records which it was.
 - **`scripts/stage_ui.py`**: puts the admin UI where Tauri looks for a frontend without
   making a second copy of it — a symlink for development, and for a bundle a copy that takes
   `webui.ASSETS` as its manifest, so the app can never ship a file the HTTP server would not.
