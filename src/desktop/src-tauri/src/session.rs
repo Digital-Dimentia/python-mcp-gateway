@@ -240,8 +240,13 @@ mod tests {
             Phase::TunnelUp { port: 8765 },
             Phase::FarSideSilent { port: 8765 },
             Phase::Listening { port: 8765 },
-            Phase::Restarting { attempt: 2, why: None },
-            Phase::Failed { reason: "nope".into() },
+            Phase::Restarting {
+                attempt: 2,
+                why: None,
+            },
+            Phase::Failed {
+                reason: "nope".into(),
+            },
         ]
     }
 
@@ -251,7 +256,11 @@ mod tests {
         // higher one. A sixth word would not be ranked, and would silently win or lose.
         let known = ["idle", "starting", "listening", "restarting", "failed"];
         for phase in every_phase() {
-            assert!(known.contains(&phase.state()), "{phase:?} -> {}", phase.state());
+            assert!(
+                known.contains(&phase.state()),
+                "{phase:?} -> {}",
+                phase.state()
+            );
         }
     }
 
@@ -294,7 +303,12 @@ mod tests {
     fn only_a_port_that_survives_a_restart_is_offered_to_a_client() {
         // Local and ephemeral: there is no line to give anybody, because the number is
         // different after the next launch and a client config is written once.
-        let ephemeral = status_of(&Phase::Listening { port: 49613 }, &Connection::default(), vec![], bridge());
+        let ephemeral = status_of(
+            &Phase::Listening { port: 49613 },
+            &Connection::default(),
+            vec![],
+            bridge(),
+        );
         assert_eq!(ephemeral.connection.connect_command, None);
 
         // Local and pinned: the app's own daemon, at a number somebody chose.
@@ -345,20 +359,31 @@ mod tests {
         // The gate reads one and the Connection screen reads the other; a failure that
         // filled only one of them would be invisible in the other place.
         let status = status_of(
-            &Phase::Failed { reason: "Permission denied (publickey).".into() },
+            &Phase::Failed {
+                reason: "Permission denied (publickey).".into(),
+            },
             &Connection::remote("build-box"),
             vec![],
             bridge(),
         );
         assert_eq!(status.state, "failed");
-        assert_eq!(status.reason.as_deref(), Some("Permission denied (publickey)."));
-        assert_eq!(status.detail.as_deref(), Some("Permission denied (publickey)."));
+        assert_eq!(
+            status.reason.as_deref(),
+            Some("Permission denied (publickey).")
+        );
+        assert_eq!(
+            status.detail.as_deref(),
+            Some("Permission denied (publickey).")
+        );
     }
 
     #[test]
     fn a_restart_carries_its_attempt_and_its_reason() {
         let status = status_of(
-            &Phase::Restarting { attempt: 3, why: Some("the network went away".into()) },
+            &Phase::Restarting {
+                attempt: 3,
+                why: Some("the network went away".into()),
+            },
             &Connection::remote("build-box"),
             vec![],
             bridge(),

@@ -277,7 +277,10 @@ async fn a_keyless_gateway_is_what_remote_mode_reaches() {
         crate::tunnel::probe(port, Duration::from_secs(2)).await,
         crate::tunnel::Probe::Alive,
         "{}",
-        daemon.explain(&mut child, "the daemon should answer the probe like a gateway")
+        daemon.explain(
+            &mut child,
+            "the daemon should answer the probe like a gateway"
+        )
     );
 
     supervisor::terminate(&mut child).await;

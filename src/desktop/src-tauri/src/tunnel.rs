@@ -76,10 +76,7 @@ pub const ALIVE_COUNT: u32 = 3;
 /// leftover process by comparing its executable against a path, so a tunnel spawned as a
 /// bare name could not be reaped after a Force Quit.
 pub fn program() -> PathBuf {
-    for candidate in [
-        "/usr/bin/ssh",
-        r"C:\Windows\System32\OpenSSH\ssh.exe",
-    ] {
+    for candidate in ["/usr/bin/ssh", r"C:\Windows\System32\OpenSSH\ssh.exe"] {
         let path = PathBuf::from(candidate);
         if path.exists() {
             return path;
@@ -323,7 +320,9 @@ pub fn preflight(local_port: u16) -> Result<(), String> {
             "port {local_port} on this Mac is already in use. {}",
             Fault::LocalPortBusy.hint()
         )),
-        Err(err) => Err(format!("port {local_port} cannot be opened on this Mac: {err}")),
+        Err(err) => Err(format!(
+            "port {local_port} cannot be opened on this Mac: {err}"
+        )),
     }
 }
 
@@ -502,7 +501,10 @@ mod tests {
         ] {
             assert_eq!(classify(line), Some(Fault::LocalPortBusy), "{line}");
         }
-        assert!(Fault::LocalPortBusy.permanent(), "the port will not free itself");
+        assert!(
+            Fault::LocalPortBusy.permanent(),
+            "the port will not free itself"
+        );
     }
 
     #[test]
@@ -585,7 +587,10 @@ mod tests {
             let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
             listener.local_addr().unwrap().port()
         };
-        assert_eq!(probe(free, Duration::from_millis(500)).await, Probe::NoListener);
+        assert_eq!(
+            probe(free, Duration::from_millis(500)).await,
+            Probe::NoListener
+        );
 
         // A port that accepts and immediately drops, which is byte-for-byte what `ssh -L`
         // does when the far side refuses the channel. A bare TCP connect cannot tell this

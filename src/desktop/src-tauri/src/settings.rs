@@ -186,7 +186,9 @@ pub fn load(data_dir: &Path) -> (Connection, Option<String>) {
         Err(err) => {
             return (
                 Connection::default(),
-                Some(format!("{CONNECTION_FILE} could not be read ({err}); using local mode")),
+                Some(format!(
+                    "{CONNECTION_FILE} could not be read ({err}); using local mode"
+                )),
             )
         }
     };
@@ -196,7 +198,9 @@ pub fn load(data_dir: &Path) -> (Connection, Option<String>) {
         Err(err) => {
             return (
                 Connection::default(),
-                Some(format!("{CONNECTION_FILE} is not valid JSON ({err}); using local mode")),
+                Some(format!(
+                    "{CONNECTION_FILE} is not valid JSON ({err}); using local mode"
+                )),
             )
         }
     };
@@ -291,7 +295,10 @@ mod tests {
         let (read_back, complaint) = load(&dir);
         assert_eq!(read_back, written);
         assert_eq!(complaint, None);
-        assert!(!dir.join("connection.json.tmp").exists(), "the temp file is renamed away");
+        assert!(
+            !dir.join("connection.json.tmp").exists(),
+            "the temp file is renamed away"
+        );
     }
 
     #[test]
@@ -373,7 +380,11 @@ mod tests {
             "dave@[fe80::1]",
         ] {
             let connection = Connection::remote(good);
-            assert_eq!(connection.validate(), Ok(()), "{good:?} is an ssh destination");
+            assert_eq!(
+                connection.validate(),
+                Ok(()),
+                "{good:?} is an ssh destination"
+            );
         }
     }
 

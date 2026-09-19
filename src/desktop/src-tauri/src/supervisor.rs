@@ -103,7 +103,6 @@ const TERM_GRACE: Duration = Duration::from_secs(5);
 /// Lines of the child's stderr kept for the UI and for a bug report.
 pub const LOG_LINES: usize = 500;
 
-
 /// The port in a port file, or `None` if it is absent, empty or not a port.
 ///
 /// **Twinned with `portfile.read` in `src/mcp_gateway/portfile.py`.** If one learns
@@ -205,7 +204,9 @@ impl Layout {
     /// no line at all. See `session::connect_command`.
     pub fn bridge(&self) -> PathBuf {
         if cfg!(windows) {
-            self.python_root.join("Scripts").join("mcp-gateway-connect.exe")
+            self.python_root
+                .join("Scripts")
+                .join("mcp-gateway-connect.exe")
         } else {
             self.python_root.join("bin").join("mcp-gateway-connect")
         }

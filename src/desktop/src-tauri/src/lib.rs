@@ -256,7 +256,16 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
 
         let outcome = match connection.mode {
             Mode::Local => {
-                run_local(&app, &inner, &layout, &secret, &path, connection.local_port, &mut rx).await
+                run_local(
+                    &app,
+                    &inner,
+                    &layout,
+                    &secret,
+                    &path,
+                    connection.local_port,
+                    &mut rx,
+                )
+                .await
             }
             Mode::Remote => run_remote(&app, &inner, &layout, &connection, &path, &mut rx).await,
         };
