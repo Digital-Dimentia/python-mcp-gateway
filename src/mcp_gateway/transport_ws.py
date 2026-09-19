@@ -22,6 +22,13 @@ browsers send one, so nothing that speaks to this daemon today is affected -- an
 is now a first-class client, which is what turns "any web page can open a socket to
 127.0.0.1" from a note into a hole. See `origin_permitted`.
 
+## TLS
+
+Off by default, and on when a certificate is named: `serve()` is handed an `SSLContext` and
+the same port answers `wss://` and `https://` instead of `ws://` and `http://`. Everything
+above the socket is unchanged -- the Streamable HTTP divert sniffs *decrypted* bytes,
+because asyncio's TLS transport sits below the protocol object. See `tls_context`.
+
 ## One connection, one reader, one task per request
 
 Each connection gets its own read loop. A request is dispatched into a task of its own, so
@@ -44,7 +51,9 @@ import ipaddress
 import logging
 import os
 import secrets as stdlib_secrets
+import ssl
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Protocol
 from urllib.parse import parse_qs, urlsplit
 
@@ -105,6 +114,12 @@ ACCESS_KEY_QUERY_PARAM = "key"
 PING_INTERVAL_SECONDS = 20.0
 PING_TIMEOUT_SECONDS = 20.0
 
+#: The certificate chain and private key to serve TLS with, as PEM paths. Paths, not
+#: material: a path is no secret, so unlike the access key these are also flags. The key
+#: may be omitted when the certificate file carries it too.
+TLS_CERT_ENV = "MCP_GATEWAY_TLS_CERT"
+TLS_KEY_ENV = "MCP_GATEWAY_TLS_KEY"
+
 MCP_PATH = "/mcp"
 ADMIN_PATH = "/admin"
 
@@ -120,6 +135,13 @@ class UnauthenticatedBindError(RuntimeError):
     and `errors.to_error_object` maps `ValueError` to `-32602`, which would be a bizarre
     answer to a startup misconfiguration that never reaches a client.
     """
+
+
+class TlsError(RuntimeError):
+    """A certificate was named and cannot be served with. Fatal at startup, like the bind
+    guard: a daemon that fell back to plaintext because its certificate was unreadable
+    would be sending the access key in the clear to clients configured for `wss://` --
+    which would then refuse to connect, so the fallback buys nothing but a leak."""
 
 
 class Connection(Protocol):
@@ -179,6 +201,50 @@ def is_loopback(host: str | None) -> bool:
         return False
 
 
+def tls_context(cert: Path | str | None, key: Path | str | None = None) -> ssl.SSLContext | None:
+    """The server-side TLS context for `cert` (and `key`), or `None` for plaintext.
+
+    `Purpose.CLIENT_AUTH` is the stdlib's server profile -- TLS 1.2 floor, its own cipher
+    choice -- and nothing is tuned beyond it: a gateway second-guessing the stdlib's cipher
+    list is a gateway whose list goes stale. Client certificates are not asked for; the
+    access key is the client's credential, and TLS is what stops it being read off the wire.
+
+    Loaded once, here, rather than lazily per handshake, so a bad path or a key that does
+    not match its certificate fails the start rather than the first client.
+    """
+    if not cert:
+        if key:
+            raise TlsError(f"{TLS_KEY_ENV}/--tls-key was given without a certificate to go with it")
+        return None
+    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    try:
+        context.load_cert_chain(str(cert), str(key) if key else None)
+    except (OSError, ssl.SSLError) as exc:
+        where = f"{cert} and {key}" if key else str(cert)
+        raise TlsError(f"cannot serve TLS with {where}: {exc}") from exc
+    return context
+
+
+def warn_plaintext_off_loopback(host: str | None, tls: bool) -> None:
+    """Say so when a non-loopback bind is plaintext. A warning, not a refusal.
+
+    Refusing would break the two arrangements that are fine as they are: TLS terminated by
+    a reverse proxy in front, and a container whose `0.0.0.0` is only reachable from its
+    own network. But in every other case the access key crosses the wire readable -- the
+    one credential that stands between the network and a remote shell -- and nothing else
+    would say so.
+    """
+    if tls or is_loopback(host):
+        return
+    logger.warning(
+        "serving plaintext on %s: the access key and every message cross the network "
+        "unencrypted. Unless TLS is terminated in front of this daemon, set --tls-cert "
+        "(or %s).",
+        host or "all interfaces",
+        TLS_CERT_ENV,
+    )
+
+
 def refuse_unauthenticated_bind(host: str | None, key: str | None, allowed: bool) -> None:
     """Refuse to serve an unauthenticated gateway to anything but this machine.
 
@@ -215,8 +281,8 @@ def own_origins(host: str | None, port: int) -> frozenset[str]:
 
     All three loopback spellings, because a user who binds `127.0.0.1` and then types
     `localhost:8765` has done nothing wrong and must not be met with a 403 they cannot
-    diagnose. `https` is included against the day `wss://` lands (`python-mcp-gateway-4rw`);
-    an origin nothing can currently serve costs nothing to accept.
+    diagnose. `https` is included because a page served over TLS reports it, and an
+    origin a plaintext server cannot be reached from costs nothing to accept.
     """
     hosts = {host} if host else set()
     if not host or is_loopback(host):
@@ -495,6 +561,7 @@ class GatewayServer:
         port: int = 8765,
         access_key: str | None = None,
         allow_unauthenticated: bool = False,
+        tls: ssl.SSLContext | None = None,
     ) -> None:
         # Before anything else, and in the constructor rather than in `start()`: the point
         # of the guard is that the misconfiguration never gets as far as a listening port.
@@ -504,6 +571,7 @@ class GatewayServer:
         self._host = host
         self._port = port
         self._access_key = access_key
+        self._tls = tls
         self._server: Server | None = None
         self._links: set[ClientLink] = set()
         #: The Streamable HTTP endpoint on the same path and port. Its sessions are not
@@ -536,6 +604,11 @@ class GatewayServer:
         # nowhere near the cause. The configured port is the right answer then anyway.
         bound = next(iter(self._server.sockets), None)
         return self._port if bound is None else bound.getsockname()[1]
+
+    @property
+    def tls(self) -> bool:
+        """Whether this server speaks `wss://`/`https://` rather than `ws://`/`http://`."""
+        return self._tls is not None
 
     @property
     def links(self) -> frozenset[Any]:
@@ -617,6 +690,7 @@ class GatewayServer:
         if self._server is not None:
             return
         self._report_access_key()
+        warn_plaintext_off_loopback(self._host, self.tls)
         connection_class = type(
             "GatewayConnection", (DivertingConnection,), {"divert_to": self._http_protocol}
         )
@@ -629,11 +703,15 @@ class GatewayServer:
             ping_timeout=PING_TIMEOUT_SECONDS,
             process_request=_access_check(self._access_key, self._allowed_origins),
             create_connection=connection_class,
+            ssl=self._tls,
         )
         self._reaper = asyncio.create_task(self._reap_http_sessions())
-        logger.info("listening on ws://%s:%s%s", self._host, self.port, MCP_PATH)
-        logger.info("streamable http on http://%s:%s%s", self._host, self.port, MCP_PATH)
-        logger.info("admin UI at %s", webui.url(self._host, self.port))
+        ws_scheme, http_scheme = ("wss", "https") if self.tls else ("ws", "http")
+        logger.info("listening on %s://%s:%s%s", ws_scheme, self._host, self.port, MCP_PATH)
+        logger.info(
+            "streamable http on %s://%s:%s%s", http_scheme, self._host, self.port, MCP_PATH
+        )
+        logger.info("admin UI at %s", webui.url(self._host, self.port, tls=self.tls))
 
     async def _reap_http_sessions(self) -> None:
         """Forget HTTP sessions nobody has come back to. See `transport_http.reap`."""

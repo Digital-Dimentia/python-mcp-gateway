@@ -41,6 +41,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import ssl
 import sys
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,10 @@ logger = logging.getLogger(__name__)
 #: zero-configuration case works.
 DEFAULT_URL = "ws://127.0.0.1:8765/mcp"
 URL_ENV = "MCP_GATEWAY_URL"
+
+#: A CA bundle to verify a `wss://` daemon against, for a certificate the system store does
+#: not already trust -- a private CA, or a self-signed certificate that is its own.
+CA_FILE_ENV = "MCP_GATEWAY_TLS_CA"
 
 #: Reconnect backoff. Starts fast because the overwhelmingly common cause is a daemon
 #: restarting, which takes under a second; caps low enough that a human waiting on it does
@@ -99,6 +104,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--ca-file",
+        type=Path,
+        metavar="PEM",
+        default=None,
+        help=(
+            f"Verify a wss:// daemon against this CA bundle instead of the system store "
+            f"(default: ${CA_FILE_ENV}). Verification is never turned off."
+        ),
+    )
+    parser.add_argument(
         "--no-reconnect",
         action="store_true",
         help="Exit when the daemon goes away instead of retrying. For scripts and tests.",
@@ -110,6 +125,25 @@ def build_parser() -> argparse.ArgumentParser:
 def resolve_url(args: argparse.Namespace, environ: dict[str, str] | None = None) -> str:
     source = os.environ if environ is None else environ
     return args.url or source.get(URL_ENV) or DEFAULT_URL
+
+
+def resolve_ca_file(args: argparse.Namespace, environ: dict[str, str] | None = None) -> Path | None:
+    source = os.environ if environ is None else environ
+    configured = args.ca_file or source.get(CA_FILE_ENV)
+    return Path(configured) if configured else None
+
+
+def client_tls(url: str, ca_file: Path | None) -> ssl.SSLContext | None:
+    """The context to dial `url` with, or `None` to let `websockets` choose.
+
+    `None` for `ws://` whatever was configured, because `websockets` refuses an `ssl`
+    argument on a plaintext URI, and for `wss://` with no CA file, because its default is
+    already the system store with verification on. Built once, here, so a missing or
+    unreadable bundle fails at startup rather than on every reconnect.
+    """
+    if ca_file is None or not url.startswith("wss://"):
+        return None
+    return ssl.create_default_context(cafile=str(ca_file))
 
 
 def resolve_key(args: argparse.Namespace, environ: dict[str, str] | None = None) -> str | None:
@@ -140,22 +174,33 @@ def resolve_key(args: argparse.Namespace, environ: dict[str, str] | None = None)
         return None
 
 
-def connect_kwargs(key: str | None) -> dict[str, Any]:
+def connect_kwargs(key: str | None, tls: ssl.SSLContext | None = None) -> dict[str, Any]:
     """`Authorization: Bearer` rather than `?key=`.
 
     Both are accepted by the daemon, and the bridge is the one client we control, so it uses
     the carrier that does not end up in an access log. See `transport_ws.md`.
     """
     headers = {"Authorization": f"Bearer {key}"} if key else {}
-    return {"additional_headers": headers, "max_size": MAX_MESSAGE_BYTES}
+    kwargs: dict[str, Any] = {"additional_headers": headers, "max_size": MAX_MESSAGE_BYTES}
+    if tls is not None:
+        kwargs["ssl"] = tls
+    return kwargs
 
 
 class Bridge:
     """One stdin/stdout pair, pumped to a daemon that may come and go."""
 
-    def __init__(self, url: str, key: str | None, *, reconnect: bool = True) -> None:
+    def __init__(
+        self,
+        url: str,
+        key: str | None,
+        *,
+        reconnect: bool = True,
+        tls: ssl.SSLContext | None = None,
+    ) -> None:
         self.url = url
         self.key = key
+        self.tls = tls
         self.reconnect = reconnect
         self._websocket: Any = None
         #: Ids that were **actually sent** to the daemon and not yet answered. If the socket
@@ -275,7 +320,7 @@ class Bridge:
         backoff = _BACKOFF_INITIAL
         while True:
             try:
-                async with websockets.connect(self.url, **connect_kwargs(self.key)) as websocket:
+                async with websockets.connect(self.url, **connect_kwargs(self.key, self.tls)) as websocket:
                     logger.info("connected to %s", self.url)
                     backoff = _BACKOFF_INITIAL
                     self._websocket = websocket
@@ -349,7 +394,12 @@ def run() -> None:
 
     url = resolve_url(args)
     key = resolve_key(args)
-    bridge = Bridge(url, key, reconnect=not args.no_reconnect)
+    try:
+        tls = client_tls(url, resolve_ca_file(args))
+    except (OSError, ssl.SSLError) as exc:
+        logger.error("cannot use CA bundle %s: %s", resolve_ca_file(args), exc)
+        raise SystemExit(2) from None
+    bridge = Bridge(url, key, reconnect=not args.no_reconnect, tls=tls)
     # After the Bridge captured the real stdout, and before anything else can print.
     _reserve_stdout()
 

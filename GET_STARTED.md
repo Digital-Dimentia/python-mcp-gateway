@@ -583,6 +583,32 @@ it. A mismatched forward works for the desktop app and for `mcp-gateway-connect`
 it bound, and it cannot know what a tunnel did with it. `MCP_GATEWAY_WS_ALLOWED_ORIGINS` on
 the remote is the way out if you need one.
 
+### Serving the LAN directly, over TLS
+
+SSH is the better answer when there is one person and one laptop. When there is not — a
+team, or a client that cannot run a tunnel — bind the LAN with an access key **and** a
+certificate, so the key does not cross the network readable:
+
+```bash
+MCP_GATEWAY_WS_KEY=… mcp-gateway --host 0.0.0.0 \
+  --tls-cert /etc/mcp-gateway/cert.pem --tls-key /etc/mcp-gateway/key.pem
+```
+
+The port then speaks `wss://` and `https://` only; the UI is at `https://<host>:8765/ui/`.
+`mcp-gateway --check --tls-cert … --tls-key …` loads the pair without binding anything, and
+catches the key that no longer matches its renewed certificate. Both paths can come from
+`MCP_GATEWAY_TLS_CERT` and `MCP_GATEWAY_TLS_KEY` instead, for a container or unit file.
+
+A client verifies the certificate as it would any other. For a self-signed one or a private
+CA, give the bridge the bundle:
+
+```bash
+claude mcp add gateway -- mcp-gateway-connect --url wss://build-box:8765/mcp --ca-file ca.pem
+```
+
+A plaintext bind off loopback still starts — TLS terminated by a proxy in front is a normal
+arrangement — but it logs a warning saying the key is crossing the network in the clear.
+
 ### Running in the background
 
 `make run` is foreground and does not daemonize. For a persistent daemon on macOS, adapt the

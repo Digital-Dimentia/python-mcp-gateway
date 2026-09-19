@@ -40,7 +40,7 @@ distinguishable from one the gateway itself emitted.
 
 `0` on a clean shutdown or a successful `--check`. `2` for a startup refusal — a config
 that does not parse, a required backend with a missing secret, a non-loopback bind with
-no access key — matching argparse's own code for "you asked for something I will not do".
+no access key, a `--tls-cert` that cannot be loaded — matching argparse's own code for "you asked for something I will not do".
 
 `KeyboardInterrupt` is caught and swallowed. Ctrl+C is how a foreground daemon is stopped;
 printing a traceback for it tells the operator something went wrong when nothing did.

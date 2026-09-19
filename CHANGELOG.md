@@ -9,6 +9,14 @@ nobody reads.
 
 ## Unreleased
 
+**The gateway can serve TLS itself.** `--tls-cert` and `--tls-key` (or
+`MCP_GATEWAY_TLS_CERT`/`_KEY`) make the one port answer `wss://` and `https://`, so a
+deployment that binds the LAN no longer has to send its access key across it readable or
+stand a proxy in front to avoid that. A certificate that cannot be loaded stops the daemon
+instead of letting it fall back to plaintext, and `--check` loads it too. A plaintext bind
+off loopback still starts, and now says in the log that it is plaintext. The bridge gains
+`--ca-file` for a certificate the system store does not trust.
+
 **The desktop app can drive a gateway on another machine.** Run the daemon on the Linux box
 you already keep things on; the app opens an SSH port forward to it and talks to the
 forwarded loopback port exactly as it talks to a child it started. A new **Connection**

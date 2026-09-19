@@ -233,7 +233,8 @@ daemon carries on as it was.
 - Interpolation is refused in `command` and `args`: argv is world-readable through `ps`.
 - Every known secret value is scrubbed from every log record, at the root logger — so a
   backend that prints its own token to stderr is covered too.
-- Binding anything but loopback without an access key is refused.
+- Binding anything but loopback without an access key is refused, and binding it without
+  TLS is warned about: `--tls-cert`/`--tls-key` make the same port `wss://` and `https://`.
 - A WebSocket whose `Origin` header names anywhere but this server is refused. WebSocket has
   no same-origin policy, so any page you visit could otherwise open a socket to
   `127.0.0.1:8765`; non-browser clients send no `Origin` and are unaffected.

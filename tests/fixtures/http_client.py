@@ -46,10 +46,14 @@ async def _read_head(reader: asyncio.StreamReader) -> tuple[int, dict[str, str]]
 class HttpClient:
     """Requests against one gateway, remembering the session id once it has one."""
 
-    def __init__(self, port: int, host: str = "127.0.0.1", key: str | None = None) -> None:
+    def __init__(
+        self, port: int, host: str = "127.0.0.1", key: str | None = None, ssl: Any = None
+    ) -> None:
         self.host = host
         self.port = port
         self.key = key
+        #: A client `SSLContext` to speak https with; `None` for plain http.
+        self.ssl = ssl
         self.session_id: str | None = None
         self._id = 0
 
@@ -66,7 +70,7 @@ class HttpClient:
         session: str | None = ...,  # type: ignore[assignment]
         accept: str | None = "application/json, text/event-stream",
     ) -> Response:
-        reader, writer = await asyncio.open_connection(self.host, self.port)
+        reader, writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl)
         head = {"Host": f"{self.host}:{self.port}", "Content-Length": str(len(body))}
         if accept is not None:
             head["Accept"] = accept
@@ -139,7 +143,9 @@ class SseClient:
         self._pump: asyncio.Task | None = None
 
     async def __aenter__(self) -> "SseClient":
-        reader, writer = await asyncio.open_connection(self._client.host, self._client.port)
+        reader, writer = await asyncio.open_connection(
+            self._client.host, self._client.port, ssl=self._client.ssl
+        )
         head = {
             "Host": f"{self._client.host}:{self._client.port}",
             "Accept": "text/event-stream",

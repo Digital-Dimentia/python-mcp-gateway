@@ -81,6 +81,40 @@ connection that should have been rejected and was not, which nobody is watching 
 *length* is included because it separates "the deploy passed nothing" from "the deploy
 passed something truncated or quoted".
 
+## TLS
+
+`--tls-cert` (and `--tls-key`, unless the certificate file carries the key too) hands
+`serve()` an `SSLContext`, and the one port answers `wss://` and `https://` in place of
+`ws://` and `http://`. There is no second port and no plaintext fallback beside it: a port
+that answered both would be a port a misconfigured client sends the access key to in the
+clear.
+
+**Everything above the socket is unchanged**, and that is the reason it is this small.
+asyncio's TLS transport sits *below* the protocol object, so `DivertingConnection` sniffs
+decrypted request heads exactly as it sniffs plaintext ones, and the Streamable HTTP divert,
+the UI's static assets and the access-key check need no TLS branch. `own_origins` already
+accepted `https://` origins; a page served over TLS builds `wss://` from its own `location`.
+
+`tls_context` is `ssl.create_default_context(Purpose.CLIENT_AUTH)` and nothing more — the
+stdlib's server profile, TLS 1.2 floor and its own ciphers. A gateway that tuned the list
+itself would be carrying a list that goes stale. Client certificates are not asked for: the
+access key is the client's credential, and TLS is what stops it being read off the wire.
+
+It loads **at startup**, before the backends spawn, and a certificate it cannot load —
+missing, unreadable, or a key that does not match — is `TlsError`, exit 2. Falling back to
+plaintext would send the key in the clear to clients configured for `wss://`, which would
+then refuse to connect anyway: the fallback would buy a leak and nothing else. `--check`
+loads it too, since a mismatched key after a renewal is exactly the mistake it exists for.
+
+**Plaintext off loopback is warned about, not refused.** The bind guard refuses a
+non-loopback bind with no *key*, because that is a remote shell. A keyed plaintext bind is
+right in two common arrangements — TLS terminated by a reverse proxy in front, and a
+container whose `0.0.0.0` only its own network can reach — so a refusal would break them to
+protect against something they are not doing. Everywhere else the key crosses the wire
+readable, and `warn_plaintext_off_loopback` is what says so, once, at startup.
+
+A certificate is read once. Rotating one is a restart, not a SIGHUP, for now.
+
 ## Keepalive and size caps
 
 `ping_interval` and `ping_timeout` are restated at 20 s rather than inherited from

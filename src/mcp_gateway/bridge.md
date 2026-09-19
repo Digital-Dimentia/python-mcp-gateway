@@ -63,10 +63,27 @@ control, so it uses the carrier that does not end up in an access log. See
 a config file it can sit beside. A bridge is spawned from an arbitrary directory by a
 client, so guessing `./gateway.env` would be guessing.
 
+## `wss://` and the CA it trusts
+
+A `wss://` URL is verified against the system trust store, which is `websockets`' default and
+needs nothing from here. `--ca-file` (or `MCP_GATEWAY_TLS_CA`) replaces the store with one
+bundle, for a daemon whose certificate is self-signed or from a private CA. There is no flag
+that turns verification off: a bridge that does not check whom it is talking to hands the
+access key to whoever answers.
+
+The context is built at startup, not per connect, so an unreadable bundle is an exit rather
+than a reconnect loop that retries the same failure forever. It is ignored for a `ws://`
+URL, because `websockets` refuses an `ssl` argument there.
+
 ## Usage
 
 ```bash
 claude mcp add gateway -- mcp-gateway-connect --url ws://127.0.0.1:8765/mcp
 ```
 
-with `MCP_GATEWAY_WS_KEY` in the environment, or `--env /path/to/gateway.env`.
+with `MCP_GATEWAY_WS_KEY` in the environment, or `--env /path/to/gateway.env`. Against a
+daemon serving TLS with a private certificate:
+
+```bash
+claude mcp add gateway -- mcp-gateway-connect --url wss://gateway.lan:8765/mcp --ca-file /path/to/ca.pem
+```

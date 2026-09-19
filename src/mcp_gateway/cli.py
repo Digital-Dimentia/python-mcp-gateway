@@ -33,8 +33,12 @@ from mcp_gateway import portfile
 from mcp_gateway.secret_providers import FILE_ORIGIN, build_store
 from mcp_gateway.secrets import MissingSecret, SecretError, SecretStore, missing_for
 from mcp_gateway.transport_ws import (
+    TLS_CERT_ENV,
+    TLS_KEY_ENV,
+    TlsError,
     UnauthenticatedBindError,
     resolve_access_key,
+    tls_context,
     unauthenticated_bind_allowed,
 )
 
@@ -147,6 +151,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--port", type=int, default=DEFAULT_PORT, help=f"Port to bind (default: {DEFAULT_PORT})."
     )
     parser.add_argument(
+        "--tls-cert",
+        type=Path,
+        metavar="PEM",
+        default=os.environ.get(TLS_CERT_ENV) or None,
+        help=(
+            f"Serve wss:// and https:// with this certificate chain (default: ${TLS_CERT_ENV}). "
+            "Without it the port is plaintext, which off loopback is only right behind a "
+            "TLS-terminating proxy."
+        ),
+    )
+    parser.add_argument(
+        "--tls-key",
+        type=Path,
+        metavar="PEM",
+        default=os.environ.get(TLS_KEY_ENV) or None,
+        help=(
+            f"The certificate's private key (default: ${TLS_KEY_ENV}). May be omitted when "
+            "the --tls-cert file holds the key as well."
+        ),
+    )
+    parser.add_argument(
         "--port-file",
         type=Path,
         metavar="PATH",
@@ -253,7 +278,14 @@ def _describe_sources(config: GatewayConfig, env_path: Path, store: SecretStore)
     return " -> ".join(parts)
 
 
-def check(config_path: Path, env_path: Path, *, list_plan: bool = False) -> int:
+def check(
+    config_path: Path,
+    env_path: Path,
+    *,
+    list_plan: bool = False,
+    tls_cert: Path | None = None,
+    tls_key: Path | None = None,
+) -> int:
     """Validate both files without binding a port or spawning anything.
 
     Returns the process exit code. Everything goes to **stderr**, including the plan: the
@@ -278,8 +310,19 @@ def check(config_path: Path, env_path: Path, *, list_plan: bool = False) -> int:
     # above never log one -- `secrets.load` logs paths and modes only, asserted by test.
     install_redaction(store)
 
+    # Loaded, not just stat'ed: a key that does not match its certificate is the mistake
+    # that actually happens, and only `load_cert_chain` catches it.
+    try:
+        tls = tls_context(tls_cert, tls_key)
+    except TlsError as refusal:
+        print(str(refusal), file=sys.stderr)
+        return EXIT_REFUSED
+
     print(f"config: {config_path}", file=sys.stderr)
     print(f"secrets: {_describe_sources(config, env_path, store)}", file=sys.stderr)
+    # Only when on, like the brand line below.
+    if tls is not None:
+        print(f"tls: {tls_cert}", file=sys.stderr)
     # Only when there is one. An unbranded gateway printing "brand: MCP Gateway" is a line
     # that carries no information and has to be read past every time.
     if config.branding.customised:
@@ -374,6 +417,8 @@ async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) ->
     # `websockets` logs the request line, query string and all, at DEBUG.
     access_key = resolve_access_key(store)
     install_redaction(store, extra=[access_key] if access_key else [])
+    # Before the backends start, so a bad certificate costs nothing to find out about.
+    tls = tls_context(args.tls_cert, args.tls_key)
 
     # Before the bind, so the name in the log is the name on the window when someone
     # correlates the two.
@@ -395,6 +440,7 @@ async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) ->
     await gateway.start(
         access_key=access_key,
         allow_unauthenticated=unauthenticated_bind_allowed(),
+        tls=tls,
     )
     # After `start`, never before: with `--port 0` the port does not exist until the socket
     # is bound, and a file appearing with the wrong number in it is worse than no file. Its
@@ -424,9 +470,9 @@ def run() -> None:
     `KeyboardInterrupt` is swallowed rather than allowed to print a traceback: Ctrl+C is
     how a foreground daemon is meant to be stopped, and a stack trace says otherwise.
 
-    The two startup refusals become `SystemExit(2)` -- argparse's own code for "you asked
-    for something I will not do" -- because both are configuration the operator must fix,
-    and neither ever reaches a client.
+    The startup refusals become `SystemExit(2)` -- argparse's own code for "you asked
+    for something I will not do" -- because each is configuration the operator must fix,
+    and none ever reaches a client.
     """
     parser = build_parser()
     args = parser.parse_args()
@@ -434,14 +480,22 @@ def run() -> None:
     config_path, env_path = resolve_paths(args)
 
     if args.check or args.list_plan:
-        raise SystemExit(check(config_path, env_path, list_plan=args.list_plan))
+        raise SystemExit(
+            check(
+                config_path,
+                env_path,
+                list_plan=args.list_plan,
+                tls_cert=args.tls_cert,
+                tls_key=args.tls_key,
+            )
+        )
 
     try:
         asyncio.run(_serve(args, config_path, env_path))
     except (ConfigError, SecretError) as refusal:
         logger.error("%s", refusal)
         raise SystemExit(EXIT_REFUSED) from None
-    except UnauthenticatedBindError as refusal:
+    except (UnauthenticatedBindError, TlsError) as refusal:
         logger.error("%s", refusal)
         raise SystemExit(EXIT_REFUSED) from None
     except KeyboardInterrupt:

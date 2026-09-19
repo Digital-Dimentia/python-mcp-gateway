@@ -166,6 +166,7 @@ async def daemon(
     port: int = 0,
     access_key: str | None = None,
     allow_unauthenticated: bool = False,
+    tls: Any = None,
 ) -> Harness:
     """Write both config files into `tmp_path` and start a daemon.
 
@@ -192,5 +193,7 @@ async def daemon(
         host=host,
         port=port,
     )
-    await gateway.start(access_key=access_key, allow_unauthenticated=allow_unauthenticated)
+    await gateway.start(
+        access_key=access_key, allow_unauthenticated=allow_unauthenticated, tls=tls
+    )
     return Harness(gateway, access_key)

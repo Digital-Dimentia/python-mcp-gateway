@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import ssl
 from pathlib import Path
 from typing import Any
 
@@ -679,7 +680,13 @@ class Gateway:
     def make_admin_connection(self, link: ClientLink) -> AdminConnection:
         return AdminConnection(link, self)
 
-    async def start(self, *, access_key: str | None = None, allow_unauthenticated: bool = False) -> None:
+    async def start(
+        self,
+        *,
+        access_key: str | None = None,
+        allow_unauthenticated: bool = False,
+        tls: ssl.SSLContext | None = None,
+    ) -> None:
         """Bring backends up, **then** bind the socket.
 
         In that order deliberately: the first client to attach should find a warm pool, and
@@ -697,6 +704,7 @@ class Gateway:
             port=self.port,
             access_key=access_key,
             allow_unauthenticated=allow_unauthenticated,
+            tls=tls,
         )
         await self.server.start()
 

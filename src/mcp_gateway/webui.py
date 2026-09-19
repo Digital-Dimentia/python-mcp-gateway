@@ -236,7 +236,7 @@ def _response(status: HTTPStatus, body: bytes, content_type: str) -> Response:
     return Response(int(status), status.phrase, headers, body)
 
 
-def url(host: str, port: int, key: str | None = None) -> str:
+def url(host: str, port: int, key: str | None = None, *, tls: bool = False) -> str:
     """The URL to print at startup. Carries the key only when there is one.
 
     A key in a URL is the carrier `transport_ws` already documents as the wrong one on
@@ -248,7 +248,8 @@ def url(host: str, port: int, key: str | None = None) -> str:
     suffix = f"?key={key}" if key else ""
     # The trailing slash is canonical: `/ui` answers with a 308 to here, so printing the
     # redirect target costs one round trip less and does not put the key on the wire twice.
-    return f"http://{display}:{port}{UI_PATH}/{suffix}"
+    scheme = "https" if tls else "http"
+    return f"{scheme}://{display}:{port}{UI_PATH}/{suffix}"
 
 
 def describe() -> dict[str, Any]:
