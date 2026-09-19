@@ -112,7 +112,7 @@ def test_order_is_the_files_order() -> None:
         ("servers:\n  a:\n    command: x\n    typo: 1\n", "unknown key"),
         ("defaults:\n  typo: 1\nservers:\n  a:\n    command: x\n", "unknown key"),
         ("typo: 1\nservers: {}\n", "unknown key"),
-        ("servers:\n  a:\n    args: []\n", "'command' is required"),
+        ("servers:\n  a:\n    args: []\n", "'command' or 'url' is required"),
         ("defaults: {}\n", "'servers' is required"),
         ("", "empty catalogue"),
         ("version: 2\nservers: {}\n", "not supported"),

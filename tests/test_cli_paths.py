@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from mcp_gateway import cli
 
 SECRET = "ghp_supersecretvalue"
@@ -149,3 +151,21 @@ def test_the_module_is_runnable_as_a_script(tmp_path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     # Proof it got as far as `check()` rather than falling off the end of an import.
     assert "1 enabled server(s)" in result.stdout + result.stderr
+
+
+def test_host_and_port_fall_back_to_the_environment(monkeypatch) -> None:
+    """What the Containerfile and the remote compose example set instead of flags."""
+    monkeypatch.setenv(cli.HOST_ENV, "0.0.0.0")
+    monkeypatch.setenv(cli.PORT_ENV, "9100")
+    args = cli.build_parser().parse_args([])
+    assert (args.host, args.port) == ("0.0.0.0", 9100)
+    # A flag still wins, so `docker run image --host 127.0.0.1` works too.
+    args = cli.build_parser().parse_args(["--host", "127.0.0.1", "--port", "1"])
+    assert (args.host, args.port) == ("127.0.0.1", 1)
+
+
+def test_a_port_from_the_environment_that_is_not_a_port_is_refused(monkeypatch) -> None:
+    monkeypatch.setenv(cli.PORT_ENV, "eighty")
+    with pytest.raises(SystemExit) as caught:
+        cli.build_parser()
+    assert "MCP_GATEWAY_PORT" in str(caught.value)

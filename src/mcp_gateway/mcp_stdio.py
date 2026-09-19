@@ -163,58 +163,28 @@ class MCPProtocolError(RuntimeError):
 
 
 @dataclass
-class MCPStdioClient:
-    """JSON-RPC client speaking to an MCP server over the subprocess's stdio.
+class MCPClient:
+    """An MCP client session: JSON-RPC over some transport, with the transport left open.
 
     MCP is bidirectional: the server may send requests and notifications of its
-    own at any time, not only responses to ours. A background read loop consumes
-    every stdout message and routes it by shape, so nothing is dropped and the
+    own at any time, not only responses to ours. Every inbound message goes through
+    `_handle_message`, which routes it by shape, so nothing is dropped and the
     server never blocks waiting on a request we ignored.
 
-    **The read loop answers nothing itself.** Each server request is handled in a
+    **The inbound path answers nothing itself.** Each server request is handled in a
     task of its own, because a handler may wait on a human — `elicitation/create`
-    does — and a read loop parked inside one would stop reading everything else on
+    does — and a reader parked inside one would stop reading everything else on
     the connection, including the response to the call that provoked it.
+
+    DIVERGENCE FROM THE TEMPLATE (5 of 5). Upstream was one class, stdio all the way
+    down. The gateway also reaches backends over Streamable HTTP (`mcp_http.py`), and
+    everything above the byte stream -- ids, pending futures, cancellation, the
+    handshake, pagination, server requests -- is identical there. So the session is
+    this class, and a transport is a subclass supplying `start`, `stop` and `_write`
+    and feeding what it reads to `_handle_message`.
     """
 
-    command: Sequence[str]
     request_timeout: float = 30.0
-    #: Environment variables for the subprocess. How they combine with this process's
-    #: own environment is decided by `env_replace`.
-    env: Mapping[str, str] | None = None
-    #: DIVERGENCE FROM THE TEMPLATE (1 of 3). Whether `env` **replaces** the environment
-    #: rather than overlaying it.
-    #:
-    #: Upstream had two states -- `None` meaning inherit everything, a mapping meaning
-    #: overlay -- and defended that with: a server command almost always needs `PATH` and
-    #: `HOME`, and it is not a sandbox boundary either way, because whoever supplies `env`
-    #: also supplies `command`.
-    #:
-    #: **That last clause is exactly what is different here, and it is the whole product.**
-    #: The operator writes one file holding every credential for every backend, and the
-    #: claim being made is that each backend receives only its own. Inherit the parent
-    #: environment and the Slack backend gets `GITHUB_TOKEN` the moment the operator
-    #: exported it in the shell that started the daemon -- and the consolidation claim is
-    #: simply false. A daemon's parent environment is also whatever launchd or a login
-    #: shell handed it, which routinely includes `ANTHROPIC_API_KEY`, AWS credentials and
-    #: `SSH_AUTH_SOCK`, and it persists for weeks.
-    #:
-    #: So there is a third state. `backend.py` builds a complete environment -- a base
-    #: allowlist, the server's `env_passthrough`, then its own resolved `env` -- and passes
-    #: it with `env_replace=True`. The default stays `False` so the two-state behaviour
-    #: above is unchanged for any other caller.
-    env_replace: bool = False
-    #: DIVERGENCE FROM THE TEMPLATE (4 of 4). Working directory for the subprocess.
-    #:
-    #: Upstream had no such field: every server it launched was named by a client that had
-    #: already chosen where it ran. Here `servers.yaml` names a `cwd` per backend, and the
-    #: obvious alternative -- chdir'ing this process -- is not available, because the
-    #: daemon is shared by every backend and by the socket it serves.
-    #:
-    #: `None` means "inherit the daemon's", which is `create_subprocess_exec`'s own
-    #: default. The directory is **not** created: a `cwd` that does not exist is a
-    #: configuration error worth a clear failure at startup, not something to paper over.
-    cwd: str | None = None
     on_server_request: ServerRequestHandler | None = field(default=None)
     on_notification: NotificationHandler | None = field(default=None)
     #: What `initialize` will promise this server. Empty by default: a client
@@ -223,20 +193,11 @@ class MCPStdioClient:
     client_capabilities: MCPClientCapabilities = field(default=MCPClientCapabilities())
 
     # Bare assignments (no annotation) stay class attributes, not fields.
-    _STDERR_CHUNK = 4096
-    # asyncio caps stream readers at 64 KiB by default, which a large
-    # resources/read response can exceed. Raise it so whole messages fit.
-    _STREAM_LIMIT = 8 * 1024 * 1024
     # Cursor pagination is driven entirely by the server, so a broken or hostile
     # one can keep handing out cursors forever. Bound the walk and fail loudly.
     _MAX_LIST_PAGES = 100
-    # Shutdown budget, per the MCP stdio shutdown sequence: how long a server
-    # gets to exit on EOF before SIGTERM, and after SIGTERM before SIGKILL.
-    _STOP_STDIN_TIMEOUT = 2.0
-    _STOP_TERMINATE_TIMEOUT = 2.0
 
     def __post_init__(self) -> None:
-        self._proc: asyncio.subprocess.Process | None = None
         # The version both sides settled on, set by initialize() and None until
         # then. A handshake that fails negotiation leaves it None.
         self.protocol_version: str | None = None
@@ -247,117 +208,26 @@ class MCPStdioClient:
         self._id = 0
         self._write_lock = asyncio.Lock()
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
-        self._stderr_task: asyncio.Task[None] | None = None
-        self._stdout_task: asyncio.Task[None] | None = None
         # One task per server request in flight. They are not awaited by the read
         # loop -- see `_handle_message` -- so something has to hold a reference or
         # the event loop may garbage-collect a running task mid-answer.
         self._server_requests: set[asyncio.Task[None]] = set()
 
+    # ------------------------------------------------------------------
+    # Transport: what a subclass supplies
+    # ------------------------------------------------------------------
+
     async def start(self) -> None:
-        if self._proc is not None:
-            return
-        self._proc = await asyncio.create_subprocess_exec(
-            *self.command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            limit=self._STREAM_LIMIT,
-            env=self._child_environment(),
-            cwd=self.cwd,
-        )
-        self._stdout_task = asyncio.create_task(self._read_loop(self._proc))
-        self._stderr_task = asyncio.create_task(self._drain_stderr(self._proc))
-
-    def _child_environment(self) -> dict[str, str] | None:
-        """The subprocess's environment. `None` means "inherit this process's".
-
-        Three states, not two. See the `env_replace` field for why the third exists.
-        """
-        if self.env is None:
-            return None
-        if self.env_replace:
-            return dict(self.env)
-        return {**os.environ, **self.env}
+        raise NotImplementedError
 
     async def stop(self) -> None:
-        proc = self._proc
-        if proc is None:
-            return
-        # Before the subprocess goes: a handler still waiting on a human is waiting
-        # for a session that is being torn down, and holding it open would spend
-        # both shutdown timeouts on an answer that has nowhere left to go.
-        await self._cancel_server_requests()
-        try:
-            await self._shutdown_process(proc)
-        finally:
-            # The read loop is cancelled only after the process is gone, so the
-            # server's final stdout output is still consumed on the way out.
-            await self._cancel_task("_stdout_task")
-            await self._cancel_task("_stderr_task")
-            # Again, and this is the call that actually guarantees the set is empty:
-            # the read loop was still running during the shutdown above, so a server
-            # getting one last request out would have been tracked after the first
-            # sweep. Nothing can create one now.
-            await self._cancel_server_requests()
-            self._fail_pending(MCPProtocolError("MCP process stopped"))
-            self._proc = None
+        raise NotImplementedError
 
-    async def _shutdown_process(self, proc: asyncio.subprocess.Process) -> None:
-        """Shut the server down the way the MCP stdio transport prescribes.
+    async def _write(self, payload: dict[str, Any]) -> None:
+        """Put one JSON-RPC message on the wire, or raise `MCPProtocolError`/`OSError`."""
+        raise NotImplementedError
 
-        Close the server's stdin, wait for it to exit on EOF, escalate to
-        SIGTERM, wait again, then SIGKILL. Starting at SIGTERM would signal
-        every server that shuts down cleanly on EOF -- which is most of them,
-        and is the documented contract they are written against.
-        """
-        if proc.returncode is not None:
-            return
-
-        await self._close_stdin(proc)
-        if await self._wait_for_exit(proc, self._STOP_STDIN_TIMEOUT):
-            return
-
-        if self._signal(proc, "terminate") and await self._wait_for_exit(
-            proc, self._STOP_TERMINATE_TIMEOUT
-        ):
-            return
-
-        self._signal(proc, "kill")
-        await proc.wait()
-
-    async def _close_stdin(self, proc: asyncio.subprocess.Process) -> None:
-        """Close the server's stdin and wait for the pipe to actually shut."""
-        stdin = proc.stdin
-        if stdin is None:
-            return
-        try:
-            if not stdin.is_closing():
-                stdin.close()
-            await asyncio.wait_for(stdin.wait_closed(), timeout=self._STOP_STDIN_TIMEOUT)
-        except Exception:
-            # Best-effort: a broken pipe here just means the server is already
-            # gone, and nothing about it should stop the rest of the shutdown.
-            logger.debug("Closing MCP stdin did not complete cleanly", exc_info=True)
-
-    @staticmethod
-    async def _wait_for_exit(proc: asyncio.subprocess.Process, timeout: float) -> bool:
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return False
-        return True
-
-    @staticmethod
-    def _signal(proc: asyncio.subprocess.Process, action: str) -> bool:
-        """Send SIGTERM/SIGKILL, tolerating a process reaped in the meantime."""
-        try:
-            getattr(proc, action)()
-        except ProcessLookupError:
-            return False
-        return True
-
-    async def __aenter__(self) -> "MCPStdioClient":
+    async def __aenter__(self) -> "MCPClient":
         await self.start()
         return self
 
@@ -770,44 +640,9 @@ class MCPStdioClient:
             raise MCPProtocolError(f"Invalid response for method {method}")
         return result
 
-    async def _write(self, payload: dict[str, Any]) -> None:
-        stdin = self._proc.stdin if self._proc is not None else None
-        # is_closing() covers the window inside stop() where stdin has been
-        # closed but the process has not been reaped yet.
-        if stdin is None or stdin.is_closing():
-            raise MCPProtocolError("MCP process not running")
-        stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
-        await stdin.drain()
-
     # ------------------------------------------------------------------
     # Inbound
     # ------------------------------------------------------------------
-
-    async def _read_loop(self, proc: asyncio.subprocess.Process) -> None:
-        """Consume every stdout message for the life of the subprocess."""
-        stream = proc.stdout
-        if stream is None:
-            return
-        reason = "MCP process closed stdout"
-        try:
-            while True:
-                line = await stream.readline()
-                if not line:
-                    break
-                try:
-                    message = json.loads(line.decode("utf-8").strip())
-                except json.JSONDecodeError:
-                    logger.debug("Skipping non-JSON MCP stdout line")
-                    continue
-                if not isinstance(message, dict):
-                    continue
-                await self._handle_message(message)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.debug("MCP read loop failed", exc_info=True)
-            reason = f"MCP read loop failed: {exc}"
-        self._fail_pending(MCPProtocolError(reason))
 
     async def _handle_message(self, message: dict[str, Any]) -> None:
         method = message.get("method")
@@ -927,6 +762,243 @@ class MCPStdioClient:
             if not future.done():
                 future.set_exception(exc)
 
+    async def _cancel_server_requests(self) -> None:
+        """Abandon every server request still being answered.
+
+        The server is told nothing, because there is nothing useful to tell it: it
+        is about to lose the connection either way, and a reply written into a
+        closing stdin is no better than silence.
+        """
+        # A snapshot, and the live set is left alone: each task's done callback
+        # discards itself from it, and awaiting below is exactly when those callbacks
+        # run — iterating the set itself would change size mid-loop. Emptying it here
+        # instead would strand a task created after this line with nothing tracking it.
+        tasks = tuple(self._server_requests)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 -- logged; one handler must not strand the rest
+                logger.debug("MCP server request handler failed on shutdown", exc_info=True)
+
+    async def _cancel_task(self, attribute: str) -> None:
+        task: asyncio.Task[None] | None = getattr(self, attribute)
+        setattr(self, attribute, None)
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+@dataclass
+class MCPStdioClient(MCPClient):
+    """An MCP session over a subprocess's stdin and stdout.
+
+    A background read loop consumes every stdout message for the life of the process
+    and hands each to `_handle_message`; stderr is drained to the debug log so its
+    pipe can never fill and wedge the server.
+    """
+
+    # kw_only because the session's own fields, all defaulted, come first -- and every
+    # caller already names it.
+    command: Sequence[str] = field(kw_only=True)
+    #: Environment variables for the subprocess. How they combine with this process's
+    #: own environment is decided by `env_replace`.
+    env: Mapping[str, str] | None = None
+    #: DIVERGENCE FROM THE TEMPLATE (1 of 3). Whether `env` **replaces** the environment
+    #: rather than overlaying it.
+    #:
+    #: Upstream had two states -- `None` meaning inherit everything, a mapping meaning
+    #: overlay -- and defended that with: a server command almost always needs `PATH` and
+    #: `HOME`, and it is not a sandbox boundary either way, because whoever supplies `env`
+    #: also supplies `command`.
+    #:
+    #: **That last clause is exactly what is different here, and it is the whole product.**
+    #: The operator writes one file holding every credential for every backend, and the
+    #: claim being made is that each backend receives only its own. Inherit the parent
+    #: environment and the Slack backend gets `GITHUB_TOKEN` the moment the operator
+    #: exported it in the shell that started the daemon -- and the consolidation claim is
+    #: simply false. A daemon's parent environment is also whatever launchd or a login
+    #: shell handed it, which routinely includes `ANTHROPIC_API_KEY`, AWS credentials and
+    #: `SSH_AUTH_SOCK`, and it persists for weeks.
+    #:
+    #: So there is a third state. `backend.py` builds a complete environment -- a base
+    #: allowlist, the server's `env_passthrough`, then its own resolved `env` -- and passes
+    #: it with `env_replace=True`. The default stays `False` so the two-state behaviour
+    #: above is unchanged for any other caller.
+    env_replace: bool = False
+    #: DIVERGENCE FROM THE TEMPLATE (4 of 4). Working directory for the subprocess.
+    #:
+    #: Upstream had no such field: every server it launched was named by a client that had
+    #: already chosen where it ran. Here `servers.yaml` names a `cwd` per backend, and the
+    #: obvious alternative -- chdir'ing this process -- is not available, because the
+    #: daemon is shared by every backend and by the socket it serves.
+    #:
+    #: `None` means "inherit the daemon's", which is `create_subprocess_exec`'s own
+    #: default. The directory is **not** created: a `cwd` that does not exist is a
+    #: configuration error worth a clear failure at startup, not something to paper over.
+    cwd: str | None = None
+
+    # Bare assignments (no annotation) stay class attributes, not fields.
+    _STDERR_CHUNK = 4096
+    # asyncio caps stream readers at 64 KiB by default, which a large
+    # resources/read response can exceed. Raise it so whole messages fit.
+    _STREAM_LIMIT = 8 * 1024 * 1024
+    # Shutdown budget, per the MCP stdio shutdown sequence: how long a server
+    # gets to exit on EOF before SIGTERM, and after SIGTERM before SIGKILL.
+    _STOP_STDIN_TIMEOUT = 2.0
+    _STOP_TERMINATE_TIMEOUT = 2.0
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self._proc: asyncio.subprocess.Process | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
+        self._stdout_task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        if self._proc is not None:
+            return
+        self._proc = await asyncio.create_subprocess_exec(
+            *self.command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=self._STREAM_LIMIT,
+            env=self._child_environment(),
+            cwd=self.cwd,
+        )
+        self._stdout_task = asyncio.create_task(self._read_loop(self._proc))
+        self._stderr_task = asyncio.create_task(self._drain_stderr(self._proc))
+
+    def _child_environment(self) -> dict[str, str] | None:
+        """The subprocess's environment. `None` means "inherit this process's".
+
+        Three states, not two. See the `env_replace` field for why the third exists.
+        """
+        if self.env is None:
+            return None
+        if self.env_replace:
+            return dict(self.env)
+        return {**os.environ, **self.env}
+
+    async def stop(self) -> None:
+        proc = self._proc
+        if proc is None:
+            return
+        # Before the subprocess goes: a handler still waiting on a human is waiting
+        # for a session that is being torn down, and holding it open would spend
+        # both shutdown timeouts on an answer that has nowhere left to go.
+        await self._cancel_server_requests()
+        try:
+            await self._shutdown_process(proc)
+        finally:
+            # The read loop is cancelled only after the process is gone, so the
+            # server's final stdout output is still consumed on the way out.
+            await self._cancel_task("_stdout_task")
+            await self._cancel_task("_stderr_task")
+            # Again, and this is the call that actually guarantees the set is empty:
+            # the read loop was still running during the shutdown above, so a server
+            # getting one last request out would have been tracked after the first
+            # sweep. Nothing can create one now.
+            await self._cancel_server_requests()
+            self._fail_pending(MCPProtocolError("MCP process stopped"))
+            self._proc = None
+
+    async def _shutdown_process(self, proc: asyncio.subprocess.Process) -> None:
+        """Shut the server down the way the MCP stdio transport prescribes.
+
+        Close the server's stdin, wait for it to exit on EOF, escalate to
+        SIGTERM, wait again, then SIGKILL. Starting at SIGTERM would signal
+        every server that shuts down cleanly on EOF -- which is most of them,
+        and is the documented contract they are written against.
+        """
+        if proc.returncode is not None:
+            return
+
+        await self._close_stdin(proc)
+        if await self._wait_for_exit(proc, self._STOP_STDIN_TIMEOUT):
+            return
+
+        if self._signal(proc, "terminate") and await self._wait_for_exit(
+            proc, self._STOP_TERMINATE_TIMEOUT
+        ):
+            return
+
+        self._signal(proc, "kill")
+        await proc.wait()
+
+    async def _close_stdin(self, proc: asyncio.subprocess.Process) -> None:
+        """Close the server's stdin and wait for the pipe to actually shut."""
+        stdin = proc.stdin
+        if stdin is None:
+            return
+        try:
+            if not stdin.is_closing():
+                stdin.close()
+            await asyncio.wait_for(stdin.wait_closed(), timeout=self._STOP_STDIN_TIMEOUT)
+        except Exception:
+            # Best-effort: a broken pipe here just means the server is already
+            # gone, and nothing about it should stop the rest of the shutdown.
+            logger.debug("Closing MCP stdin did not complete cleanly", exc_info=True)
+
+    @staticmethod
+    async def _wait_for_exit(proc: asyncio.subprocess.Process, timeout: float) -> bool:
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return False
+        return True
+
+    @staticmethod
+    def _signal(proc: asyncio.subprocess.Process, action: str) -> bool:
+        """Send SIGTERM/SIGKILL, tolerating a process reaped in the meantime."""
+        try:
+            getattr(proc, action)()
+        except ProcessLookupError:
+            return False
+        return True
+
+    async def _write(self, payload: dict[str, Any]) -> None:
+        stdin = self._proc.stdin if self._proc is not None else None
+        # is_closing() covers the window inside stop() where stdin has been
+        # closed but the process has not been reaped yet.
+        if stdin is None or stdin.is_closing():
+            raise MCPProtocolError("MCP process not running")
+        stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
+        await stdin.drain()
+
+    async def _read_loop(self, proc: asyncio.subprocess.Process) -> None:
+        """Consume every stdout message for the life of the subprocess."""
+        stream = proc.stdout
+        if stream is None:
+            return
+        reason = "MCP process closed stdout"
+        try:
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                try:
+                    message = json.loads(line.decode("utf-8").strip())
+                except json.JSONDecodeError:
+                    logger.debug("Skipping non-JSON MCP stdout line")
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                await self._handle_message(message)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("MCP read loop failed", exc_info=True)
+            reason = f"MCP read loop failed: {exc}"
+        self._fail_pending(MCPProtocolError(reason))
+
     async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
         """Continuously read the server's stderr so its pipe buffer cannot fill.
 
@@ -966,36 +1038,3 @@ class MCPStdioClient:
         text = line.decode("utf-8", errors="replace").rstrip()
         if text:
             logger.debug("MCP server stderr: %s", text)
-
-    async def _cancel_server_requests(self) -> None:
-        """Abandon every server request still being answered.
-
-        The server is told nothing, because there is nothing useful to tell it: it
-        is about to lose the connection either way, and a reply written into a
-        closing stdin is no better than silence.
-        """
-        # A snapshot, and the live set is left alone: each task's done callback
-        # discards itself from it, and awaiting below is exactly when those callbacks
-        # run — iterating the set itself would change size mid-loop. Emptying it here
-        # instead would strand a task created after this line with nothing tracking it.
-        tasks = tuple(self._server_requests)
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception:  # noqa: BLE001 -- logged; one handler must not strand the rest
-                logger.debug("MCP server request handler failed on shutdown", exc_info=True)
-
-    async def _cancel_task(self, attribute: str) -> None:
-        task: asyncio.Task[None] | None = getattr(self, attribute)
-        setattr(self, attribute, None)
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass

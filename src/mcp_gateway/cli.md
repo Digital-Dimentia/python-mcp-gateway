@@ -19,6 +19,15 @@ caller's cwd would work in every development run and fail in the one deployment 
 daemon exists for, with the confusing symptom that every backend is skipped for a missing
 secret that is plainly sitting in the file.
 
+`--host` and `--port` fall back to `$MCP_GATEWAY_HOST` and `$MCP_GATEWAY_PORT`, for the
+same deployments that cannot pass flags. The container is the one that needs it: the
+Containerfile sets `MCP_GATEWAY_HOST=0.0.0.0`, because inside a container loopback is
+reachable only from the container, and remote mode sets it back to `127.0.0.1` under host
+networking. An environment variable is something a compose file can set without replacing
+the entrypoint. A port that does not parse stops the daemon instead of falling back to
+8765: an SSH forward aimed at the port you asked for would otherwise find nothing, and
+nothing in the log would say why.
+
 `default_config_path` and `default_env_path` both take an `environ` parameter defaulting
 to `os.environ`. That is the same testability trick `transport_ws.py` uses for the access
 key: precedence can be asserted without monkeypatching the running process.

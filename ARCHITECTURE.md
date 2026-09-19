@@ -46,7 +46,8 @@ flowchart TB
 | [`gateway.py`](src/mcp_gateway/gateway.md) | the composition root; everything shared |
 | [`supervisor.py`](src/mcp_gateway/supervisor.md) | the shared backend pool, and reload |
 | [`backend.py`](src/mcp_gateway/backend.md) | one backend's lifetime, and its curated environment |
-| [`mcp_stdio.py`](src/mcp_gateway/mcp_stdio.md) | the MCP client over subprocess stdio |
+| [`mcp_stdio.py`](src/mcp_gateway/mcp_stdio.md) | the MCP client session, and its subprocess-stdio transport |
+| [`mcp_http.py`](src/mcp_gateway/mcp_http.md) | the same session over Streamable HTTP, for a backend named by `url` |
 | [`catalogue.py`](src/mcp_gateway/catalogue.md) | the merged, namespaced listing |
 | [`router.py`](src/mcp_gateway/router.md) | forwards one call, translates what comes back |
 | [`admin.py`](src/mcp_gateway/admin.md) | the `gateway__*` meta-tools, shared with `/admin` |

@@ -138,7 +138,8 @@ def is_admin_tool(public_name: str) -> bool:
 def describe_backend(backend: Backend) -> dict[str, Any]:
     """One backend, as both surfaces report it.
 
-    `env_keys` is the *names* of the variables from the server's `env` block. A
+    `env_keys` is the *names* of the variables from the server's `env` block, and
+    `header_keys` the names of a `url` backend's headers. A
     `ServerSpec` holds templates rather than values, so there is no way for a value to
     reach this payload even by accident -- which is the point of that split.
     """
@@ -149,6 +150,9 @@ def describe_backend(backend: Backend) -> dict[str, Any]:
         "required": spec.required,
         "status": backend.status.value,
         "description": spec.description,
+        "transport": spec.transport,
+        "url": spec.url,
+        "header_keys": spec.header_keys,
         "command": spec.command,
         "args": list(spec.args),
         "cwd": spec.cwd,

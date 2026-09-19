@@ -17,7 +17,7 @@ import { boot } from './harness.mjs';
 
 //: Every key `admin.backend.add` accepts, which is what the editor is a form over.
 const SPEC_KEYS = [
-  'command', 'args', 'env', 'env_passthrough', 'cwd',
+  'command', 'url', 'args', 'env', 'env_passthrough', 'headers', 'cwd',
   'description', 'timeout', 'startup_timeout', 'enabled', 'required',
 ];
 
@@ -73,7 +73,7 @@ describe('the server editor', () => {
     const ids = [...document.querySelectorAll('#server-form input[type="checkbox"]')].map((b) => b.id);
     assert.equal(new Set(ids).size, ids.length);
     // Every other field is still stacked.
-    assert.equal(document.querySelectorAll('#server-form .field').length - ticks.length, 8);
+    assert.equal(document.querySelectorAll('#server-form .field').length - ticks.length, 10);
   });
 
   it("prefers the file's own defaults: block to the built-in fallback", () => {

@@ -114,7 +114,10 @@ function serverRow(state, backend) {
   const name = backend.name;
   const missing = state.missing[name] || [];
   const spec = state.config.servers?.[name] || {};
-  const command = [backend.command, ...(backend.args || [])].filter(Boolean).join(' ');
+  //: What it runs, or where it is: a url backend has no command, and its url is the line
+  //: that says which server this is.
+  const command = backend.url
+    || [backend.command, ...(backend.args || [])].filter(Boolean).join(' ');
 
   const label = el('span', { class: 'about-name', text: name });
   const description = backend.description || spec.description;

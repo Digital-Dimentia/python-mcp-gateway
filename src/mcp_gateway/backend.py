@@ -41,7 +41,13 @@ from enum import Enum
 from typing import Any
 
 from mcp_gateway.config import ENV_MODE_INHERIT, ServerSpec
-from mcp_gateway.mcp_stdio import MCPClientCapabilities, MCPProtocolError, MCPStdioClient
+from mcp_gateway.mcp_http import MCPHttpClient
+from mcp_gateway.mcp_stdio import (
+    MCPClient,
+    MCPClientCapabilities,
+    MCPProtocolError,
+    MCPStdioClient,
+)
 from mcp_gateway.secrets import MissingSecret, SecretStore, expand_path, interpolate
 
 logger = logging.getLogger(__name__)
@@ -165,6 +171,44 @@ def resolve_env(spec: ServerSpec, store: SecretStore, *, environ: dict[str, str]
     return ResolvedEnv(values=values, missing=missing, resolved_keys=tuple(sorted(spec.env)))
 
 
+@dataclass
+class ResolvedHeaders:
+    """A `url` backend's request headers, plus what could not be resolved to build them."""
+
+    values: dict[str, str] = field(default_factory=dict)
+    missing: list[MissingSecret] = field(default_factory=list)
+    #: Names of headers whose resolved value would break the request -- a line break that
+    #: came out of the credential store, where `config.py` could not see it.
+    malformed: list[str] = field(default_factory=list)
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing and not self.malformed
+
+
+def resolve_headers(spec: ServerSpec, store: SecretStore) -> ResolvedHeaders:
+    """Build the request headers for a `url` backend. Never raises on a missing secret.
+
+    The HTTP counterpart of `resolve_env`, and deliberately a much smaller one: there is no
+    allowlist and no passthrough, because nothing about the daemon's own environment has
+    any business in a request to somebody else's server. The `headers` block is the whole
+    of what is sent.
+    """
+    values: dict[str, str] = {}
+    missing: list[MissingSecret] = []
+    malformed: list[str] = []
+    for key, template in spec.headers.items():
+        value = interpolate(
+            template, store, where=f"servers.{spec.name}.headers.{key}", missing=missing
+        )
+        # Checked after resolution: config.py refuses a line break in the template, but a
+        # value from gateway.env or a provider is only seen here. One would split the request.
+        if any(ch in value for ch in "\r\n\x00"):
+            malformed.append(key)
+        values[key] = value
+    return ResolvedHeaders(values=values, missing=missing, malformed=malformed)
+
+
 def resolve_cwd(spec: ServerSpec, store: SecretStore) -> str | None:
     """The working directory for this backend, `${VAR}`- and `~`-expanded."""
     if spec.cwd is None:
@@ -189,7 +233,7 @@ class Backend:
 
     status: BackendStatus = BackendStatus.STOPPED
     error: str | None = None
-    client: MCPStdioClient | None = None
+    client: MCPClient | None = None
     started_at: float | None = None
     restart_count: int = 0
     consecutive_failures: int = 0
@@ -311,26 +355,9 @@ class Backend:
         self.status = BackendStatus.STARTING
         self.error = None
 
-        resolved = resolve_env(self.spec, self.store)
-        if not resolved.complete:
-            return self._fail("; ".join(str(problem) for problem in resolved.missing))
-
-        try:
-            cwd = resolve_cwd(self.spec, self.store)
-        except ValueError as exc:
-            return self._fail(str(exc))
-
-        client = MCPStdioClient(
-            command=[self.spec.command, *self.spec.args],
-            request_timeout=self.spec.timeout,
-            env=resolved.values,
-            # The whole point. See the module docstring and the `env_replace` field.
-            env_replace=self.spec.env_mode != ENV_MODE_INHERIT,
-            on_server_request=self.on_server_request,
-            on_notification=self.on_notification,
-            client_capabilities=self.client_capabilities,
-            cwd=cwd,
-        )
+        client = self._http_client() if self.spec.url is not None else self._stdio_client()
+        if isinstance(client, str):
+            return self._fail(client)
 
         try:
             await asyncio.wait_for(self._handshake(client), timeout=self.spec.startup_timeout)
@@ -349,11 +376,61 @@ class Backend:
         self.consecutive_failures = 0
         self._retry_at = None
         logger.info(
-            "backend %r running (pid %s, MCP %s)", self.name, self.pid, client.protocol_version
+            "backend %r running (%s, MCP %s)",
+            self.name,
+            self.spec.url if self.spec.url is not None else f"pid {self.pid}",
+            client.protocol_version,
         )
         return True
 
-    async def _handshake(self, client: MCPStdioClient) -> None:
+    def _stdio_client(self) -> MCPStdioClient | str:
+        """The client for a backend that is a process, or why it cannot be built."""
+        resolved = resolve_env(self.spec, self.store)
+        if not resolved.complete:
+            return "; ".join(str(problem) for problem in resolved.missing)
+
+        try:
+            cwd = resolve_cwd(self.spec, self.store)
+        except ValueError as exc:
+            return str(exc)
+
+        return MCPStdioClient(
+            command=[self.spec.command, *self.spec.args],
+            request_timeout=self.spec.timeout,
+            env=resolved.values,
+            # The whole point. See the module docstring and the `env_replace` field.
+            env_replace=self.spec.env_mode != ENV_MODE_INHERIT,
+            on_server_request=self.on_server_request,
+            on_notification=self.on_notification,
+            client_capabilities=self.client_capabilities,
+            cwd=cwd,
+        )
+
+    def _http_client(self) -> MCPHttpClient | str:
+        """The client for a backend that is a URL, or why it cannot be built.
+
+        Same shape as the process case on purpose: a missing `${TOKEN}` in `headers` fails
+        the start with the same message a missing one in `env` does, so the UI and
+        `--check` report it identically. See `mcp_http.md`.
+        """
+        resolved = resolve_headers(self.spec, self.store)
+        if resolved.missing:
+            return "; ".join(str(problem) for problem in resolved.missing)
+        if resolved.malformed:
+            return (
+                f"header(s) {sorted(resolved.malformed)} resolved to a value containing a "
+                f"line break, which would split the request"
+            )
+        return MCPHttpClient(
+            url=self.spec.url,
+            headers=resolved.values,
+            request_timeout=self.spec.timeout,
+            on_server_request=self.on_server_request,
+            on_notification=self.on_notification,
+            client_capabilities=self.client_capabilities,
+        )
+
+    async def _handshake(self, client: MCPClient) -> None:
         """Spawn and negotiate, as one unit under `startup_timeout`.
 
         Timing the two together rather than separately is what the operator actually cares
@@ -363,7 +440,7 @@ class Backend:
         await client.start()
         await client.initialize()
 
-    async def _stop_client(self, client: MCPStdioClient) -> None:
+    async def _stop_client(self, client: MCPClient) -> None:
         try:
             await client.stop()
         except Exception as exc:  # pragma: no cover - teardown of an already-broken child
@@ -478,6 +555,8 @@ class Backend:
 
     @property
     def pid(self) -> int | None:
+        """The backend's process id, or `None` -- including always, for a `url` backend,
+        whose process is somebody else's."""
         proc = getattr(self.client, "_proc", None)
         return None if proc is None else proc.pid
 

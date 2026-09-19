@@ -71,6 +71,16 @@ servers:
     # `required: true` would make a missing POSTGRES_URL fatal instead of skipping this one
     # server. Use it where silent degradation is unacceptable.
 
+  # A server that is already running -- another container, a hosted endpoint -- is a `url`
+  # rather than a `command`, spoken to over MCP's Streamable HTTP. Its credential goes in
+  # `headers`, as a reference; `${...}` in the url itself is refused, because the url is
+  # displayed.
+  #
+  # search:
+  #   url: http://127.0.0.1:9001/mcp
+  #   headers:
+  #     Authorization: "Bearer ${SEARCH_TOKEN}"
+
   # A backend behind a corporate TLS-intercepting proxy needs the proxy variables from this
   # process's own environment. Name them; they are not inherited by default.
   #

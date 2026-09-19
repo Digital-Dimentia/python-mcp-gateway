@@ -77,6 +77,12 @@ servers:                       # required
     lazy: false                # default false; do not spawn until something needs it
     idle_ttl: 900              # default null; sleep after this long unused
     description: "GitHub issues and PRs"
+  search:
+    url: http://127.0.0.1:9001/mcp   # instead of command: a Streamable HTTP server
+    headers:                         # the url counterpart of env; templates only
+      Authorization: "Bearer ${SEARCH_TOKEN}"
+    timeout: 60.0                    # these, and the other keys below command's block,
+    enabled: true                    # mean what they mean for a process
 ```
 
 Server names are validated by [`naming.py`](naming.md): no `__`, no `/` or `:`, and
@@ -86,6 +92,27 @@ The `branding:` block is parsed by [`branding.py`](branding.md), which owns its 
 for the same reason `naming.py` owns server names: the refusals are about what the value
 will be *used for* — a path that must exist, a format the page can render, an identifier a
 client will put in its own config — and none of that is a fact about YAML.
+
+## `url` instead of `command`
+
+An entry names exactly one of `command` or `url`. A `url` entry is a Streamable HTTP
+server the gateway connects to rather than a process it spawns (see
+[`mcp_http.md`](mcp_http.md)). The keys that describe a process (`args`, `env`,
+`env_passthrough`, `env_mode`, `cwd`) are **refused** on it, not ignored. An `env`
+block on a URL backend means somebody expects a credential to reach a server that will
+never see it, and a silent skip would let them find out only when the server says 401.
+`headers` is the other direction's counterpart, and it is refused on a `command` entry for
+the same reason.
+
+`${VAR}` is refused in the `url` itself, and so is `user:password@`. The reason differs
+from `command`'s: nothing about a URL is world-readable, but the URL is **displayed**.
+`--list` prints it, `admin.status` returns it, the About screen shows it, and every
+connection failure logs it. A token in the URL would be published by the very tools that
+exist to check the plan. Credentials go in `headers`, which only ever reports its names.
+
+`defaults: env_mode` and `defaults: cwd` do not apply to a `url` entry, and are not refused
+there either. A defaults block is written once for the whole file, and having to repeat
+it per process entry to satisfy the URL ones would be wrong.
 
 ## `defaults:` is folded in, and also kept
 

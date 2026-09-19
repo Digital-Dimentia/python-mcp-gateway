@@ -89,6 +89,16 @@ GITHUB_TOKEN=ghp_...
 WS_ACCESS_KEY=...
 ```
 
+A server that is already running somewhere, such as another container or a hosted
+endpoint, is a `url` instead of a `command`, with its credential in `headers`:
+
+```yaml
+  search:
+    url: http://127.0.0.1:9001/mcp
+    headers:
+      Authorization: "Bearer ${SEARCH_TOKEN}"
+```
+
 To see exactly what will be launched, without opening the credential store:
 
 ```bash
@@ -231,6 +241,8 @@ daemon carries on as it was.
   sees another's credential, or yours.
 - `${VAR}` resolves from `gateway.env` only, never from the ambient environment.
 - Interpolation is refused in `command` and `args`: argv is world-readable through `ps`.
+  It is refused in a backend's `url` too, which is displayed; its credential goes in
+  `headers`, and only the header names are ever shown.
 - Every known secret value is scrubbed from every log record, at the root logger — so a
   backend that prints its own token to stderr is covered too.
 - Binding anything but loopback without an access key is refused, and binding it without

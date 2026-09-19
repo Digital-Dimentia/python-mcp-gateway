@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from mcp_gateway.backend import Backend, BackendStatus, resolve_env
+from mcp_gateway.backend import Backend, BackendStatus, resolve_env, resolve_headers
 from mcp_gateway.config import GatewayConfig, ServerSpec
 from mcp_gateway.mcp_stdio import MCPClientCapabilities
 from mcp_gateway.secrets import SecretStore
@@ -257,7 +257,10 @@ class Supervisor:
         a secret.
         """
         resolved = resolve_env(spec, store)
+        headers = resolve_headers(spec, store)
         material = [
+            spec.url or "",
+            "\x00".join(f"{k}={v}" for k, v in sorted(headers.values.items())),
             spec.command,
             "\x00".join(spec.args),
             spec.cwd or "",

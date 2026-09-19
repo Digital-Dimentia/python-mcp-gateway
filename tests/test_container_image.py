@@ -54,7 +54,41 @@ def test_the_containerfile_binds_all_interfaces_which_forces_a_key() -> None:
     without an access key -- which is the intended outcome, not an accident.
     """
     containerfile = (REPO_ROOT / "Containerfile").read_text()
-    assert '"--host", "0.0.0.0"' in containerfile
+    assert "MCP_GATEWAY_HOST=0.0.0.0" in containerfile
+    # Set by environment, not baked into the entrypoint, so remote mode can undo it.
+    assert 'ENTRYPOINT ["mcp-gateway"]' in containerfile
+
+
+def test_the_image_reads_its_config_from_a_mounted_directory() -> None:
+    """A directory, because the UI's save renames a new file over servers.yaml, which a
+    single bind-mounted file cannot take."""
+    containerfile = (REPO_ROOT / "Containerfile").read_text()
+    assert "MCP_GATEWAY_CONFIG=/config/servers.yaml" in containerfile
+    assert "VOLUME /config" in containerfile
+
+
+def test_the_remote_compose_example_is_keyless_loopback_on_the_host_network() -> None:
+    """The contract remote mode depends on: the desktop app sends no key, so the container
+    must bind the box's own loopback -- which only host networking makes it."""
+    from ruamel.yaml import YAML
+
+    from mcp_gateway.config import load
+
+    example = REPO_ROOT / "examples" / "remote-compose"
+    compose = YAML(typ="safe", pure=True).load((example / "compose.yaml").read_text())
+    gateway = compose["services"]["gateway"]
+    assert gateway["network_mode"] == "host"
+    assert gateway["environment"]["MCP_GATEWAY_HOST"] == "127.0.0.1"
+    assert "ports" not in gateway
+    assert "MCP_GATEWAY_WS_KEY" not in gateway["environment"]
+    assert any(v.endswith(":/config") for v in gateway["volumes"])
+
+    catalogue = load(example / "config" / "servers.yaml")
+    assert all(spec.url for spec in catalogue.servers.values())
+    env_example = (example / "config" / "gateway.env.example").read_text()
+    assert not any(
+        line.startswith("WS_ACCESS_KEY") for line in env_example.splitlines()
+    ), "a key would make the desktop app's keyless remote connection a 401"
 
 
 def test_the_launchd_job_is_a_valid_plist_and_holds_no_secret() -> None:

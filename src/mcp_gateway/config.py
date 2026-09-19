@@ -23,15 +23,18 @@ config -- goes through the identical code path with no branch and no second pars
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ruamel.yaml import YAML, YAMLError
 
 from mcp_gateway.branding import Branding, BrandingError
 from mcp_gateway.branding import DEFAULT as DEFAULT_BRANDING
 from mcp_gateway.branding import parse as parse_branding
+from mcp_gateway.mcp_http import RESERVED_HEADERS
 from mcp_gateway.naming import NamingError, validate_server_name
 from mcp_gateway.secret_providers import ProviderSpec, SecretProviderError
 from mcp_gateway.secret_providers import parse as parse_secret_providers
@@ -55,6 +58,8 @@ _DEFAULTS_KEYS = frozenset({"timeout", "startup_timeout", "env_mode", "cwd", "la
 _ENTRY_KEYS = frozenset(
     {
         "command",
+        "url",
+        "headers",
         "args",
         "env",
         "env_passthrough",
@@ -69,6 +74,20 @@ _ENTRY_KEYS = frozenset(
         "idle_ttl",
     }
 )
+
+#: The keys that describe a *process*, and so mean nothing on an entry that names a `url`.
+#: Refused there rather than ignored: an `env` block on a URL backend is somebody expecting
+#: a credential to reach a server that will never see it. See `config.md`.
+_STDIO_ONLY_KEYS = frozenset({"command", "args", "env", "env_passthrough", "env_mode", "cwd"})
+_HTTP_ONLY_KEYS = frozenset({"url", "headers"})
+
+#: How a backend is reached. A `str` rather than an enum so it serialises as itself over
+#: `/admin`, the same way `env_mode` does.
+TRANSPORT_STDIO = "stdio"
+TRANSPORT_HTTP = "http"
+
+#: RFC 9110's `token`: what a header field name may be made of.
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
 
 class ConfigError(ValueError):
@@ -85,7 +104,8 @@ class ServerSpec:
     """
 
     name: str
-    command: str
+    #: Empty for a backend reached by `url`; exactly one of the two is set.
+    command: str = ""
     args: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
     env_passthrough: tuple[str, ...] = ()
@@ -101,6 +121,21 @@ class ServerSpec:
     #: Seconds of inactivity after which the process is stopped, or `None` to keep it.
     #: The backend's *listings* survive the teardown, which is what makes it invisible.
     idle_ttl: float | None = None
+    #: A Streamable HTTP endpoint, instead of a process to spawn. Never carries a
+    #: credential -- `_parse_url` refuses one -- so it is as safe to show as `command`.
+    url: str | None = None
+    #: Request headers for a `url` backend, as templates: `Bearer ${TOKEN}`, never a value.
+    #: The HTTP counterpart of `env`, resolved at start by `backend.resolve_headers`.
+    headers: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def transport(self) -> str:
+        return TRANSPORT_HTTP if self.url is not None else TRANSPORT_STDIO
+
+    @property
+    def header_keys(self) -> list[str]:
+        """The header names this backend will be sent. Names only, like `env_keys`."""
+        return sorted(self.headers)
 
     @property
     def env_keys(self) -> list[str]:
@@ -222,8 +257,15 @@ def _parse_entry(name: str, raw: Any, defaults: dict[str, Any], *, where: str) -
     entry = _require(raw, what=f"server {name!r}", where=where)
     _reject_unknown(entry, _ENTRY_KEYS, where=where)
 
+    if "url" in entry:
+        return _parse_http_entry(name, entry, defaults, where=where)
+
+    stray = sorted(_HTTP_ONLY_KEYS & set(entry))
+    if stray:
+        raise ConfigError(f"{where}: {stray} only apply to a backend with a 'url'")
+
     if "command" not in entry:
-        raise ConfigError(f"{where}: 'command' is required")
+        raise ConfigError(f"{where}: 'command' or 'url' is required")
 
     command = _as_str(entry["command"], where=f"{where}.command")
     args = _as_str_tuple(entry.get("args"), where=f"{where}.args")
@@ -255,20 +297,97 @@ def _parse_entry(name: str, raw: Any, defaults: dict[str, Any], *, where: str) -
             where=f"{where}.env_mode",
         ),
         cwd=cwd,
-        timeout=_as_positive_float(
+        **_common(entry, defaults, where=where),
+    )
+
+
+def _common(entry: dict[str, Any], defaults: dict[str, Any], *, where: str) -> dict[str, Any]:
+    """The keys every backend has, however it is reached."""
+    return {
+        "timeout": _as_positive_float(
             entry.get("timeout", defaults.get("timeout", DEFAULT_TIMEOUT)), where=f"{where}.timeout"
         ),
-        startup_timeout=_as_positive_float(
+        "startup_timeout": _as_positive_float(
             entry.get("startup_timeout", defaults.get("startup_timeout", DEFAULT_STARTUP_TIMEOUT)),
             where=f"{where}.startup_timeout",
         ),
-        enabled=_as_bool(entry.get("enabled", True), where=f"{where}.enabled"),
-        required=_as_bool(entry.get("required", False), where=f"{where}.required"),
-        description=_as_str(entry.get("description", ""), where=f"{where}.description", allow_empty=True),
-        lazy=_as_bool(entry.get("lazy", defaults.get("lazy", False)), where=f"{where}.lazy"),
-        idle_ttl=_as_idle_ttl(
+        "enabled": _as_bool(entry.get("enabled", True), where=f"{where}.enabled"),
+        "required": _as_bool(entry.get("required", False), where=f"{where}.required"),
+        "description": _as_str(
+            entry.get("description", ""), where=f"{where}.description", allow_empty=True
+        ),
+        "lazy": _as_bool(entry.get("lazy", defaults.get("lazy", False)), where=f"{where}.lazy"),
+        "idle_ttl": _as_idle_ttl(
             entry.get("idle_ttl", defaults.get("idle_ttl")), where=f"{where}.idle_ttl"
         ),
+    }
+
+
+def _parse_url(value: Any, *, where: str) -> str:
+    """An `http` or `https` URL with a host, and nothing secret in it.
+
+    `${VAR}` is refused here for a different reason than in `command`: a URL is shown --
+    by `--list`, by `admin.status`, on the About screen -- and logged whenever the backend
+    cannot be reached, so a token interpolated into it would be published by the very
+    tools that exist to check the plan. `user:pass@` is refused for the same reason. A
+    credential goes in `headers`, which only ever reports its names.
+    """
+    url = _as_str(value, where=where)
+    if "${" in url:
+        raise ConfigError(
+            f"{where}: '${{...}}' is not interpolated in a url. The url is displayed and "
+            f"logged; put the credential in 'headers' instead."
+        )
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ConfigError(f"{where}: expected an http:// or https:// URL, got {url!r}")
+    if parts.username is not None or parts.password is not None:
+        raise ConfigError(
+            f"{where}: a url must not carry user:password. It is displayed and logged; "
+            f"send the credential in 'headers' instead."
+        )
+    if parts.fragment:
+        raise ConfigError(f"{where}: a url with a #fragment names nothing a server can see")
+    try:
+        parts.port
+    except ValueError as exc:
+        raise ConfigError(f"{where}: {exc}") from None
+    return url
+
+
+def _parse_headers(value: Any, *, where: str) -> dict[str, str]:
+    headers = _as_str_map(value, where=where)
+    seen: set[str] = set()
+    for name, template in headers.items():
+        if not _HEADER_NAME_RE.match(name):
+            raise ConfigError(f"{where}: {name!r} is not a valid header name")
+        if name.lower() in RESERVED_HEADERS:
+            raise ConfigError(
+                f"{where}.{name}: the gateway sets this header itself. "
+                f"Reserved: {sorted(RESERVED_HEADERS)}."
+            )
+        if name.lower() in seen:
+            raise ConfigError(f"{where}: {name!r} is named twice")
+        seen.add(name.lower())
+        if any(ch in template for ch in "\r\n\x00"):
+            raise ConfigError(f"{where}.{name}: a header value cannot contain a line break")
+    return headers
+
+
+def _parse_http_entry(
+    name: str, entry: dict[str, Any], defaults: dict[str, Any], *, where: str
+) -> ServerSpec:
+    stray = sorted(_STDIO_ONLY_KEYS & set(entry))
+    if stray:
+        raise ConfigError(
+            f"{where}: {stray} describe a process, and this backend is a url. "
+            f"A credential for it goes in 'headers'."
+        )
+    return ServerSpec(
+        name=name,
+        url=_parse_url(entry["url"], where=f"{where}.url"),
+        headers=_parse_headers(entry.get("headers"), where=f"{where}.headers"),
+        **_common(entry, defaults, where=where),
     )
 
 

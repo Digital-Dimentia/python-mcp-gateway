@@ -113,6 +113,21 @@ A config change clears all of this for free: `spawn_identity` changes, so
 [`supervisor.md`](supervisor.md)'s reload replaces the `Backend` object outright and the new
 one starts from zero failures.
 
+## A backend that is a URL
+
+A `url` entry gets an `MCPHttpClient` instead of an `MCPStdioClient`, from `_http_client`
+next to `_stdio_client`. Nothing else in this class branches on the difference: status,
+backoff, sleep and wake, `serving`, and `ping` all work on either. Sleeping a URL backend
+ends its HTTP session instead of stopping a process, and waking it opens a new one.
+
+What it gets **instead of** the curated environment is its `headers` block and nothing
+more: no allowlist, no passthrough. None of the daemon's own environment belongs in a
+request to somebody else's server. `resolve_headers` is `resolve_env`'s counterpart. It
+collects missing references instead of raising, so the failure message has the same shape,
+and it also refuses a resolved value containing a line break, which would split the request.
+
+`pid` is `None` for a URL backend. Its process belongs to somebody else.
+
 ## `startup_timeout` covers spawn and handshake together
 
 Not two budgets. A backend that spawns instantly and then never answers `initialize` is as

@@ -165,6 +165,9 @@ class AdminConnection:
             "defaults": dict(config.defaults),
             "servers": {
                 name: {
+                    # Templates, like `env`: `Bearer ${TOKEN}`, never what it resolves to.
+                    "url": spec.url,
+                    "headers": dict(spec.headers),
                     "command": spec.command,
                     "args": list(spec.args),
                     "env": dict(spec.env),

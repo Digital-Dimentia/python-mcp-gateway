@@ -9,6 +9,29 @@ nobody reads.
 
 ## Unreleased
 
+**A backend can be a URL, so the gateway can run where its MCP servers are containers.** A
+`servers.yaml` entry may name `url:` instead of `command:`, and the gateway speaks MCP's
+Streamable HTTP to it: JSON or SSE replies, the session header, the GET stream for what the
+server says unprompted, and a `DELETE` on the way out. Its credential goes in `headers:`,
+as `${NAME}` references resolved from `gateway.env`, reported by name only, sent to that one
+server, and refused in the URL itself because the URL is displayed. To a client the
+difference does not exist: the same namespaced tools, the same status, the same readable
+failure. A server that restarts and forgets the session gets a new one, and the gateway
+re-lists what it publishes, so restarting a backend container is not something to restart
+the gateway over. No new dependency.
+
+**The container image fits remote mode.** The bind address and port now come from
+`MCP_GATEWAY_HOST` and `MCP_GATEWAY_PORT` as well as flags, and the image sets the host
+through the environment rather than its entrypoint. So a container can be the far end of the
+desktop app's SSH tunnel: host networking, `MCP_GATEWAY_HOST=127.0.0.1`, no key, the same
+contract as the systemd unit. The image now reads its config from `/config/servers.yaml`
+(with `gateway.env` beside it), a directory rather than a file, because saving from the UI
+renames a new file over the old one. **If you mounted `/app/servers.yaml` before, mount a
+directory at `/config` instead.** `examples/remote-compose/` is the whole arrangement as a
+compose file, with a README that walks the standup from an empty box to a connected laptop.
+GET_STARTED.md says why publishing the port on a bridge network is not the
+same thing.
+
 **The gateway can serve TLS itself.** `--tls-cert` and `--tls-key` (or
 `MCP_GATEWAY_TLS_CERT`/`_KEY`) make the one port answer `wss://` and `https://`, so a
 deployment that binds the LAN no longer has to send its access key across it readable or

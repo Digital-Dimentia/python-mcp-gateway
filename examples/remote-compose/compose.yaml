@@ -1,0 +1,46 @@
+# The gateway as the far end of remote mode, in a container, on the Linux box.
+#
+#   laptop: desktop app / ssh -N -L 8765:127.0.0.1:8765 you@box
+#                      |
+#   box:    127.0.0.1:8765  <- gateway (host network, loopback, no key)
+#                      |  url: http://127.0.0.1:<port>/mcp
+#           127.0.0.1:<port> <- each MCP server, a container publishing on loopback
+#
+# Why host networking and not `ports:`. Remote mode is a keyless daemon on loopback, and SSH
+# is the authentication. On a bridge network the daemon has to bind 0.0.0.0 inside its
+# container to be reachable through a published port at all, and the daemon refuses an
+# unauthenticated bind off loopback, so it would demand an access key that the desktop app,
+# in remote mode, does not send. With host networking the container's 127.0.0.1 *is* the
+# box's, so the ssh forward lands on it exactly as it would on the systemd unit.
+#
+# Linux only: Docker Desktop's host networking is not the host's.
+#
+#   docker load -i python-mcp-gateway-container.tar   # from `make container-image`
+#   # or, in a checkout on the box: docker build -f Containerfile -t python-mcp-gateway:local .
+#   cp config/gateway.env.example config/gateway.env && $EDITOR config/gateway.env
+#   docker compose up -d
+#   curl http://127.0.0.1:8765/ui/                   # on the box: is it up?
+
+services:
+  gateway:
+    image: python-mcp-gateway:local
+    network_mode: host
+    environment:
+      MCP_GATEWAY_HOST: 127.0.0.1
+      MCP_GATEWAY_PORT: "8765"
+    volumes:
+      # A directory, writable: the admin UI saves servers.yaml by writing a new file and
+      # renaming it over the old one, which a single bind-mounted file cannot take.
+      - ./config:/config
+    restart: unless-stopped
+
+  # One MCP server that speaks Streamable HTTP. Replace the image and its port with yours;
+  # anything that serves MCP over HTTP on a path works. Published on 127.0.0.1 only: the
+  # gateway is the one thing on this box that should talk to it, and a port on the LAN
+  # would be a way around every credential rule in gateway.env.
+  #
+  # search:
+  #   image: your-registry/search-mcp:latest
+  #   ports:
+  #     - "127.0.0.1:9001:8000"
+  #   restart: unless-stopped

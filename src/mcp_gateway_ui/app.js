@@ -564,7 +564,7 @@ function serverEntry(backend, meta = false) {
 
   const menu = el('div', { class: 'server-menu', id: `server-menu-${name}`, hidden: !open });
   const note = meta ? backend.description
-    : (backend.description || spec.description || backend.command || '');
+    : (backend.description || spec.description || backend.url || backend.command || '');
   if (note) menu.append(el('p', { class: 'server-desc', text: note }));
   if (backend.error) menu.append(el('p', { class: 'server-error', text: backend.error }));
   if (missing.length) {
@@ -965,7 +965,9 @@ function defaultFor(key) {
 // `collectEditor`) and the fallback chain still runs.
 const EDITOR_GROUPS = [
   ['Process', [
-    ['command', 'text', 'The executable, e.g. npx or python', 'npx'],
+    ['command', 'text', 'The executable, e.g. npx or python. Or leave it empty and give a url', 'npx'],
+    ['url', 'text', 'A Streamable HTTP server to reach instead of a process to spawn',
+      'http://127.0.0.1:9001/mcp'],
     ['description', 'text', 'What this server is for', 'Read-only files under /srv'],
     ['args', 'lines', 'One argument per line', '-y\n@modelcontextprotocol/server-filesystem\n/srv'],
     ['cwd', 'text', 'Working directory (optional)', () => defaultFor('cwd') ?? "the daemon's own"],
@@ -974,6 +976,8 @@ const EDITOR_GROUPS = [
     ['env', 'pairs', 'KEY=${SECRET_NAME}, one per line. Values live in gateway.env, never here',
       'API_KEY=${FILES_API_KEY}'],
     ['env_passthrough', 'lines', 'Variables inherited from the daemon, one per line', 'PATH\nHOME'],
+    ['headers', 'pairs', 'For a url: Name=value, one per line, credentials as ${SECRET_NAME}',
+      'Authorization=Bearer ${FILES_TOKEN}'],
   ]],
   ['Behaviour', [
     ['timeout', 'number', 'Per-request seconds', () => defaultFor('timeout')],
@@ -1005,8 +1009,8 @@ function openEditor(name) {
     form.append(el('p', {
       class: 'note warn',
       text: `The command, its arguments and its working directory are paths on `
-        + `${state.connection.label}, not on this machine — and this writes that machine's `
-        + `servers.yaml.`,
+        + `${state.connection.label}, not on this machine, and a url is dialled from there — `
+        + `127.0.0.1 means that machine. This writes that machine's servers.yaml.`,
     }));
   }
 
@@ -1110,7 +1114,7 @@ function collectEditor(inputs) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         const at = trimmed.indexOf('=');
-        if (at <= 0) throw new Error(`env line is not KEY=value: ${trimmed}`);
+        if (at <= 0) throw new Error(`${key} line is not KEY=value: ${trimmed}`);
         env[trimmed.slice(0, at).trim()] = trimmed.slice(at + 1).trim();
       }
       out[key] = env;

@@ -145,6 +145,30 @@ Other per-server keys: `enabled` (spawn it at all), `required` (a failure here i
 the daemon rather than skipped), `cwd`, `lazy`, `idle_ttl`, `timeout`, `startup_timeout`.
 The full schema is in [`config.md`](src/mcp_gateway/config.md).
 
+### A server that is already running
+
+Not every MCP server is a process for the gateway to start. One that serves MCP over HTTP,
+such as a container on its own port or a service somebody else runs, gets a `url` instead
+of a `command`:
+
+```yaml
+  search:
+    url: http://127.0.0.1:9001/mcp
+    headers:
+      Authorization: "Bearer ${SEARCH_TOKEN}"
+```
+
+The gateway speaks MCP's Streamable HTTP to it, and to a client it looks like any other
+backend: `search__*` tools, the same status, the same failure message. `headers` does for
+a URL what `env` does for a process. Values come from `gateway.env`, only the header
+names are ever shown, and each header goes to this server and no other. The keys that
+describe a process (`args`, `env`, `env_passthrough`, `env_mode`, `cwd`) are refused on a
+`url` entry, and so is a `${VAR}` or a `user:password@` in the URL itself, because the URL
+is shown by `--list`, the admin UI and every log line about the connection.
+
+If the server restarts and forgets the gateway's session, the gateway starts a new one and
+re-lists its tools. No restart is needed on this side.
+
 Already have a Claude Desktop config? YAML 1.2 is a superset of JSON, so
 `mcp-gateway --config claude_desktop_config.json` goes through the identical loader, with no
 second parser and no conversion step.
@@ -583,6 +607,42 @@ it. A mismatched forward works for the desktop app and for `mcp-gateway-connect`
 it bound, and it cannot know what a tunnel did with it. `MCP_GATEWAY_WS_ALLOWED_ORIGINS` on
 the remote is the way out if you need one.
 
+### The far end in a container
+
+The same arrangement works with the daemon in a container on the Linux box. There, most MCP
+servers will be containers too, reached by `url` rather than spawned. The one thing to get
+right is the network. Remote mode means a keyless daemon on the box's own loopback, and
+only **host networking** puts a container there:
+
+```bash
+docker run -d --name mcp-gateway --network host --restart unless-stopped \
+  -e MCP_GATEWAY_HOST=127.0.0.1 \
+  -v ~/.config/mcp-gateway:/config \
+  python-mcp-gateway:local
+```
+
+`-p 127.0.0.1:8765:8765` on a bridge network looks equivalent and is not. The daemon would
+have to bind `0.0.0.0` inside its container to be reachable through the published port, it
+refuses to do that without an access key, and the desktop app sends no key in remote mode.
+Host networking is Linux-only. Docker Desktop's version of it is not the host's network.
+
+The image reads `/config/servers.yaml`, with `gateway.env` beside it. Mount the
+**directory**, writable: saving from the admin UI renames a new file over the old one,
+which a single bind-mounted file cannot take. Get the image onto the box with
+`make container-image` and `docker load -i dist/python-mcp-gateway-container.tar`, or by
+running `docker build -f Containerfile -t python-mcp-gateway:local .` in a checkout there.
+
+Each backend container publishes its port on `127.0.0.1` only, and the gateway reaches it
+at `url: http://127.0.0.1:<port>/mcp`. Under host networking that address is the box
+itself. [`examples/remote-compose/`](examples/remote-compose/compose.yaml) is the whole
+thing as a compose file, with a catalogue to start from, and its
+[README](examples/remote-compose/README.md) is the step-by-step standup: getting the image
+onto the box, adding server containers, checking, starting, connecting from the laptop,
+and what to do on day two.
+
+The image carries Python and nothing else. A `command:` backend that needs `npx` or `uvx`
+needs an image built `FROM` this one that adds it.
+
 ### Serving the LAN directly, over TLS
 
 SSH is the better answer when there is one person and one laptop. When there is not — a
@@ -621,7 +681,8 @@ launchctl load ~/Library/LaunchAgents/com.dbuschman7.mcp-gateway.plist
 ```
 
 launchd owns restart and log rotation. There is also a `Containerfile` and
-`make container-image` / `make package`.
+`make container-image` / `make package`; for the container as remote mode's far end, see
+[above](#the-far-end-in-a-container).
 
 On the Linux box, a **user** unit rather than a system one — the daemon holds every
 credential in `gateway.env` and spawns the commands in `servers.yaml`, and running it as

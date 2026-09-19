@@ -1,0 +1,18 @@
+# The catalogue for the containerised gateway in ../compose.yaml. Mounted at /config, with
+# gateway.env beside it. Committed, so it holds ${NAME} references and never a value.
+#
+# In a container most backends are `url:` entries: other containers, each publishing its
+# MCP endpoint on a 127.0.0.1 port of this box. The url is dialled from the gateway's side,
+# and under host networking 127.0.0.1 is the box itself.
+
+version: 1
+
+servers:
+  search:
+    url: http://127.0.0.1:9001/mcp
+    headers:
+      # Sent on every request to this server and to no other. The value lives in
+      # gateway.env; only the header name is ever displayed.
+      Authorization: "Bearer ${SEARCH_TOKEN}"
+    description: "Example: the search container in ../compose.yaml"
+    enabled: false   # flip once that container exists

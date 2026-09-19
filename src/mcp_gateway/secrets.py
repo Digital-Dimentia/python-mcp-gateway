@@ -307,6 +307,8 @@ def missing_for(config: "GatewayConfig", store: SecretStore) -> dict[str, list[M
         missing: list[MissingSecret] = []
         for key, template in spec.env.items():
             interpolate(template, store, where=f"servers.{name}.env.{key}", missing=missing)
+        for key, template in spec.headers.items():
+            interpolate(template, store, where=f"servers.{name}.headers.{key}", missing=missing)
         if spec.cwd is not None:
             interpolate(spec.cwd, store, where=f"servers.{name}.cwd", missing=missing)
         if missing:

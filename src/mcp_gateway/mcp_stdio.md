@@ -8,6 +8,20 @@ MCP is bidirectional. The server may send requests and notifications of its own 
 any time, not only responses to ours, so this module reads stdout continuously
 rather than only while one of our requests is in flight.
 
+## The session and the transport
+
+Two classes. `MCPClient` is the MCP session: ids, pending futures, the handshake, capability
+checks, pagination, cancellation, and answering server requests. It knows nothing about
+bytes. `MCPStdioClient` is one transport under it, a subprocess's stdin and stdout, and
+`MCPHttpClient` in [`mcp_http.py`](mcp_http.md) is the other. A transport supplies `start`,
+`stop` and `_write`, and passes every message it reads to `_handle_message`.
+
+The split is what let HTTP backends ship without a second copy of anything in this file.
+The rules below about cancellation, server requests and version negotiation are MCP rules,
+not stdio ones, and a copy is how the two transports would end up disagreeing about them.
+Where the headings below say `MCPStdioClient`, everything outside the process sections
+("Shutdown Sequence", "stderr Draining", "Stream Limit", `env`) now lives on `MCPClient`.
+
 ## Key Responsibilities
 
 - Spawn the MCP subprocess and shut it down in the order the transport prescribes.
@@ -584,13 +598,16 @@ shared.
 ## Divergences from the lifted module
 
 This file was lifted from `python-acp`'s `mcp_stdio.py`, comments included, because its
-reasoning is correct and hard-won. Four things changed, each marked in the source:
+reasoning is correct and hard-won. Five things changed, each marked in the source:
 
 1. **`env_replace`** — the third environment state, above. See [`backend.md`](backend.md).
 2. **`clientInfo`** — `mcp-gateway` and `__version__`, imported rather than re-literalled.
 3. **The protocol constants moved to [`protocol.py`](protocol.md)** — the gateway
    negotiates MCP in both directions and two copies would drift.
 4. **`cwd`** — a per-backend working directory, because the daemon cannot chdir.
+5. **`MCPClient` split out of `MCPStdioClient`** — the session without the subprocess, so
+   [`mcp_http.py`](mcp_http.md) could be a second transport under it. `command` became
+   keyword-only as a result, and every caller already passed it by name.
 
 `tool_result_text` was dropped: it had no caller upstream either, and a proxy forwards a
 tool result's `content` verbatim rather than flattening it.
@@ -599,5 +616,6 @@ tool result's `content` verbatim rather than flattening it.
 
 - [`protocol.py`](protocol.md) — the constants and the capability block
 - [`backend.py`](backend.md) — what builds the environment this client spawns with
+- [`mcp_http.py`](mcp_http.md) — the other transport under `MCPClient`
 - [`errors.py`](errors.md) — where an `MCPProtocolError` becomes a client-facing error
 - [`cli.py`](cli.md)

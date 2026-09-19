@@ -57,6 +57,10 @@ DEFAULT_PORT = 8765
 #: container ENTRYPOINT, a launchd job whose ProgramArguments are awkward to edit.
 CONFIG_ENV = "MCP_GATEWAY_CONFIG"
 ENV_FILE_ENV = "MCP_GATEWAY_ENV"
+#: And for the bind, for the same deployments. The Containerfile sets the host to
+#: `0.0.0.0`; remote mode's container sets it back to loopback. See `cli.md`.
+HOST_ENV = "MCP_GATEWAY_HOST"
+PORT_ENV = "MCP_GATEWAY_PORT"
 
 DEFAULT_CONFIG_NAME = "servers.yaml"
 DEFAULT_ENV_NAME = "gateway.env"
@@ -110,6 +114,22 @@ def default_env_path(config_path: Path, environ: dict[str, str] | None = None) -
     return config_path.resolve().parent / DEFAULT_ENV_NAME
 
 
+def _env_port() -> int:
+    """`$MCP_GATEWAY_PORT`, or the default. A value that is not a port is a refusal, not
+    a silent fallback: a container that asked for 9000 and got 8765 is one whose SSH
+    forward points at nothing, with nothing in the log to say why."""
+    raw = os.environ.get(PORT_ENV)
+    if not raw:
+        return DEFAULT_PORT
+    try:
+        port = int(raw)
+    except ValueError:
+        port = -1
+    if not 0 <= port <= 65535:
+        raise SystemExit(f"{PORT_ENV}={raw!r} is not a port number")
+    return port
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The command line. Split out so a test can assert defaults without invoking `run`."""
     parser = argparse.ArgumentParser(
@@ -141,14 +161,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--host",
-        default=DEFAULT_HOST,
+        default=os.environ.get(HOST_ENV) or DEFAULT_HOST,
         help=(
-            f"Interface to bind (default: {DEFAULT_HOST}). Binding anything but loopback "
-            "without an access key is refused; see MCP_GATEWAY_WS_KEY."
+            f"Interface to bind (default: ${HOST_ENV}, else {DEFAULT_HOST}). Binding "
+            "anything but loopback without an access key is refused; see MCP_GATEWAY_WS_KEY."
         ),
     )
     parser.add_argument(
-        "--port", type=int, default=DEFAULT_PORT, help=f"Port to bind (default: {DEFAULT_PORT})."
+        "--port",
+        type=int,
+        default=_env_port(),
+        help=f"Port to bind (default: ${PORT_ENV}, else {DEFAULT_PORT}).",
     )
     parser.add_argument(
         "--tls-cert",
@@ -230,6 +253,12 @@ def _describe(spec: ServerSpec) -> str:
     precisely so an operator can check the plan without opening the credential store.
     """
     lines = [f"  {spec.name}:"]
+    if spec.url is not None:
+        lines.append(f"    url: {spec.url}")
+        if spec.headers:
+            lines.append(f"    header keys: {', '.join(spec.header_keys)}")
+        lines.append(f"    {_flags(spec)}")
+        return "\n".join(lines)
     lines.append(f"    command: {spec.command} {' '.join(spec.args)}".rstrip())
     if spec.cwd:
         lines.append(f"    cwd: {spec.cwd}")
@@ -238,11 +267,15 @@ def _describe(spec: ServerSpec) -> str:
         lines.append(f"    env keys: {', '.join(spec.env_keys)}")
     if spec.env_passthrough:
         lines.append(f"    env_passthrough: {', '.join(spec.env_passthrough)}")
+    lines.append(f"    {_flags(spec)}")
+    return "\n".join(lines)
+
+
+def _flags(spec: ServerSpec) -> str:
     flags = [f"timeout={spec.timeout:g}s", f"startup_timeout={spec.startup_timeout:g}s"]
     if spec.required:
         flags.append("required")
-    lines.append(f"    {', '.join(flags)}")
-    return "\n".join(lines)
+    return ", ".join(flags)
 
 
 def _print_branding(branding: Branding) -> None:
