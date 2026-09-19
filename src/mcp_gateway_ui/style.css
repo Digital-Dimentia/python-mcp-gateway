@@ -1219,6 +1219,19 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 0.8rem; color: var(--muted); }
 
 .about-empty { color: var(--muted); }
 
+/* Key on the left, where it came from on the right: two columns, because the question is
+ * always "this key -- which source?" and a list of pairs answers it down one edge. */
+.about-secrets {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.25rem 1.2rem;
+  margin-top: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.about-secrets dt { font-weight: 600; }
+.about-secrets dd { margin: 0; color: var(--ink-soft); overflow-wrap: anywhere; }
+
 /* ── The tour: the slide deck at the top of About ───────────────────────── */
 
 /* A card like the two below it, with a fixed frame and one changing middle. The frame is

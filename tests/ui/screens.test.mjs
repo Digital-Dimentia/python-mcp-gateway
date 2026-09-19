@@ -176,6 +176,42 @@ describe('the About screen', () => {
   });
 });
 
+// `admin.secrets.keys` on About. The acceptance line was two-sided and so is this: a chain
+// renders a row per key naming its source, and a store built from the file alone -- no
+// providers -- leaves the screen exactly as it was.
+describe('where each secret came from', () => {
+  const about = () => document.getElementById('about');
+  const card = () => [...about().querySelectorAll('.about-card')]
+    .find((c) => c.querySelector('h2')?.textContent.startsWith('Secrets'));
+
+  it('is not shown when no provider is configured', () => {
+    ui.state.secrets = { keys: ['API_TOKEN'], origins: {}, providers: [] };
+    ui.SCREEN_MODULES.about.refresh(ui.state);
+    assert.equal(card(), undefined);
+    assert.doesNotMatch(about().textContent, /null/);
+  });
+
+  it('names the source of every key once a provider is', () => {
+    ui.state.secrets = {
+      keys: ['GITHUB_TOKEN', 'WS_ACCESS_KEY'],
+      origins: { GITHUB_TOKEN: 'vault_provider:Provider', WS_ACCESS_KEY: 'gateway.env' },
+      providers: ['vault_provider:Provider'],
+    };
+    ui.SCREEN_MODULES.about.refresh(ui.state);
+
+    assert.ok(card(), 'there is a Secrets card');
+    assert.equal(card().querySelector('h2').textContent, 'Secrets (2)');
+    const pairs = [...card().querySelectorAll('dt')]
+      .map((dt) => `${dt.textContent}=${dt.nextElementSibling.textContent}`);
+    assert.deepEqual(pairs, [
+      'GITHUB_TOKEN=vault_provider:Provider',
+      'WS_ACCESS_KEY=gateway.env',
+    ]);
+    //: The file is the last link whether or not the payload lists it.
+    assert.match(card().textContent, /vault_provider:Provider → gateway\.env/);
+  });
+});
+
 // The deck at the top of About. What is asserted is the mechanism -- which slide is
 // showing, what moves it, and that a repaint does not move it -- plus the three figures a
 // slide quotes off the payloads. What a slide *says* is prose in `slides.js` and is not

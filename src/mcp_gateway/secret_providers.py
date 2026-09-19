@@ -99,7 +99,7 @@ if TYPE_CHECKING:  # pragma: no cover - type-only, as in `secrets.py`
 logger = logging.getLogger(__name__)
 
 #: The origin label for a value that came from `gateway.env`. Reported per key by
-#: `admin.secrets.list`, which used to be able to say "the source is that file" once for
+#: `admin.secrets.keys`, which used to be able to say "the source is that file" once for
 #: the whole store and now cannot.
 FILE_ORIGIN = "gateway.env"
 

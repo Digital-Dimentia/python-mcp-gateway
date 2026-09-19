@@ -17,7 +17,8 @@
 // working, and reading the state of the thing off it means knowing where each fact was put.
 // Nothing here asks the daemon anything of its own. It is `admin.status` and
 // `admin.backends`, which the header and the footer have already fetched, laid out to be
-// read in one pass.
+// read in one pass -- plus `admin.secrets.keys`, fetched beside them, for the Secrets card
+// a deployment with a `secrets:` block gets.
 //
 // ## The screen contract
 //
@@ -155,6 +156,40 @@ function serversCard(state) {
   ]);
 }
 
+/**
+ * Where each secret resolved from -- only once a `secrets:` block has named a provider.
+ *
+ * With the file alone every key came from `gateway.env`, the Env field above already says
+ * so, and a card repeating it per key would be noise; so no providers means no card, and
+ * the screen is what it was. With a chain, "which of these came from Vault and which fell
+ * through to the file" is the first question anyone asks about a token that looks stale.
+ * Names and provider refs only: `admin.secrets.keys` has no value to give, by design.
+ */
+function secretsCard(state) {
+  const { keys = [], origins = {}, providers = [] } = state.secrets || {};
+  if (!providers.length) return null;
+
+  //: The chain in the order it is asked. `gateway.env` is always the last link, which the
+  //: payload does not list because it is not configurable -- so it is said here instead.
+  const chain = el('p', {
+    class: 'about-line',
+    text: `Asked in order: ${[...providers, 'gateway.env'].join(' → ')}`,
+  });
+
+  const body = keys.length
+    ? el('dl', { class: 'about-secrets' }, keys.flatMap((key) => [
+      el('dt', { text: key }),
+      el('dd', { text: origins[key] || 'unknown' }),
+    ]))
+    : el('p', { class: 'about-empty', text: 'No secrets resolved.' });
+
+  return el('section', { class: 'about-card' }, [
+    el('h2', { text: `Secrets (${keys.length})` }),
+    chain,
+    body,
+  ]);
+}
+
 //: Built once, on the first refresh, and kept. The deck holds which slide is showing, and
 //: About repaints whenever a payload moves -- so a deck rebuilt on every refresh would jump
 //: back to slide 1 the moment a backend changed state, which is precisely when somebody is
@@ -173,7 +208,8 @@ export default {
     //: The live figures three slides quote, redrawn -- not the deck, and not the position.
     tour.update(state);
     document.getElementById('about').replaceChildren(
-      tour.node, gatewayCard(state), serversCard(state),
+      //: `secretsCard` is null without providers, and `replaceChildren` would print that.
+      ...[tour.node, gatewayCard(state), serversCard(state), secretsCard(state)].filter(Boolean),
     );
   },
 };

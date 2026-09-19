@@ -108,7 +108,9 @@ Providers are asked in order, the first answer for a key wins, and **`gateway.en
 always the last link** — so adopting one does not mean moving a working credential. The
 usual shape is backend tokens from Vault and the daemon's own `WS_ACCESS_KEY` left in the
 file it is already in. `--check` now names each source and how many keys it supplied, and
-`admin.secrets.list` reports where each key came from.
+`admin.secrets.keys` reports where each key came from — and the About screen shows it, a
+row per key naming the provider or `gateway.env`, so a token that looks stale can be traced
+to its source without opening a shell.
 
 Nothing changed for a deployment that does not write the block: no providers means the file
 alone, exactly as before. A provider that cannot reach its backing store is fatal rather

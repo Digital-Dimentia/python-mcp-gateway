@@ -87,6 +87,9 @@ const state = {
   backends: [],
   config: { servers: {} },
   missing: {},
+  //: `admin.secrets.keys`: names, and where each resolved from. `providers` is empty for a
+  //: deployment with no `secrets:` block, which is what keeps About's card off the page.
+  secrets: { keys: [], origins: {}, providers: [] },
   status: null,
   selected: null,          // backend name, or the ADMIN_PREFIX pseudo-entry
   kind: 'tools',
@@ -432,16 +435,22 @@ function updateFiles() {
 // ── What /admin says ───────────────────────────────────────────────────────────
 
 async function refreshAdmin() {
-  const [backends, config, status, missing] = await Promise.all([
+  const [backends, config, status, missing, secrets] = await Promise.all([
     state.admin.request('admin.backends').catch(() => ({ backends: [] })),
     state.admin.request('admin.config.get').catch(() => ({ servers: {} })),
     state.admin.request('admin.status').catch(() => null),
     state.admin.request('admin.secrets.missing').catch(() => ({ servers: {} })),
+    state.admin.request('admin.secrets.keys').catch(() => ({})),
   ]);
   state.backends = backends.backends || [];
   state.config = config;
   state.status = status;
   state.missing = missing.servers || {};
+  state.secrets = {
+    keys: secrets.keys || [],
+    origins: secrets.origins || {},
+    providers: secrets.providers || [],
+  };
   renderBackends();
   applyBranding(status?.branding);
   updateMeta();

@@ -176,6 +176,6 @@ radius of every bridge on every laptop. A deployment putting `WS_ACCESS_KEY` beh
 provider passes it to the bridge through `MCP_GATEWAY_WS_ACCESS_KEY` instead.
 
 `SecretStore` gained `origins` — a key-name-to-source map, reported per key by
-`admin.secrets.list` — and nothing else. Every existing consumer of a store, the redaction
+`admin.secrets.keys` — and nothing else. Every existing consumer of a store, the redaction
 filter and `interpolate` included, sees the same object it always did, because the chain's
 whole output is an ordinary store.
