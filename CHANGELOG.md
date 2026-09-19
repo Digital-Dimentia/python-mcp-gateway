@@ -29,6 +29,10 @@ contract as the systemd unit. The image now reads its config from `/config/serve
 renames a new file over the old one. **If you mounted `/app/servers.yaml` before, mount a
 directory at `/config` instead.** `examples/remote-compose/` is the whole arrangement as a
 compose file, with a README that walks the standup from an empty box to a connected laptop.
+Getting the image onto the box is one command from the laptop: `make container-image
+TARGET=you@box` asks the box for its architecture, builds for it, and loads the image into
+the box's docker or podman. The laptop's own architecture would be the wrong answer
+whenever the two machines differ.
 GET_STARTED.md says why publishing the port on a bridge network is not the
 same thing.
 

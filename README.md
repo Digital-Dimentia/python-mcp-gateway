@@ -275,7 +275,7 @@ launchd owns restart and log rotation; the daemon does not daemonize itself.
 | `make run` | start the daemon |
 | `make run-dev` | start it against `servers.dev.yaml`: the schema zoo, for the UI |
 | `make connect` | run the bridge in the foreground |
-| `make container-image` / `package` | build and export the container image |
+| `make container-image` / `package` | build and export the container image; `TARGET=you@box` builds for that machine and loads it there |
 | `make clean` | build outputs and caches — **leaves the venv alone** |
 
 Behind a TLS-intercepting proxy, pass `PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"`.

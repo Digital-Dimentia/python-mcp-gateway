@@ -43,6 +43,13 @@ image at all, so choosing the wrong verb fails rather than silently producing a
 single-arch image -- which would be the worse outcome, since a single-arch image
 looks entirely correct until someone runs it on a Pi.
 
+``--target DEST`` is for building on one machine and running on another -- the laptop
+and the Linux box of remote mode. The platform cannot come from ``uname`` here, because
+here is the wrong machine: an Apple-silicon Mac would build arm64 for an amd64 server. So
+the target is asked (``ssh DEST uname -m``), that one platform is built, and the exported
+image is streamed into whichever of docker or podman the target has. A target implies
+``--require``: someone who named a machine to deliver to wants a failure, not a skip.
+
 Every mode is stdlib-only and safe to run with any interpreter >= 3.11.
 """
 
@@ -64,6 +71,67 @@ DEFAULT_PROBE_TIMEOUT = 120
 # natively, and neither OCI nor Docker Hub defines an arm64/v8.2 platform. See
 # the "Raspberry Pi" note in CLAUDE.md before adding one.
 RASPBERRY_PI_PLATFORM = "linux/arm64"
+
+
+#: `uname -m` on the target -> the platform to build. Both spellings of each, because Linux
+#: says `x86_64`/`aarch64` and macOS and the BSDs say `amd64`/`arm64`. 32-bit ARM is
+#: `linux/arm/v7`, which a 32-bit Raspberry Pi OS runs; the base image publishes it.
+MACHINE_PLATFORMS = {
+    "x86_64": "linux/amd64",
+    "amd64": "linux/amd64",
+    "aarch64": "linux/arm64",
+    "arm64": "linux/arm64",
+    "armv7l": "linux/arm/v7",
+}
+
+#: ssh as the desktop app runs it: never prompt, because a prompt nobody can see is a hang.
+SSH = ("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
+
+#: Run on the target, reading the image archive from stdin. Whichever engine it has,
+#: docker first because that is what the remote-compose runbook assumes.
+REMOTE_LOAD = (
+    "if command -v docker >/dev/null 2>&1; then docker load; "
+    "elif command -v podman >/dev/null 2>&1; then podman load; "
+    'else echo "neither docker nor podman is installed on $(hostname)" >&2; exit 127; fi'
+)
+
+
+class TargetError(RuntimeError):
+    """The target could not be asked, or answered something this script cannot build for."""
+
+
+def platform_for_machine(machine: str) -> str:
+    """The platform to build for a machine whose `uname -m` said `machine`."""
+    try:
+        return MACHINE_PLATFORMS[machine.strip()]
+    except KeyError:
+        raise TargetError(
+            f"no platform known for `uname -m` = {machine.strip()!r}; "
+            f"pass PLATFORMS=linux/<arch> instead"
+        ) from None
+
+
+def target_platform(target: str, runner: object = subprocess.run) -> str:
+    """Ask `target` over ssh what it is, and return the platform to build for it."""
+    completed = runner(  # type: ignore[operator]
+        [*SSH, target, "uname", "-m"], capture_output=True, text=True, check=False
+    )
+    if completed.returncode != 0:
+        detail = _first_meaningful_line(completed.stderr) or f"exit {completed.returncode}"
+        raise TargetError(
+            f"cannot ask {target} its architecture: {detail}. "
+            f"Check that `ssh {target}` works with no prompt."
+        )
+    return platform_for_machine(completed.stdout)
+
+
+def load_on_target(target: str, archive: Path, runner: object = subprocess.run) -> int:
+    """Stream `archive` into the target's engine. Returns the exit code."""
+    with archive.open("rb") as stream:
+        completed = runner(  # type: ignore[operator]
+            [*SSH, target, REMOTE_LOAD], stdin=stream, check=False
+        )
+    return int(completed.returncode)
 
 
 class EngineState(Enum):
@@ -290,6 +358,40 @@ def build_and_save(
     return 0
 
 
+def build_for_target(engine: str, args: argparse.Namespace) -> int:
+    """Ask the target, build its one platform, and load the result there.
+
+    The target is asked **before** the build, so an ssh that does not work fails in
+    seconds rather than after an emulated build that can take minutes.
+    """
+    try:
+        platform = target_platform(args.target)
+    except TargetError as exc:
+        print(f"container-image: {exc}", file=sys.stderr)
+        return 1
+    print(f"container-image: {args.target} is {platform}; building for it.", file=sys.stderr)
+    code = build_and_save(
+        engine,
+        args.tag,
+        args.containerfile,
+        args.context,
+        args.output,
+        platforms=[platform],
+    )
+    if code != 0:
+        return code
+    code = load_on_target(args.target, args.output)
+    if code != 0:
+        print(
+            f"container-image: loading the image on {args.target} failed with exit {code}; "
+            f"{args.output} is still here to copy by hand.",
+            file=sys.stderr,
+        )
+        return code
+    print(f"container-image: {args.tag} ({platform}) is loaded on {args.target}.", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tag", default="python-mcp-gateway:local")
@@ -319,14 +421,31 @@ def main(argv: list[str] | None = None) -> int:
             "for any platform that is not the host's. Default: build for the host."
         ),
     )
+    parser.add_argument(
+        "--target",
+        default=None,
+        metavar="DEST",
+        help=(
+            "An ssh destination to build for and deliver to: its `uname -m` picks the "
+            "platform, and the image is loaded into its docker or podman. Implies --require."
+        ),
+    )
     parser.add_argument("--probe-timeout", type=int, default=DEFAULT_PROBE_TIMEOUT)
     args = parser.parse_args(argv)
+
+    if args.target and args.platform:
+        print(
+            "container-image: give TARGET or PLATFORMS, not both -- the target decides "
+            "its own platform.",
+            file=sys.stderr,
+        )
+        return 2
 
     status = resolve_engine(args.engine, timeout=args.probe_timeout)
     if not status.ready:
         stream = sys.stderr
         print(f"container-image: {status.message()}", file=stream)
-        if args.require:
+        if args.require or args.target:
             print(
                 "container-image: --require was given, so this skip is a failure.",
                 file=stream,
@@ -335,6 +454,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     assert status.engine is not None
+    if args.target:
+        return build_for_target(status.engine, args)
+
     platforms = normalize_platforms(args.platform)
     if len(platforms) > 1:
         print(

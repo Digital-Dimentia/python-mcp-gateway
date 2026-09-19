@@ -55,8 +55,14 @@ REQUIRE_CONTAINER ?=
 PLATFORMS ?=
 RELEASE_PLATFORMS := linux/amd64,linux/arm64
 
+# TARGET=you@box builds for that machine and loads the image into its docker or podman:
+# its `uname -m` picks the platform, because this machine's would be the wrong answer
+# when the two differ. Empty by default: build for the host and export a tar, as before.
+TARGET ?=
+
 CONTAINER_FLAGS := $(if $(strip $(REQUIRE_CONTAINER)),--require,) \
-	$(if $(strip $(PLATFORMS)),--platform $(strip $(PLATFORMS)),)
+	$(if $(strip $(PLATFORMS)),--platform $(strip $(PLATFORMS)),) \
+	$(if $(strip $(TARGET)),--target $(strip $(TARGET)),)
 
 START := scripts/start-gateway.sh
 HOST ?= 127.0.0.1
@@ -168,7 +174,8 @@ sdist: build
 ## -- when no engine is installed OR when one is installed but its backend is unreachable
 ## (a stopped `podman machine`, a dead docker daemon). REQUIRE_CONTAINER=1 turns any skip
 ## into a failure; the release workflow sets it, because a release that ships without its
-## image should not be quiet about it.
+## image should not be quiet about it. TARGET=you@box builds for that box instead and loads
+## the image there -- and never skips, since a delivery was asked for.
 container-image: venv
 	$(PYTHON_BIN) $(CONTAINER_SCRIPT) \
 		--tag $(CONTAINER_TAG) \

@@ -629,8 +629,9 @@ Host networking is Linux-only. Docker Desktop's version of it is not the host's 
 The image reads `/config/servers.yaml`, with `gateway.env` beside it. Mount the
 **directory**, writable: saving from the admin UI renames a new file over the old one,
 which a single bind-mounted file cannot take. Get the image onto the box with
-`make container-image` and `docker load -i dist/python-mcp-gateway-container.tar`, or by
-running `docker build -f Containerfile -t python-mcp-gateway:local .` in a checkout there.
+`make container-image TARGET=you@box` from the laptop, which builds for the box's
+architecture and loads the image there, or by running
+`docker build -f Containerfile -t python-mcp-gateway:local .` in a checkout on the box.
 
 Each backend container publishes its port on `127.0.0.1` only, and the gateway reaches it
 at `url: http://127.0.0.1:<port>/mcp`. Under host networking that address is the box

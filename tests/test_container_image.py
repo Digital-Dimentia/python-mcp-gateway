@@ -8,7 +8,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import container_image  # noqa: E402 -- a script, not a package
 
 
 def test_the_container_build_skips_cleanly_with_no_engine(tmp_path) -> None:
@@ -36,6 +41,93 @@ def test_the_container_build_skips_cleanly_with_no_engine(tmp_path) -> None:
     # Either it built, or it said clearly why it could not. Never a silent success.
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() or result.stderr.strip()
+
+
+# --- TARGET: build on the laptop for the box, and load it there ------------------------------
+
+
+class _Ran:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+@pytest.mark.parametrize(
+    ("machine", "platform"),
+    [
+        ("x86_64\n", "linux/amd64"),
+        ("amd64", "linux/amd64"),
+        ("aarch64\n", "linux/arm64"),
+        ("arm64", "linux/arm64"),
+        ("armv7l", "linux/arm/v7"),
+    ],
+)
+def test_the_targets_uname_picks_the_platform(machine: str, platform: str) -> None:
+    assert container_image.platform_for_machine(machine) == platform
+
+
+def test_an_unknown_machine_says_to_name_the_platform_instead() -> None:
+    with pytest.raises(container_image.TargetError, match="PLATFORMS"):
+        container_image.platform_for_machine("riscv64")
+
+
+def test_the_target_is_asked_over_ssh_that_will_not_prompt() -> None:
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        return _Ran(stdout="aarch64\n")
+
+    assert container_image.target_platform("you@box", runner=runner) == "linux/arm64"
+    assert calls == [[*container_image.SSH, "you@box", "uname", "-m"]]
+    assert "BatchMode=yes" in container_image.SSH
+
+
+def test_an_unreachable_target_names_the_ssh_problem() -> None:
+    def runner(command, **kwargs):
+        return _Ran(returncode=255, stderr="Permission denied (publickey).\n")
+
+    with pytest.raises(container_image.TargetError, match="Permission denied"):
+        container_image.target_platform("you@box", runner=runner)
+
+
+def test_the_image_is_streamed_into_the_targets_engine(tmp_path) -> None:
+    archive = tmp_path / "image.tar"
+    archive.write_bytes(b"tar")
+    seen = {}
+
+    def runner(command, stdin=None, **kwargs):
+        seen["command"], seen["body"] = command, stdin.read()
+        return _Ran()
+
+    assert container_image.load_on_target("you@box", archive, runner=runner) == 0
+    assert seen["command"] == [*container_image.SSH, "you@box", container_image.REMOTE_LOAD]
+    assert seen["body"] == b"tar"
+    assert "docker load" in container_image.REMOTE_LOAD
+    assert "podman load" in container_image.REMOTE_LOAD
+
+
+def test_target_and_platforms_together_are_refused(capsys) -> None:
+    assert container_image.main(["--target", "you@box", "--platform", "linux/amd64"]) == 2
+    assert "not both" in capsys.readouterr().err
+
+
+def test_a_target_turns_a_missing_engine_into_a_failure(tmp_path) -> None:
+    """A skip is right for `make package` on a machine with no engine; it is wrong for
+    someone who named a box to deliver to."""
+    missing = str(tmp_path / "no-such-engine")
+    assert container_image.main(["--engine", missing]) == 0
+    assert container_image.main(["--engine", missing, "--target", "you@box"]) == 1
+
+
+def test_make_passes_target_through() -> None:
+    result = subprocess.run(
+        ["make", "-n", "container-image", "TARGET=you@box"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "--target you@box" in result.stdout
 
 
 def test_the_containerfile_base_image_matches_the_python_floor() -> None:

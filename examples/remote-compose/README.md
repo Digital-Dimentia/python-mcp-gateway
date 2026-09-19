@@ -44,9 +44,20 @@ cd python-mcp-gateway
 docker build -f Containerfile -t python-mcp-gateway:local .
 ```
 
-**Or build it on the laptop and copy it over.** Build for the *box's* architecture, not
-the laptop's: an Apple-silicon Mac builds `arm64` by default, and most Linux servers are
-`amd64`.
+**Or build it on the laptop and load it onto the box in one step:**
+
+```bash
+make container-image TARGET=you@box
+```
+
+This asks the box for its architecture (`ssh you@box uname -m`), builds the image for that
+platform, and streams it into the box's `docker load` (or `podman load` if the box has
+podman). The laptop's own architecture can't be used: an Apple-silicon Mac is `arm64` and
+most Linux servers are `amd64`. When the two differ, the build runs under emulation, which
+is slow but works. The same `ssh` rule as step 0 applies: no prompts. If the load fails,
+the tar stays in `dist/` for copying by hand.
+
+To do the same thing by hand, name the platform yourself and copy the tar:
 
 ```bash
 make container-image PLATFORMS=linux/amd64      # linux/arm64 for a Pi or an ARM server
