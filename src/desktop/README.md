@@ -419,7 +419,9 @@ a person.** Everything under the window is covered by `make tauri-check` on each
 CI, but the same manual checklist above is unwalked on both — see
 `python-mcp-gateway-e6o`.
 
-`icons/` carries Tauri's default icon list, and two of the five entries are there for the
+`icons/` carries Tauri's default icon list, and `bundle.icon` in `tauri.conf.json` has to
+name it: the bundler reads that list rather than the folder, and without it the `.deb`
+ships iconless and the AppImage refuses to build. Two of the five entries are there for the
 build rather than for the eye: `icon.ico` is compiled into a **Windows Resource file by
 `tauri_build::build()`**, so a missing one is not an app with a blank icon, it is a crate
 that does not compile — on Windows only, where no developer here builds. `icon.icns` is the

@@ -130,6 +130,29 @@ def test_the_bundle_carries_the_interpreter_and_the_seed_files() -> None:
     assert resources["seed"] == "seed"
 
 
+def test_the_bundle_names_its_icons_and_one_is_a_square_png() -> None:
+    """`bundle.icon` is a list the bundler reads, not a folder it goes looking in.
+
+    Leave it out and the macOS `.app` and the Windows resource still come out fine --
+    `tauri-build` finds `icons/icon.ico` by a default path -- so nothing on a developer's Mac
+    says it is missing. Linux is where it shows: the `.deb` quietly ships without an icon, and
+    the AppImage bundler panics with "couldn't find a square icon". That was first seen on
+    the Linux release leg, the one place nobody here builds.
+    """
+    icons = config()["bundle"]["icon"]
+    for icon in icons:
+        assert (TAURI / icon).is_file(), f"{icon} is listed but not on disk"
+
+    def size(path: Path) -> tuple[int, int]:
+        # Width and height are the first two fields of the IHDR chunk, at a fixed offset.
+        header = path.read_bytes()[:24]
+        assert header[:8] == b"\x89PNG\r\n\x1a\n", f"{path.name} is not a PNG"
+        return int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big")
+
+    pngs = [size(TAURI / icon) for icon in icons if icon.endswith(".png")]
+    assert any(w == h for w, h in pngs), f"no square PNG among {icons}"
+
+
 def test_the_bundle_name_needs_no_quoting() -> None:
     """`MCP-Gateway.app`, not `MCP Gateway.app`.
 
