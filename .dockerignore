@@ -1,0 +1,31 @@
+# What `docker build` is allowed to send to the daemon.
+#
+# An allowlist, not a denylist, and it mirrors the `COPY` lines in `Containerfile` one for
+# one. A denylist was the obvious first shape and it is the wrong one here: the context is
+# the whole working tree, so every directory anybody adds later -- a second build tree, a
+# cache, a downloaded SDK -- is included until somebody remembers to add a line. The cost of
+# forgetting is not a bad image (the `COPY` lines decide that) but a build that hands the
+# daemon the entire tree before it starts.
+#
+# The number that made this worth writing: 3.8 GB, measured on a development Mac, of which
+# `src/desktop/src-tauri/target` alone was 3.6 GB. The same build on a server that had never
+# run `make tauri-bundle` was 66 MB, so this is invisible exactly where it is cheap and
+# expensive exactly where people work. `make container-image TARGET=you@box` pays it twice,
+# once to pack and once to stream.
+#
+# The rule when `Containerfile` learns a new `COPY`: add the matching `!` line here. A
+# missing one fails the build loudly (`COPY failed: no source files`), which is the failure
+# worth having.
+*
+
+!pyproject.toml
+!README.md
+!LICENSE
+!src
+
+# `src/desktop` is the Tauri shell: not a Python package, excluded from the wheel by
+# `[tool.setuptools.packages.find] exclude = ["desktop*"]`, and never installed by the
+# `pip install .` this image runs. It is re-excluded after `!src` rather than being left out
+# of the allowlist because `src` has to come in whole for `mcp_gateway` and `mcp_gateway_ui`.
+# This single line is the 3.6 GB.
+src/desktop

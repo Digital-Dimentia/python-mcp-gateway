@@ -82,7 +82,13 @@ mkdir -p ~/mcp-gateway && cd ~/mcp-gateway
 cp -r /path/to/python-mcp-gateway/examples/remote-compose/. .   # compose.yaml + config/
 cp config/gateway.env.example config/gateway.env
 chmod 600 config/gateway.env
+printf 'MCPGW_UID=%s\nMCPGW_GID=%s\n' "$(id -u)" "$(id -g)" > .env   # who the container writes as
 ```
+
+That last line is worth one sentence. The container runs unprivileged, and `.env` tells it
+*which* unprivileged account, so that a save from the admin UI leaves `config/servers.yaml`
+owned by you and still editable by hand. Skip it and the container falls back to uid 1000,
+which is right only if that happens to be you.
 
 `gateway.env` holds values and `servers.yaml` holds `${NAME}` references to them. **Do not
 set `WS_ACCESS_KEY`.** Remote mode is keyless, and a key makes the desktop app's connection
@@ -181,6 +187,5 @@ The admin UI is then at `http://127.0.0.1:8765/ui/` in a browser on the laptop.
 | A backend fails with `cannot reach http://127.0.0.1:…` | Its container is down, or publishes a different port, or publishes on a bridge IP instead of `127.0.0.1`. Check `docker compose ps` and the `ports:` line. |
 | A backend fails with `HTTP 401` or `HTTP 403` | The header is wrong or its value is. `--check` says whether the `${NAME}` resolves; the server decides whether the value is right. |
 | A backend fails with `HTTP 404` on every call | The url's path is wrong. That is not a lost session: the gateway only renews a session it was actually given. |
-| Saving in the admin UI fails with `cannot write catalogue` | `./config` is not writable by the container, or a single file was mounted instead of the directory. |
-| Files in `./config` end up owned by root | The container runs as root, so a save from the UI writes as root. Change the owner back, or edit only through the UI. |
+| Saving in the admin UI fails with `cannot write catalogue`, or `./config` files end up owned by someone else | The container is writing as the wrong account: `.env` is missing or holds the wrong numbers. `cat .env` and compare with `id -u` and `id -g`, then `docker compose up -d`. Failing that, `./config` is not writable, or a single file was mounted instead of the directory. |
 | Works with `docker run -p 127.0.0.1:8765:8765` but the app cannot connect | A published port on a bridge network is not the box's loopback. Use `network_mode: host`, as the compose file does. |

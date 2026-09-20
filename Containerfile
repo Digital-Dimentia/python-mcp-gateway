@@ -33,6 +33,26 @@ RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir .
 # config_writer.py, which writes a .bak next to it and replaces the file atomically.
 VOLUME /config
 
+# Drop root. The daemon needs no privilege it would have as root: it binds 8765, which is
+# above 1024, reads /config and writes servers.yaml back into it, and spawns backends that
+# want the same account, not a stronger one.
+#
+# What running as root actually cost, before this line: every save from the admin UI landed
+# in the bind-mounted ./config as root:root, so the account that laid the directory out
+# could no longer hand-edit its own catalogue -- and the editor that refused to save was a
+# long way from the UI click that caused it.
+#
+# A fixed uid rather than a name, because the number is what a bind mount compares. 1000 is
+# the first ordinary account on a Debian or Ubuntu host and is unused in python:3.12-slim,
+# so the common case -- a single-user box, a checkout owned by that user -- lines up with no
+# configuration at all. Any other host sets `user:` in compose, which is what
+# examples/remote-compose/compose.yaml does; overriding it needs nothing from this image,
+# since every path the daemon reads is world-readable and only /config must be writable.
+# Not `--system`: that reserves a uid below SYS_UID_MAX (999 on Debian) and warns when
+# handed 1000, and the whole point of the number is that it is the *ordinary* first account.
+RUN useradd --uid 1000 --user-group --no-create-home gateway
+USER gateway
+
 # The daemon's port. Backends in a container are usually `url:` entries -- other containers
 # on their own ports -- and a `command:` backend needs its runtime (node, uv) added to an
 # image built FROM this one; this one carries Python and nothing else.

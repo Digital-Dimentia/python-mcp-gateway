@@ -25,6 +25,12 @@ services:
   gateway:
     image: python-mcp-gateway:local
     network_mode: host
+    # Write ./config as the account that owns it. The image already drops to uid 1000, which
+    # is right on a single-user box and wrong everywhere else -- a save from the admin UI
+    # would leave servers.yaml owned by a uid that cannot open it here. `.env` beside this
+    # file carries the real numbers; see step 2 of README.md. The defaults are the image's
+    # own, so `docker compose up` without an `.env` behaves exactly as the image does.
+    user: "${MCPGW_UID:-1000}:${MCPGW_GID:-1000}"
     environment:
       MCP_GATEWAY_HOST: 127.0.0.1
       MCP_GATEWAY_PORT: "8765"

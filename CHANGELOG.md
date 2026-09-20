@@ -9,6 +9,16 @@ nobody reads.
 
 ## Unreleased
 
+**The container runs as you, not as root, and building it no longer ships your whole
+working tree.** The image drops to an unprivileged account, so a save from the admin UI
+leaves `config/servers.yaml` owned by the account that laid the directory out and still
+editable by hand — where before it came back `root:root` and the next hand-edit simply could
+not save. `examples/remote-compose/` carries an `.env` with your `id -u` and `id -g` for
+hosts where that account is not uid 1000, and its README makes writing it a step. There is
+also a `.dockerignore` now, mirroring the `COPY` lines: a build from a development machine
+sent the daemon 3.8 GB of context, almost all of it the Tauri build tree, and sends a few
+megabytes instead. Nothing about the resulting image changed but its user.
+
 **A backend can be a URL, so the gateway can run where its MCP servers are containers.** A
 `servers.yaml` entry may name `url:` instead of `command:`, and the gateway speaks MCP's
 Streamable HTTP to it: JSON or SSE replies, the session header, the GET stream for what the
