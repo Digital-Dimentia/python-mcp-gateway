@@ -43,7 +43,7 @@ from typing import Any
 from mcp_gateway import __version__, errors, jsonrpc, naming, protocol
 from mcp_gateway.admin import Admin, error_result, is_admin_tool, text_result, tool_definitions
 from mcp_gateway.admin_channel import AdminConnection, LogStream
-from mcp_gateway.backend import Backend
+from mcp_gateway.backend import Backend, BackendStatus
 from mcp_gateway.catalogue import Catalogue
 from mcp_gateway.clipboard import Workbench
 from mcp_gateway.config import ConfigError, GatewayConfig
@@ -68,6 +68,15 @@ logger = logging.getLogger(__name__)
 #: `idle_ttl`, which is a granularity rather than a delay: the point is reclaiming a
 #: process nobody is using, and a few seconds either way changes nothing about that.
 IDLE_SWEEP_SECONDS = 15.0
+
+#: How often a failed backend is reconsidered.
+#:
+#: A granularity, not a delay: what decides when an attempt actually happens is
+#: `Backend.restart_backoff_seconds`, which is 0 for the first retry and then doubles to a
+#: one-minute cap. This only has to be fine enough that the common case -- a backend whose
+#: dependency was a few seconds behind it at startup -- recovers while somebody is still
+#: watching, rather than a minute later.
+RECOVERY_SWEEP_SECONDS = 5.0
 
 class Gateway:
     """Everything the daemon owns, and the handlers a `Session` calls into."""
@@ -99,6 +108,7 @@ class Gateway:
         #: Who is watching which resource. See `notifications.md`.
         self.subscriptions = Subscriptions()
         self._idle_sweeper: asyncio.Task[None] | None = None
+        self._recovery_sweeper: asyncio.Task[None] | None = None
         self.supervisor = Supervisor(
             config,
             store,
@@ -610,15 +620,23 @@ class Gateway:
 
     async def restart_backend(self, name: str) -> bool:
         restarted = await self.supervisor.restart(name)
-        # Whatever it published before is not what it publishes now, whether or not the
-        # restart succeeded.
-        self.catalogue.invalidate(name)
+        # Announced whether or not the restart succeeded: whatever it published before is
+        # not what it publishes now either way, and a caller who asked for this is watching.
+        # The recovery sweeper is the one caller that announces only on success -- see
+        # `_recover_failed_backends` for why an unattended retry is different.
+        await self._announce_backend_change(name)
+        return restarted
 
-        # ...and a client holding the old listing has no way to find that out. A restart is
-        # a catalogue change exactly as a reload is, and the two arrive here by different
-        # doors only because one of them re-reads a file first: an operator who restarts a
-        # backend after editing it watches an open UI go on showing what that backend used
-        # to publish. One per kind, debounced by the notifier like every other announcement.
+    async def _announce_backend_change(self, name: str) -> None:
+        """Forget what a backend published, tell the clients, and put its session back.
+
+        A client holding the old listing has no way to find out on its own. A restart is a
+        catalogue change exactly as a reload is, and the two arrive here by different doors
+        only because one of them re-reads a file first: an operator who restarts a backend
+        after editing it watches an open UI go on showing what that backend used to publish.
+        One notification per kind, debounced by the notifier like every other announcement.
+        """
+        self.catalogue.invalidate(name)
         for method in (
             protocol.TOOLS_LIST_CHANGED,
             protocol.PROMPTS_LIST_CHANGED,
@@ -627,7 +645,6 @@ class Gateway:
             await self.notifier.list_changed(method)
         await self.resubscribe(name)
         await self.apply_log_level(only=name)
-        return restarted
 
     async def reload(self, *, dry_run: bool = False) -> dict[str, Any]:
         """Re-read both files and apply the difference.
@@ -765,6 +782,63 @@ class Gateway:
         await self.supervisor.start_all()
         if any(b.spec.idle_ttl is not None for b in self.supervisor.all):
             self._idle_sweeper = asyncio.create_task(self._sweep_idle_backends())
+        self._recovery_sweeper = asyncio.create_task(self._recover_failed_backends())
+
+    async def _recover_failed_backends(self) -> None:
+        """Try a failed backend again once its backoff has elapsed.
+
+        **Unconditional, unlike the idle sweeper beside it, and the difference is the
+        point.** `idle_ttl` is a feature a deployment opts into, so a daemon nobody
+        configured it on should not carry a task waking up to find nothing to do. Recovery
+        is not a feature anybody opts into: every deployment wants a backend that failed at
+        startup to come back, and the work when nothing has failed is one pass over a list
+        that is usually empty.
+
+        What this fixes is ordinary rather than exotic. Compose starts a gateway alongside
+        the containers it proxies; whichever one is not listening in the second the gateway
+        dials it was recorded as failed and stayed that way, with `curl` on the box reaching
+        the port perfectly well. A `SIGHUP` did not help either, because reload restarts
+        only what *changed* and nothing had.
+
+        Nothing new decides the timing. `Backend._fail` already sets the floor, and
+        `restart_backoff_seconds` already ramps 0, 1, 2, 4, 8 ... to a one-minute cap -- so
+        a dependency a moment late is retried almost at once, and a backend that is simply
+        broken is dialled once a minute rather than hammered. That cap is also the answer to
+        the obvious objection: a `url:` backend is somebody else's process, and once a minute
+        against a server the operator configured is politeness, where never is a gateway that
+        needs nursing after every deploy.
+
+        Only `FAILED` is reconsidered. `DISABLED` and `STOPPED` are somebody's decision and
+        `IDLE` is the sleep feature working; reviving any of those would be this loop
+        overruling a person.
+        """
+        try:
+            while True:
+                await asyncio.sleep(RECOVERY_SWEEP_SECONDS)
+                await self.recover_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - the sweeper must not take the daemon down
+            logger.exception("recovery sweep failed")
+
+    async def recover_once(self) -> list[str]:
+        """One pass of the loop above, returning the backends that came back.
+
+        Separate from the timer for the same reason `supervisor.sweep_idle` is: the rule
+        about *which* backends are eligible is worth testing without a test that sleeps.
+        """
+        recovered: list[str] = []
+        for backend in self.supervisor.all:
+            if backend.status is not BackendStatus.FAILED or backend.cooling_off:
+                continue
+            logger.info("backend %r: retrying a failed start", backend.name)
+            if await self.supervisor.restart(backend.name):
+                recovered.append(backend.name)
+                # Announced only on success. A failed attempt changes nothing a client could
+                # act on, and announcing one every minute for a backend that is simply broken
+                # would be a notification storm about no news.
+                await self._announce_backend_change(backend.name)
+        return recovered
 
     async def _sweep_idle_backends(self) -> None:
         """Put unused backends to sleep, on a timer. See `supervisor.sweep_idle`.
@@ -795,11 +869,13 @@ class Gateway:
         )
 
     async def stop(self) -> None:
-        if self._idle_sweeper is not None:
-            self._idle_sweeper.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._idle_sweeper
-            self._idle_sweeper = None
+        for task in (self._idle_sweeper, self._recovery_sweeper):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._idle_sweeper = None
+        self._recovery_sweeper = None
         await self.notifier.flush()
         if self.log_stream is not None:
             logging.getLogger().removeHandler(self.log_stream)

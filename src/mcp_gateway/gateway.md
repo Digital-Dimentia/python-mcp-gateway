@@ -30,6 +30,36 @@ start total, and a UI that observes exactly what the agent is using.
 
 `initialize` itself never waits on this; see [`session.md`](session.md).
 
+## A backend that failed to start is tried again
+
+`_recover_failed_backends` runs beside the idle sweeper and reconsiders anything in
+`FAILED` whose backoff has elapsed. The case it exists for is ordinary rather than exotic:
+compose starts a gateway alongside the containers it proxies, and whichever one was not
+listening in the second the gateway dialled it was recorded as failed and stayed that way —
+with `curl` on the box reaching the port perfectly well, and `SIGHUP` no help, because
+reload restarts only what *changed* and nothing had.
+
+Almost none of this is new machinery. `Backend._fail` has always set the floor, and
+`restart_backoff_seconds` has always ramped 0, 1, 2, 4, 8 … to a one-minute cap. What was
+missing was anything that ever looked at that floor again: every reader of `_retry_at` was
+either refusing an early *manual* restart or reporting the wait to an operator.
+
+Three choices worth stating, because each could reasonably have gone the other way:
+
+- **It runs unconditionally**, where the idle sweeper starts only if some backend sets
+  `idle_ttl`. Sleeping is a feature a deployment opts into; recovery is not — every
+  deployment wants a backend that failed at startup to come back, and a pass over a list
+  that is usually empty costs nothing.
+- **Only `FAILED`.** `DISABLED` and `STOPPED` are somebody's decision and `IDLE` is the
+  sleep feature working. Reviving any of those would be the loop overruling a person.
+- **It announces only on success.** `restart_backend` announces either way, because a
+  caller asked and is watching. An unattended retry that failed is not news, and saying so
+  once a minute for a backend that is simply broken would be a storm about nothing.
+
+The one-minute cap is also the answer to the obvious objection, that a `url:` backend is
+somebody else's process and polling it is rude. Once a minute against a server the operator
+configured is politeness; never is a gateway that needs nursing after every deploy.
+
 ## What the backends are told the clients can do
 
 `client_capability_union()` recomputes, on every connect and disconnect, the block handed to

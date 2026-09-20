@@ -9,6 +9,16 @@ nobody reads.
 
 ## Unreleased
 
+**A backend that failed to start is tried again, instead of staying down until somebody
+notices.** Start a gateway alongside the containers it proxies and one of them will
+sometimes not be listening in the second the gateway dials it; that backend used to stay
+dead, with `curl` on the box reaching its port perfectly well, and a `SIGHUP` was no help
+because reload restarts only what *changed*. It now retries on the backoff it already had —
+immediately, then 1s, 2s, 4s, up to a minute — so a dependency a moment late costs a few
+seconds rather than a manual restart, and a backend that is simply broken is dialled once a
+minute rather than hammered. Disabled and stopped backends are left alone: those are
+decisions, not failures.
+
 **The gateway's own tools offer your servers instead of asking you to type one.**
 `gateway__backend_health` and `gateway__restart_backend` take a backend name, and that
 argument now carries the configured servers as an `enum` — a dropdown in the admin UI, and
