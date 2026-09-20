@@ -197,6 +197,13 @@ make tauri-check      # cargo fmt --check, clippy -D warnings, cargo test
 `make tauri-python` is the one step here that downloads anything other than a Python
 package, and the one a corporate network breaks: see *Building behind a firewall* below.
 
+**Re-stage the interpreter with the app stopped.** `cargo tauri dev` treats every file under
+`src-tauri/` as a source file, and `resources/python` is a whole CPython living there — so a
+re-stage underneath a running `tauri dev` restarts the app once per file `pip` writes, which
+on screen is a window that says the gateway could not start and retries forever. `.taurignore`
+keeps the watcher off that tree; the app still has to be restarted by hand afterwards, since
+the daemon it would start is the one that just changed.
+
 **`make tauri-python` comes first, once, and `make tauri-check` needs it too.** `tauri-build`
 validates every path in `bundle.resources` at *compile* time, so the crate does not build at
 all until the interpreter is on disk — and what it says when it is not is `resource path

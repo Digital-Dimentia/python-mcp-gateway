@@ -1,0 +1,12 @@
+# What `cargo tauri dev` must not watch.
+#
+# `resources/python` is a whole CPython, staged by `scripts/bundle_python.py`. It is a build
+# *output* that happens to live under `src-tauri/`, and the dev watcher treats every file
+# under this directory as a source file -- so re-staging the interpreter while the app is
+# running restarts it once per file written, which reads as a gateway that will not start
+# and a window stuck retrying. The app has to be restarted after a re-stage anyway, and
+# doing that by hand is one keystroke against a rebuild loop nobody can interrupt.
+resources/
+
+# Cargo's own build tree, which the release bundle also stages an interpreter into.
+target/

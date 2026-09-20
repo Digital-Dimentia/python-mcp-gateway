@@ -127,6 +127,22 @@ def test_the_window_may_not_open_a_socket_of_its_own() -> None:
     assert "127.0.0.1" not in csp, csp
 
 
+def test_the_dev_watcher_does_not_watch_the_staged_interpreter() -> None:
+    """A rebuild loop that looks exactly like a gateway that will not start.
+
+    `cargo tauri dev` treats every file under `src-tauri/` as a source file. `resources/
+    python` is a whole CPython staged there by `scripts/bundle_python.py`, so re-staging it
+    while the app runs restarts the app once per file written -- and a window that keeps
+    killing its own child reads as "the gateway could not start", retrying forever. The
+    interpreter is a build output that happens to live under this directory; saying so here
+    is what keeps the watcher off it.
+    """
+    ignore = (DESKTOP / "src-tauri" / ".taurignore").read_text()
+    entries = [line.strip() for line in ignore.splitlines() if line.strip() and not line.startswith("#")]
+    assert "resources/" in entries, entries
+    assert "target/" in entries, entries
+
+
 def test_the_frontend_is_the_staged_view_and_not_a_second_copy() -> None:
     assert config()["build"]["frontendDist"] == "../.staging/ui"
 
