@@ -49,6 +49,36 @@ design was right, and both assumptions are pinned from the Python side in
 `tests/test_desktop_contract.py` so that tightening either one fails a Python test rather
 than someone's window.
 
+## The one document this window loads that we did not write
+
+A backend can ship a panel as HTML — SEP-1865's `text/html;profile=mcp-app` — and the daemon
+serves it at `/panel/<token>` under `Content-Security-Policy: sandbox allow-scripts`, which
+is what puts it in an opaque origin. See [`panels.md`](../mcp_gateway/panels.md) for why that
+header, and not the `<iframe>` attribute, is the boundary.
+
+This window cannot frame that URL, and the reason is the section above working as intended:
+the page is served from the bundle at `tauri://localhost` and its policy names `ipc:` and no
+network at all. A relative `/panel/<token>` resolves against `tauri://localhost` and finds
+nothing; an absolute `http://127.0.0.1:<port>/…` is refused before a request exists.
+
+So the host answers a scheme of its own. `panelframe.rs` registers `panel:`, fetches that
+path from the daemon over loopback — a hand-written GET, since the one address this process
+dials is 127.0.0.1 — and hands the webview the bytes **under the daemon's own
+`Content-Security-Policy`, copied verbatim**. It builds no policy and parses none. Same rule
+as `proxy.rs`: this layer carries what it is given and does not understand it, because a
+layer that reshaped it would quietly make the browser and the window disagree about what a
+panel may do.
+
+Two consequences worth stating:
+
+- **`frame-src panel: http://panel.localhost` is the window's only framing grant**, and it is
+  not a hole in "the page reaches no network": it names this process's scheme, not the
+  daemon's origin. Both spellings because WebView2 serves a custom scheme from
+  `http://<scheme>.localhost/` and every other platform from `<scheme>://localhost/`.
+- **The token is checked against the alphabet Python mints before it is written into a
+  request line.** This module composes HTTP by hand from a string that arrived over IPC, so
+  that check is what stands between a panel URL and request splitting.
+
 ## Two connection modes
 
 The gateway does not have to be a child of this app. The **Connection** screen chooses:

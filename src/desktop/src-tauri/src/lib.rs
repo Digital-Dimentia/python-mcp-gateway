@@ -12,6 +12,7 @@
 
 pub mod appdata;
 pub mod key;
+pub mod panelframe;
 pub mod pathenv;
 pub mod proxy;
 pub mod session;
@@ -201,6 +202,19 @@ fn conn_save(shell: State<'_, Shell>, settings: Connection) -> Result<Connection
     settings::save(&shell.layout.data_dir, &settings).map_err(|err| err.to_string())?;
     *shell.inner.connection.lock().unwrap() = settings.clone();
     Ok(settings)
+}
+
+/// The URL to frame one backend's HTML panel with, for a path `admin.panel.open` answered.
+///
+/// The page hands over the path it was given and gets back a `panel://` URL this process
+/// answers. It is a command rather than a string the page composes because the spelling is
+/// the *host's* -- WebView2 serves a custom scheme from `http://<scheme>.localhost/` and
+/// every other platform from `<scheme>://localhost/` -- and a page branching on `navigator`
+/// would be guessing at what its own host does. See `panelframe`.
+#[tauri::command]
+fn gw_panel_url(_shell: State<'_, Shell>, path: String) -> Result<String, String> {
+    let token = panelframe::token_of(&path).ok_or("that is not a panel url")?;
+    Ok(panelframe::framable(token))
 }
 
 /// Tear down whatever is running and start again from the saved settings.
@@ -613,6 +627,60 @@ async fn wait_or_switch(
     }
 }
 
+/// Answer one `panel://` request: the daemon's bytes under the daemon's policy, or a refusal.
+///
+/// **Every failure is a document rather than a status alone**, because the only thing that
+/// will ever read this is an `<iframe>` in the results column, and an empty frame is the one
+/// outcome that tells a person nothing. The refusals are deliberately plain text: they are
+/// this process speaking, not a backend, and nothing here should be able to put markup on
+/// the screen that did not come through the policy below.
+async fn serve_panel(port: Option<u16>, path: &str) -> tauri::http::Response<Vec<u8>> {
+    let Some(port) = port else {
+        return refusal("The gateway is not running, so there is no panel to show.");
+    };
+    let Some(token) = panelframe::token_of(path) else {
+        return refusal("That is not a panel address.");
+    };
+    let panel = match panelframe::fetch(port, token).await {
+        Ok(panel) => panel,
+        Err(err) => return refusal(&format!("That panel could not be read: {err}")),
+    };
+    if panel.status != 200 {
+        // A spent or lapsed token, which is ordinary: a panel URL is single-use and lives
+        // for seconds. Saying so beats a blank frame.
+        return refusal("That panel URL has already been used, or has expired.");
+    }
+    if panel.csp.is_empty() {
+        // The daemon always sends one. If it did not, this process is not the place to
+        // invent one -- serving a backend's document with no policy at all is the failure
+        // this whole module exists to prevent.
+        return refusal("That panel arrived without a content security policy; refusing it.");
+    }
+    tauri::http::Response::builder()
+        .status(200)
+        .header(
+            "Content-Type",
+            if panel.content_type.is_empty() { "text/html; charset=utf-8" } else { &panel.content_type },
+        )
+        // Verbatim, never composed here. See `panelframe`.
+        .header("Content-Security-Policy", &panel.csp)
+        .header("Cache-Control", "no-store")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(panel.body)
+        .unwrap_or_else(|_| refusal("That panel could not be delivered."))
+}
+
+/// What the frame shows when there is nothing to show. Plain text under a policy that
+/// permits nothing at all, because this is the shell talking.
+fn refusal(why: &str) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(404)
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .header("Content-Security-Policy", "sandbox; default-src 'none'")
+        .body(format!("{why}\n").into_bytes())
+        .expect("a static response builds")
+}
+
 // --- the app -----------------------------------------------------------------------------
 
 /// Start the app.
@@ -625,8 +693,20 @@ pub fn run() {
             gw_status,
             conn_settings,
             conn_save,
-            conn_apply
+            conn_apply,
+            gw_panel_url
         ])
+        // The one document this window loads that nobody here wrote. The handler fetches it
+        // from the daemon and copies the daemon's own `Content-Security-Policy` onto the
+        // answer, `sandbox allow-scripts` included -- so the panel lands in an opaque origin
+        // and cannot reach this window, its storage, or the IPC. See `panelframe`.
+        .register_asynchronous_uri_scheme_protocol(panelframe::SCHEME, |app, request, responder| {
+            let port = app.app_handle().state::<Shell>().inner.port();
+            let path = request.uri().path().to_string();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(serve_panel(port, &path).await);
+            });
+        })
         .setup(|app| {
             let resource_dir = app.path().resource_dir()?;
             let data_dir = app.path().app_data_dir()?;

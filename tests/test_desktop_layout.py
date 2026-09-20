@@ -118,6 +118,13 @@ def test_the_window_may_not_open_a_socket_of_its_own() -> None:
     # The same skeleton as `webui.py`'s: nothing loads unless the page shipped it.
     for directive in ("default-src 'none'", "script-src 'self'", "frame-ancestors 'none'"):
         assert directive in csp, csp
+    # One exception, and it is still not the network: a backend's HTML panel, framed from
+    # the custom scheme `panelframe.rs` answers. Both spellings, because WebView2 serves a
+    # custom scheme as `http://<scheme>.localhost` and every other platform as `<scheme>:`.
+    # Notably absent is the daemon's own origin -- the window frames what this process
+    # fetched, never what it could have fetched itself.
+    assert "frame-src panel: http://panel.localhost" in csp, csp
+    assert "127.0.0.1" not in csp, csp
 
 
 def test_the_frontend_is_the_staged_view_and_not_a_second_copy() -> None:

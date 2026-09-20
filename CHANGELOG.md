@@ -27,12 +27,15 @@ own result card, so a panel still cannot make a call you do not see. The admin U
 `initialize` which tiers it renders, which is what a backend reads to decide what to publish;
 a panel offering both gets the declarative one, because DOM this page built beats a document
 it merely framed. `examples/panel_server.py` grew a `gauge` tool so both tiers sit in one
-file and the difference is one `mimeType`. **Two honest limits**: the desktop window cannot
-frame a panel yet — its content policy has no `frame-src` and the page is not served from the
-daemon — and says so rather than showing an empty box; and because the frame has no
-`allow-same-origin`, `'self'` in a panel's own CSP matches nothing, so a panel that loads a
-sibling `.js` works elsewhere and fails here. Inline the script. Both are written down in
-`src/mcp_gateway/panels.md` rather than left to be discovered.
+file and the difference is one `mimeType`. **The desktop window frames one too**, which it could not have done
+by pointing an iframe at the daemon: its page comes off the bundle and its content policy
+names no network, so the shell registers a `panel:` scheme of its own, fetches the document
+over loopback and hands its webview the bytes under the daemon's own policy, copied verbatim
+— it builds no policy and parses none, the same rule the socket proxy beside it follows.
+**One honest limit**: because the frame has no `allow-same-origin`, `'self'` in a panel's own
+CSP matches nothing, so a panel that loads a sibling `.js` works elsewhere and fails here.
+Inline the script. It is written down in `src/mcp_gateway/panels.md` rather than left to be
+discovered.
 
 **A notification queued when the daemon shuts down is now sent, not dropped.** The gateway
 debounces `list_changed` by a quarter-second and flushes what is pending before closing the

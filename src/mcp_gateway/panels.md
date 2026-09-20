@@ -88,6 +88,26 @@ left to be discovered; a panel written for this gateway inlines its script. `'se
 the policy because it says what the directive means and costs nothing — what it does not do
 is work.
 
+## Two hosts, one policy
+
+A browser frames the path this endpoint answers directly: it is a relative URL on the origin
+that served `/ui`, which is this daemon. The desktop shell cannot — its page comes off the
+bundle at `tauri://localhost` and its content security policy names `ipc:` and nothing else,
+which is the machine-checkable form of "that page opens no sockets". Pointing an `<iframe>`
+at `/panel/<token>` there resolves against `tauri://localhost` and finds nothing; pointing it
+at `http://127.0.0.1:<port>/…` is refused before a request exists. Both are the design
+working.
+
+So the shell answers a scheme of its own, `panel://localhost/<token>`, and `panelframe.rs`
+fetches this endpoint over loopback and **copies this response's `Content-Security-Policy`
+header verbatim** onto what it hands its webview. It does not build a policy, parse one, or
+hold an opinion about one — that is this module's job, and a second implementation in another
+language would be a second thing to keep in step.
+
+Which means the sentence worth remembering is the same in both hosts: *the policy a panel
+runs under is the one built here, from the backend's own sanitized `csp`.* Only the address
+differs.
+
 ## Lifetime
 
 `PanelStore` is one per process, on the `Gateway`, for the same reason the clipboard is: the

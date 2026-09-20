@@ -166,7 +166,7 @@ went through:
 | rendered by | `panel_declarative.js`, as DOM | the browser, in a frame |
 | executes backend code | never | yes, which is what [`panels.md`](panels.md) is about |
 | needs an endpoint | no | `/panel/<token>`, with its own policy |
-| works in the desktop shell | yes | not yet — python-mcp-gateway-u5s.5 |
+| works in the desktop shell | yes, over the socket it already has | yes, through the shell's own `panel:` scheme |
 
 The `csp` and `permissions` members sanitized above finally *mean* something on the second
 row: [`panels.py`](panels.md) turns `csp` into the real `Content-Security-Policy` a panel is

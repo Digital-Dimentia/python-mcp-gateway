@@ -21,7 +21,10 @@ over `globalThis.WebSocket`.
 
 The Tauri window's content security policy is *narrower* than the one below: its
 `connect-src` names `ipc:` and drops `ws:`/`wss:` entirely, which is the machine-checkable
-form of "that page opens no sockets". `tests/test_desktop_layout.py` asserts it.
+form of "that page opens no sockets". `tests/test_desktop_layout.py` asserts it. Its one
+`frame-src` is not an exception to that: it names the shell's *own* `panel:` scheme, answered
+by `panelframe.rs` in this process, and not the daemon's origin — so a panel still arrives
+through the host rather than over a connection the page made. See [`panels.md`](panels.md).
 
 ## The one thing the page may frame
 

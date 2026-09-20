@@ -36,23 +36,23 @@
 // the panel is about, the height it would like to be, and the theme it is being shown in.
 // None of that reaches the gateway.
 
-import { el, renderToolResult } from './render.js';
-import { inShell } from './tauri-transport.js';
+import { el } from './render.js';
+import { inShell, panelUrl } from './tauri-transport.js';
 
 /**
- * Whether this host can frame a panel at all.
+ * The URL to frame, for the path `admin.panel.open` answered.
  *
- * False in the desktop window, and that is a fact about the window rather than a setting:
- * its content policy is `connect-src ipc:` with no `frame-src`, the page is loaded from
- * `tauri://localhost`, and the daemon's origin is not one it can reach. A panel URL is
- * relative -- in the shell it would resolve against `tauri://localhost` and find nothing.
- *
- * So the shell says so. Making it work means a `register_uri_scheme` handler in Rust
- * serving a staged document under the same sandbox header, which is python-mcp-gateway-u5s.5;
- * until then, "this window cannot show this" beats an empty box. The declarative tier is
- * unaffected in both hosts, which is most of why it exists.
+ * Two hosts, and the difference is not cosmetic. In a browser the daemon's path is already
+ * framable: it is a relative URL on the origin that served this page. In the desktop shell
+ * it is not -- the page comes off the bundle at `tauri://localhost` and its policy names no
+ * network -- so the host answers a custom scheme of its own, fetching that path from the
+ * daemon and copying the daemon's content security policy onto the answer, `sandbox
+ * allow-scripts` included. Either way the document lands in an opaque origin under the
+ * policy `panels.py` built; only the address differs. See `panelframe.rs`.
  */
-export const canFramePanels = !inShell;
+async function framableUrl(path) {
+  return inShell ? await panelUrl(path) : path;
+}
 
 /** The `profile` parameter this module renders. SEP-1865's own spelling. */
 export const PROFILE = 'mcp-app';
@@ -204,16 +204,6 @@ export function bridge({ port, call, result, onAction, onResize, onNote }) {
  * `mcpgw://` URI and answers with `{ url }` -- a short-lived, single-use capability URL.
  */
 export function renderHtmlPanel({ reference, call, result, onAction, mint }) {
-  if (!canFramePanels) {
-    return el('div', { class: 'panel-html' }, [
-      el('p', {
-        class: 'note',
-        text: 'This panel is SEP-1865\u2019s HTML tier, which this window cannot frame. '
-          + 'Open the same gateway in a browser to see it; showing the result instead.',
-      }),
-      renderToolResult(result),
-    ]);
-  }
   const note = el('p', { class: 'note' });
   const frame = el('iframe', {
     class: 'panel-frame',
@@ -258,10 +248,12 @@ export function renderHtmlPanel({ reference, call, result, onAction, mint }) {
   //: stops a panel whose card is gone from still answering.
   body.closePanel = () => { link?.close(); };
 
-  mint(reference).then(
-    (minted) => { frame.setAttribute('src', minted.url); },
-    (error) => { say(`That panel could not be opened: ${error.message}`); },
-  );
+  mint(reference)
+    .then((minted) => framableUrl(minted.url))
+    .then(
+      (url) => { frame.setAttribute('src', url); },
+      (error) => { say(`That panel could not be opened: ${error.message}`); },
+    );
 
   return body;
 }

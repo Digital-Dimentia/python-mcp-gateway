@@ -135,6 +135,24 @@ export async function connectionApply() {
 }
 
 /**
+ * The URL to frame a backend's HTML panel with, for the path `admin.panel.open` answered.
+ *
+ * Null in a browser, where the path the daemon gave is already framable: it is a relative
+ * URL on the origin that served the page. In the shell it is not -- the page comes off the
+ * bundle at `tauri://localhost` and its policy names no network at all -- so the host hands
+ * back a `panel://` URL it answers itself, by fetching that path from the daemon and
+ * copying the daemon's own content security policy onto the answer.
+ *
+ * The spelling is the host's to decide and not this file's: WebView2 serves a custom scheme
+ * from `http://<scheme>.localhost/`, everything else from `<scheme>://localhost/`, and a
+ * page branching on `navigator` would be guessing at its own host. See `panelframe.rs`.
+ */
+export async function panelUrl(path) {
+  if (!inShell) return null;
+  return window.__TAURI__.core.invoke('gw_panel_url', { path });
+}
+
+/**
  * Put the deployment's own title on the desktop window. A no-op in a browser, where
  * `document.title` is the whole story.
  *
