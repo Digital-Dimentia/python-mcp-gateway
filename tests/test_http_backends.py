@@ -18,6 +18,7 @@ import pytest
 
 from mcp_gateway import config
 from mcp_gateway.backend import BackendStatus
+from mcp_gateway.naming import encode_resource_uri
 from tests.fixtures.http_backend import HttpBackend
 from tests.fixtures.ws_client import daemon
 
@@ -132,6 +133,68 @@ async def test_a_missing_header_secret_fails_that_backend_by_name(tmp_path) -> N
             await harness.close()
 
 
+class LegacySseServer:
+    """A server speaking the 2024-11-05 HTTP+SSE transport: GET announces, POST is refused.
+
+    Not a working backend -- the gateway cannot talk to one of these, which is the point.
+    All this has to be is recognisable, so the whole of it is the `endpoint` event the old
+    transport opens with.
+    """
+
+    def __init__(self) -> None:
+        self._server: asyncio.base_events.Server | None = None
+
+    @property
+    def url(self) -> str:
+        assert self._server is not None
+        return f"http://127.0.0.1:{self._server.sockets[0].getsockname()[1]}/sse"
+
+    async def __aenter__(self) -> "LegacySseServer":
+        self._server = await asyncio.start_server(self._serve, "127.0.0.1", 0)
+        return self
+
+    async def __aexit__(self, *_exc) -> None:
+        assert self._server is not None
+        self._server.close()
+        await self._server.wait_closed()
+
+    async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            head = await reader.readuntil(b"\r\n\r\n")
+            verb = head.decode("latin-1").split(" ", 1)[0]
+            if verb == "GET":
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                    b"Connection: close\r\n\r\n"
+                    b"event: endpoint\ndata: /messages/?session_id=abc\n\n"
+                )
+            else:
+                writer.write(
+                    b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n"
+                    b"Connection: close\r\n\r\n"
+                )
+            await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+
+
+async def test_a_legacy_http_sse_server_is_named_rather_than_called_unreachable(
+    tmp_path,
+) -> None:
+    """`405, 405, 405` is what an operator gets from `curl` too. The transport is the answer."""
+    async with LegacySseServer() as old:
+        harness = await daemon(tmp_path, servers=url_servers(old.url, "    startup_timeout: 10\n"))
+        try:
+            backend = harness.gateway.backend("remote")
+            assert backend.status is BackendStatus.FAILED
+            assert "HTTP+SSE" in backend.error and "2024-11-05" in backend.error
+            assert "Streamable HTTP proxy" in backend.error
+        finally:
+            await harness.close()
+
+
 async def test_an_unreachable_url_fails_the_start_without_taking_the_daemon_down(
     tmp_path,
 ) -> None:
@@ -164,6 +227,39 @@ async def test_a_session_the_server_forgot_is_renewed_and_the_call_still_answers
             await wait_for(lambda: any(
                 n["method"] == "notifications/tools/list_changed" for n in client.notifications
             ))
+        finally:
+            await harness.close()
+
+
+async def test_a_renewed_session_gets_the_subscriptions_and_the_log_level_back(
+    tmp_path,
+) -> None:
+    """Both belonged to the session the server forgot, and only the gateway knows them.
+
+    A subscription that silently stopped producing looks exactly like a resource that
+    stopped changing, and a client that asked for `debug` an hour ago is not going to ask
+    again -- so a renewal that did not replay these would be a leak nobody could see. What
+    proves it is the far end's own record of what it was asked, after the renewal.
+    """
+    env = {
+        "MOCK_TOOLS": "echo",
+        "MOCK_RESOURCES": "file:///README.md",
+        "MOCK_SUBSCRIBE": "1",
+        "MOCK_LOGGING": "1",
+    }
+    async with HttpBackend(env) as far:
+        harness = await daemon(tmp_path, servers=url_servers(far.url))
+        try:
+            client = await harness.connect()
+            public = encode_resource_uri("remote", "file:///README.md")
+            assert await client.call("resources/subscribe", {"uri": public}) == {}
+            assert await client.call("logging/setLevel", {"level": "debug"}) == {}
+            far.received.clear()
+
+            far.expire()
+            assert "again" in await client.tool_text("remote__echo", {"text": "again"})
+            await wait_for(lambda: "resources/subscribe" in far.received)
+            await wait_for(lambda: "logging/setLevel" in far.received)
         finally:
             await harness.close()
 

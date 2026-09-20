@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Mapping
 from urllib.parse import urlsplit
 
-from mcp_gateway import __version__
+from mcp_gateway import __version__, protocol
 from mcp_gateway.mcp_stdio import MCPClient, MCPProtocolError
 
 logger = logging.getLogger("mcp_gateway.mcp_http")
@@ -211,9 +211,60 @@ class MCPHttpClient(MCPClient):
         self._started = True
 
     async def initialize(self) -> dict[str, Any]:
-        result = await super().initialize()
+        try:
+            result = await super().initialize()
+        except MCPProtocolError as exc:
+            hint = await self._legacy_sse_hint()
+            if hint is None:
+                raise
+            raise MCPProtocolError(hint) from exc
         self._start_listener()
         return result
+
+    async def _legacy_sse_hint(self) -> str | None:
+        """Was that a server speaking the 2024-11-05 HTTP+SSE transport rather than a dead one?
+
+        Only ever asked after the handshake has already failed, and only to say something
+        better than `HTTP 405` -- a `url` that answers a POST with a refusal and a GET with
+        an `endpoint` event is not broken, it is old, and an operator who cannot tell those
+        apart reads the same four lines of `curl` output the next person does.
+
+        Bounded hard: one GET, a couple of seconds, the first few kilobytes. The old
+        transport announces its POST endpoint in the stream's first event, so nothing later
+        would change the answer, and this runs on the path where a backend is already
+        failing to start.
+        """
+        try:
+            response = await asyncio.wait_for(self._send("GET", None), timeout=2.0)
+        except (OSError, asyncio.TimeoutError, MCPProtocolError):
+            return None
+        try:
+            if response.status != 200 or response.content_type != "text/event-stream":
+                return None
+            prefix = await asyncio.wait_for(self._read_prefix(response), timeout=2.0)
+        except (OSError, asyncio.TimeoutError, MCPProtocolError, asyncio.IncompleteReadError):
+            return None
+        finally:
+            response.close()
+        # `events()` drops this one: it is named, and named events carry no JSON-RPC. Here
+        # the name *is* the evidence, so the raw lines are what get looked at.
+        if not any(line.strip() == "event: endpoint" for line in prefix.splitlines()):
+            return None
+        return (
+            f"{self.url} speaks the deprecated HTTP+SSE transport (MCP 2024-11-05), which "
+            "this gateway does not; front it with a Streamable HTTP proxy and point `url` "
+            "at that"
+        )
+
+    async def _read_prefix(self, response: _Response, limit: int = 4096) -> str:
+        parts: list[bytes] = []
+        total = 0
+        async for chunk in response.chunks(self._MESSAGE_LIMIT):
+            parts.append(chunk)
+            total += len(chunk)
+            if total >= limit:
+                break
+        return b"".join(parts).decode("utf-8", errors="replace")
 
     async def stop(self) -> None:
         if not self._started or self._closed:
@@ -449,6 +500,11 @@ class MCPHttpClient(MCPClient):
         for capability, method in _LIST_CHANGED.items():
             if self.supports(capability):
                 await self._handle_notification(method, {})
+        # And what the new session does *not* carry over: whatever the gateway had set on
+        # the old one. This module knows a renewal happened and nothing else -- not the
+        # backend's name, not who subscribed to what -- so it says so and lets the gateway
+        # repair it. See "A session that expires" in `mcp_http.md`.
+        await self._handle_notification(protocol.SESSION_RENEWED, {})
 
     def _renew_later(self) -> None:
         stale = self.session_id

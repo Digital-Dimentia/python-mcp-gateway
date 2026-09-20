@@ -45,6 +45,10 @@ class HttpBackend:
         self.require_headers = require_headers or {}
         #: `(method, headers)` for every HTTP request received, headers lower-cased.
         self.requests: list[tuple[str, dict[str, str]]] = []
+        #: The JSON-RPC method of every message that reached the child, in order. What the
+        #: server was *asked*, as opposed to `requests`, which is the traffic that carried
+        #: it: a refused request never appears here, and a renewal's re-sends do.
+        self.received: list[str] = []
         self.session_id: str | None = None
         self.initializations = 0
         self._child: asyncio.subprocess.Process | None = None
@@ -123,6 +127,8 @@ class HttpBackend:
 
     async def _to_child(self, message: Any) -> None:
         assert self._child is not None and self._child.stdin is not None
+        if isinstance(message, dict) and "method" in message:
+            self.received.append(message["method"])
         self._child.stdin.write((json.dumps(message) + "\n").encode())
         await self._child.stdin.drain()
 

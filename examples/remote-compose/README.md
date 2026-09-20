@@ -132,6 +132,15 @@ SEARCH_TOKEN=...
 The example `search` entry ships with `enabled: false`. Remove that line once the
 container exists.
 
+### A server that only speaks the old SSE transport
+
+`url:` means Streamable HTTP, the transport MCP has had since 2025-03-26. A server still
+offering only the older HTTP+SSE one -- you can tell because its documentation gives you a
+`/sse` URL to `GET` -- cannot be used directly. Put a Streamable HTTP proxy in front of it,
+as one more container on the same private port range, and point `url:` at the proxy. The
+gateway says which case you are in: a backend that fails with *speaks the deprecated
+HTTP+SSE transport* needs the shim, not a different path or a token.
+
 ## 4. Check, then start
 
 ```bash

@@ -9,6 +9,25 @@ nobody reads.
 
 ## Unreleased
 
+**A backend that only speaks the old HTTP+SSE transport now says so, instead of failing as
+if it were unreachable.** `url:` backends speak Streamable HTTP, the transport MCP has had
+since 2025-03-26; the 2024-11-05 one it replaced is a different conversation shape, not a
+different header, and the gateway does not speak it. What it does now is recognise it: a
+handshake that fails is followed by one bounded `GET`, and a stream that opens by
+announcing a POST endpoint is an old server rather than a dead one. `gateway__list_backends`
+reports that, and names the fix — front it with a Streamable HTTP proxy and point `url:` at
+that. The compose example has the paragraph.
+
+**A `url` backend that forgets our session no longer quietly loses your subscriptions and
+your log level.** When a remote MCP server restarts, the gateway runs `initialize` again
+and the call that noticed still answers — but the resource subscriptions and the
+`logging/setLevel` belonged to the session that went away, and nothing re-sent them. A
+subscription that has stopped producing is indistinguishable from a resource that has
+stopped changing, and a client that asked for `debug` an hour ago is not going to ask
+again, so the loss was invisible from both ends. A renewal is now repaired exactly as a
+restarted stdio backend already was: the subscriptions are replayed and the level is
+pushed back down.
+
 **Quitting the desktop app now stops the gateway it started, instead of leaving it running
 with your credentials.** The exit handler deleted its record of the child and left the
 killing to a drop that never happens — the app exits without unwinding — so every quit

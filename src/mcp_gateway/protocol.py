@@ -57,6 +57,15 @@ ROOTS_LIST = "roots/list"
 SAMPLING_CREATE_MESSAGE = "sampling/createMessage"
 ELICITATION_CREATE = "elicitation/create"
 
+#: Not an MCP method. A `url` backend's transport says this to itself after it has had to
+#: run `initialize` a second time, because everything the gateway set on the old session --
+#: resource subscriptions, `logging/setLevel` -- went with it, and only the gateway knows
+#: what those were. It travels the notification channel a backend already has, so nothing
+#: new has to be wired from a transport up to `Gateway`. The `x-` keeps it clear of any
+#: method MCP may one day define; a backend that sent it itself would be asking for exactly
+#: the same repair, so nothing checks where it came from.
+SESSION_RENEWED = "notifications/x-mcp-gateway/session_renewed"
+
 #: MCP Apps (SEP-1865), the extension that lets a server ship a UI for its tools.
 #:
 #: The identifier a **client** declares at `initialize`, under a top-level `extensions`

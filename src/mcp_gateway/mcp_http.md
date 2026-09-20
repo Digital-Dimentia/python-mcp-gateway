@@ -56,12 +56,42 @@ re-sends the request that noticed. The caller sees the call succeed.
 
 A renewed session could belong to a different build of the server, publishing different
 tools. So after a renewal the client raises `list_changed` for each capability the server
-declares, as if the server had sent it, and the gateway re-lists. What does **not**
-survive: resource subscriptions and the log level the gateway set, both of which belonged
-to the old session. The gateway re-applies neither today.
+declares, as if the server had sent it, and the gateway re-lists.
+
+Nor does the new session carry what the gateway had set on the old one: the resource
+subscriptions and the `logging/setLevel`. This module cannot replay those -- it knows a
+session was renewed and nothing else, not the backend's name and not who subscribed to
+what. So it raises one more notification, `protocol.SESSION_RENEWED`, on the channel a
+backend's notifications already travel, and `Gateway._session_renewed` does the repair it
+already does for a restarted process: `resubscribe` and `apply_log_level(only=...)`. The
+alternative was a callback wired from `Supervisor` down into the transport, which would
+have been a second path from a backend to the gateway saying the same kind of thing.
 
 If the renewal itself fails, the next request tries again before it is sent. Nothing is
 sent into a session that no longer exists.
+
+## The old transport, and why it is not here
+
+MCP 2024-11-05 had a different HTTP transport: `GET /sse` opens a stream whose first event
+announces a POST endpoint, every message the client sends goes there, and every reply comes
+back down the GET stream. `2025-03-26` replaced it with the one this module speaks, and
+`url` backends speak only the replacement.
+
+Supporting both would mean a second message-routing shape in here, not a second header. In
+Streamable HTTP a request's reply arrives on its own POST response, which is what
+`_exchange` is built around -- send, read the answer, settle the future. In HTTP+SSE the
+POST is acknowledged `202` and the reply arrives somewhere else entirely, on a stream that
+is also carrying everything else. That is a parallel `_exchange`, a parallel `_listen`, a
+`transport:` key in the schema and a second mock server, kept alive permanently for a
+transport the spec deprecated in March 2025. A server that still speaks only the old one
+can be fronted with a Streamable HTTP proxy -- one more container beside it, in a
+deployment that is already containers.
+
+What the gateway does do is say so. A handshake that fails is followed by one bounded GET,
+and a stream that opens with an `event: endpoint` is a server speaking the old transport
+rather than a dead one -- so `gateway__list_backends` reports that, with the shim as the
+fix, instead of the `HTTP 405` an operator would otherwise have to interpret. See
+`_legacy_sse_hint`.
 
 ## Why there is an HTTP client here instead of a dependency
 

@@ -129,6 +129,9 @@ class Gateway:
         #: Requests the gateway has put *to* a client, awaiting that client's answer.
         self._client_requests: dict[Any, asyncio.Future] = {}
         self._next_client_request_id = 0
+        #: Backends whose session is being repaired after a renewal, so a renewal provoked
+        #: by the repair itself does not start a second one. See `_session_renewed`.
+        self._renewing: set[str] = set()
         #: Serialises reloads. A SIGHUP arriving while a client calls `gateway__reload_config`
         #: would otherwise interleave stops and starts on the same backends.
         self._reload_lock = asyncio.Lock()
@@ -545,7 +548,33 @@ class Gateway:
         if method == protocol.RESOURCES_UPDATED:
             await self._resource_updated(name, params)
             return
+        if method == protocol.SESSION_RENEWED:
+            await self._session_renewed(name)
+            return
         logger.debug("dropping %s from backend %r", method, name)
+
+    async def _session_renewed(self, name: str) -> None:
+        """A `url` backend is answering in a session we did not set anything on.
+
+        The same repair a restarted process gets, for the same reason: the subscriptions
+        and the log level belonged to the session that went away, and a client that asked
+        for either is not going to ask again. The listings are already being re-fetched --
+        the transport raised `list_changed` before this arrived -- so only the two pieces
+        of state nothing else replays are done here.
+
+        Guarded against itself: replaying a subscription is a request like any other, and
+        one that finds the new session gone too renews again and arrives back here. Without
+        the guard that nests, one repair deep per renewal, for as long as the server keeps
+        losing sessions.
+        """
+        if name in self._renewing:
+            return
+        self._renewing.add(name)
+        try:
+            await self.resubscribe(name)
+            await self.apply_log_level(only=name)
+        finally:
+            self._renewing.discard(name)
 
     async def _relay_log_message(self, name: str, params: dict) -> None:
         """Forward one backend `notifications/message` to the clients that asked for it.

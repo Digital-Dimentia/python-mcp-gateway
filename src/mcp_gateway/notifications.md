@@ -11,6 +11,7 @@ table wrong is how a daemon becomes noisy or stale — and neither symptom point
 | `notifications/progress` | relay **to the originating connection only**, verbatim |
 | `notifications/message` | log locally, **and** relay to each client whose level admits it |
 | `notifications/resources/updated` | rewrite the URI; relay **to the sessions subscribed to it** |
+| `notifications/x-mcp-gateway/session_renewed` | replay this backend's subscriptions and the log level — see [`mcp_http.md`](mcp_http.md) |
 | anything else | drop, with a debug line |
 
 ## The gateway announces its own catalogue changes too
