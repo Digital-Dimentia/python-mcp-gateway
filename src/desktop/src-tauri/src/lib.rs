@@ -681,6 +681,60 @@ fn refusal(why: &str) -> tauri::http::Response<Vec<u8>> {
         .expect("a static response builds")
 }
 
+/// Route a `SIGTERM` or a `Ctrl-C` into the app's own exit, so the teardown runs.
+///
+/// Without this the quit path depends on *how* the app was asked to stop: a menu quit runs
+/// `RunEvent::Exit` and a signal does not, so the same app stops its gateway or strands it
+/// depending on whether somebody used the menu. Both were seen -- a release bundle stopped
+/// with `SIGTERM` left its daemon running, and a `cargo tauri dev` interrupted at the
+/// terminal is how most of the orphans in python-mcp-gateway-g90.10 were made.
+///
+/// `SIGKILL` and Force Quit remain unreachable from here by definition. That is what the
+/// pidfile layer is for, and why `stop_recorded` keeps the record when it cannot confirm a
+/// death.
+#[cfg(unix)]
+fn watch_for_a_signal(handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        use tokio::signal::unix::{signal, SignalKind};
+        let (Ok(mut term), Ok(mut interrupt)) =
+            (signal(SignalKind::terminate()), signal(SignalKind::interrupt()))
+        else {
+            // A handler this process cannot install is not a reason to refuse to start; it
+            // is one more way to end up in the Force Quit case, which the pidfile covers.
+            return;
+        };
+        tokio::select! {
+            _ = term.recv() => {},
+            _ = interrupt.recv() => {},
+        }
+        // Not `stop_children` directly: going through the app's own exit means one teardown
+        // with one ordering, rather than a second path that has to be kept in step.
+        handle.exit(0);
+    });
+}
+
+#[cfg(not(unix))]
+fn watch_for_a_signal(_handle: tauri::AppHandle) {}
+
+/// Stop both children on the way out, and keep the record of any that would not go.
+///
+/// **This used to clear the two pidfiles and nothing else**, on the premise that
+/// `kill_on_drop` had the rest. It does not: the app exits without unwinding -- `panic =
+/// "abort"` is in `Cargo.toml` and a process exit drops no detached task -- so nothing was
+/// ever signalled, and deleting the pidfiles threw away the one record that would have let
+/// the next launch find what had been left behind. The cost was seventeen orphaned daemons
+/// on one developer's machine, the oldest eight days old, each still holding the backend
+/// subprocesses it had spawned (python-mcp-gateway-g90.10).
+///
+/// So: signal the group, wait, `SIGKILL` if it is still there, and clear each pidfile only
+/// once its process is gone. A child that survives all of that keeps its record, which is
+/// what `reap_previous` reads on the next launch. See `appdata::stop_recorded`.
+pub(crate) fn stop_children(layout: &Layout) {
+    // Two children, two records. See `Layout::tunnel_pidfile`.
+    appdata::stop_recorded(&layout.pidfile(), &layout.interpreter());
+    appdata::stop_recorded(&layout.tunnel_pidfile(), &tunnel::program());
+}
+
 // --- the app -----------------------------------------------------------------------------
 
 /// Start the app.
@@ -742,6 +796,7 @@ pub fn run() {
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(supervise(handle, inner));
+            watch_for_a_signal(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -751,10 +806,7 @@ pub fn run() {
             // first of the three layers described in `supervisor`; the other two are
             // `kill_on_drop` and the pidfile.
             if let RunEvent::Exit = event {
-                let shell = app.state::<Shell>();
-                appdata::clear_pidfile(&shell.layout.pidfile());
-                // Two children, two records. See `Layout::tunnel_pidfile`.
-                appdata::clear_pidfile(&shell.layout.tunnel_pidfile());
+                stop_children(&app.state::<Shell>().layout);
             }
         });
 }

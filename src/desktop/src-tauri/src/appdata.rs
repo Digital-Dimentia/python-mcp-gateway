@@ -93,26 +93,99 @@ pub fn clear_pidfile(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
-/// Kill a gateway a previous run left behind, if the pid still names one of ours.
+/// How long a child gets to go quietly before it is killed, and how often we look.
 ///
-/// The pid check is not enough on its own -- pids are reused, and killing a stranger's
-/// process because it inherited a number is far worse than leaving a stale one. So the
-/// process is only signalled if its executable is the interpreter we would have started.
+/// Short, because this runs while an app is quitting and a person is watching the window
+/// not close. The daemon's own shutdown is a socket close and a wait on its backends, which
+/// is fast when nothing is wedged -- and when something *is* wedged, `SIGKILL` on the group
+/// is the right answer rather than a longer wait.
 #[cfg(unix)]
-pub fn reap_previous(pidfile: &Path, interpreter: &Path) -> Option<u32> {
+const GRACE: std::time::Duration = std::time::Duration::from_millis(800);
+#[cfg(unix)]
+const POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Stop whatever a pidfile names, and clear the record **only once it is gone**.
+///
+/// The ordering is the whole point, and getting it backwards is what left seventeen
+/// orphaned daemons on a developer's machine (python-mcp-gateway-g90.10). A pidfile is not
+/// bookkeeping: it is the one record that lets the *next* launch find a child this one
+/// failed to stop. Clearing it first -- which is what both callers used to do -- spends
+/// that record on a process that may still be running, and then nothing anywhere knows the
+/// child exists.
+///
+/// The pid check is not optional either. Pids are reused, and killing a stranger's process
+/// because it inherited a number is far worse than leaving a stale one, so nothing is
+/// signalled unless its executable is the program we would have started.
+///
+/// `SIGTERM` to the **process group**, because `spawn_hardened` gave the child its own and
+/// its backends live in it: signalling the pid alone would stop the daemon and leave the
+/// servers it spawned. Then `SIGKILL` to the same group if it is still there, because an
+/// app that has been told to quit has already stopped negotiating.
+#[cfg(unix)]
+pub fn stop_recorded(pidfile: &Path, program: &Path) -> Option<u32> {
     let pid = read_pidfile(pidfile)?;
+    // 0 is "every process in our group" and 1 is init. Neither is a child of ours, and
+    // `kill(-0, ...)` would signal this process -- so the guard is load-bearing, not a
+    // sanity check.
     if pid <= 1 {
-        return None;
-    }
-    if !is_ours(pid, interpreter) {
         clear_pidfile(pidfile);
         return None;
     }
-    unsafe {
-        libc::kill(-(pid as libc::pid_t), libc::SIGTERM);
+    if !is_ours(pid, program) {
+        // The number was reused, or the child is already gone. Either way the record names
+        // nothing of ours and keeping it would make the next launch signal a stranger.
+        clear_pidfile(pidfile);
+        return None;
+    }
+    signal_group(pid, libc::SIGTERM);
+    if !gone_within(pid, program, GRACE) {
+        signal_group(pid, libc::SIGKILL);
+        // A short second look rather than none: `SIGKILL` is not instantaneous, and the
+        // answer to "did it work" decides whether the record survives this function.
+        gone_within(pid, program, GRACE / 4);
+    }
+    if is_ours(pid, program) {
+        // Still there. Leave the pidfile: the next launch is now the only thing that can
+        // find this process, and a record pointing at a live child is exactly what it is
+        // for. This is the branch that must never be traded for a tidier data directory.
+        return None;
     }
     clear_pidfile(pidfile);
     Some(pid)
+}
+
+#[cfg(unix)]
+fn signal_group(pid: u32, signal: libc::c_int) {
+    // The negative pid is the group. See `supervisor`'s module docs for why the child has
+    // one of its own.
+    unsafe {
+        libc::kill(-(pid as libc::pid_t), signal);
+    }
+}
+
+/// Whether `pid` stops being one of ours within `limit`.
+#[cfg(unix)]
+fn gone_within(pid: u32, program: &Path, limit: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        if !is_ours(pid, program) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Kill a gateway a previous run left behind, if the pid still names one of ours.
+///
+/// The launch-time half of `stop_recorded`, and the same function underneath: what a
+/// previous run failed to stop is exactly what this run has to stop, and two
+/// implementations of "kill what the pidfile names" would be two things to keep in step.
+#[cfg(unix)]
+pub fn reap_previous(pidfile: &Path, interpreter: &Path) -> Option<u32> {
+    stop_recorded(pidfile, interpreter)
 }
 
 /// Whether `pid` is running *our* interpreter, rather than whatever reused the number.
@@ -158,6 +231,15 @@ pub fn reap_previous(_pidfile: &Path, _interpreter: &Path) -> Option<u32> {
     None
 }
 
+/// Windows has no process groups to signal and no `/proc` to identify a pid with. The Job
+/// Object `supervisor` puts the child in is the mechanism there: closing the job's last
+/// handle -- which happens when this process dies, however it dies -- kills everything in
+/// it. That is the pidfile layer done by the kernel, so there is nothing to do here.
+#[cfg(not(unix))]
+pub fn stop_recorded(_pidfile: &Path, _program: &Path) -> Option<u32> {
+    None
+}
+
 /// Where the seed files live inside the bundle.
 pub fn seed_dir(resource_dir: &Path) -> PathBuf {
     resource_dir.join("seed")
@@ -166,6 +248,100 @@ pub fn seed_dir(resource_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A child in its own process group with a grandchild in it, like the daemon and its
+    /// backends. `sh` is the stand-in, because the point is the group rather than Python.
+    #[cfg(unix)]
+    fn a_child_with_a_child_of_its_own() -> (std::process::Child, u32) {
+        use std::os::unix::process::CommandExt;
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "sleep 300 & sleep 300"]);
+        unsafe {
+            command.pre_exec(|| {
+                // What `supervisor::spawn_hardened` does, and the reason a group signal
+                // reaches the backends a daemon spawned.
+                if libc::setpgid(0, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command.spawn().expect("a child");
+        let pid = child.id();
+        // Give `sh` a moment to fork the one that has to die with it.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        (child, pid)
+    }
+
+    #[cfg(unix)]
+    fn alive(pid: u32) -> bool {
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_what_the_pidfile_names_kills_the_whole_group_and_clears_the_record() {
+        let root = scratch("stop-recorded");
+        let pidfile = root.join("gateway.pid");
+        let (mut child, pid) = a_child_with_a_child_of_its_own();
+        write_pidfile(&pidfile, pid).expect("a record");
+
+        let stopped = stop_recorded(&pidfile, Path::new("/bin/sh"));
+
+        assert_eq!(stopped, Some(pid));
+        assert!(!pidfile.exists(), "the record goes only once the child has");
+        // Reaped so the pid does not linger as a zombie, which `kill(pid, 0)` still answers
+        // for -- the assertion below would pass for the wrong reason without this.
+        let _ = child.wait();
+        assert!(!alive(pid));
+        // And the grandchildren with it, which is the whole reason the signal goes to the
+        // group: a daemon's backends are its children, and stopping the daemon alone would
+        // leave every MCP server it spawned running. `pgrep -g` lists a process group.
+        let survivors = std::process::Command::new("/usr/bin/pgrep")
+            .args(["-g", &pid.to_string()])
+            .output()
+            .expect("pgrep runs");
+        assert!(
+            String::from_utf8_lossy(&survivors.stdout).trim().is_empty(),
+            "the group still has members: {}",
+            String::from_utf8_lossy(&survivors.stdout)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pid_that_is_not_ours_is_never_signalled() {
+        // The pid of *this* test process, which is emphatically not `/bin/sleep`. A version
+        // that signalled first and identified afterwards would kill the test suite, which
+        // is a memorable way to find out.
+        let root = scratch("stop-stranger");
+        let pidfile = root.join("gateway.pid");
+        write_pidfile(&pidfile, std::process::id()).expect("a record");
+
+        assert_eq!(stop_recorded(&pidfile, Path::new("/bin/sleep")), None);
+        assert!(!pidfile.exists(), "a record naming a stranger is not worth keeping");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_record_naming_nothing_dangerous_is_dropped_rather_than_signalled() {
+        // `kill(-0, ...)` signals *this* process's group, which in a test runner is the
+        // test runner. Hence the guard, and hence this test.
+        let root = scratch("stop-zero");
+        for pid in [0u32, 1] {
+            let pidfile = root.join(format!("{pid}.pid"));
+            write_pidfile(&pidfile, pid).expect("a record");
+            assert_eq!(stop_recorded(&pidfile, Path::new("/bin/sleep")), None);
+            assert!(!pidfile.exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nothing_recorded_is_nothing_to_do() {
+        let root = scratch("stop-empty");
+        assert_eq!(stop_recorded(&root.join("absent.pid"), Path::new("/bin/sleep")), None);
+    }
 
     /// A stand-in for the bundle's `seed/` directory.
     fn seed(root: &Path) -> PathBuf {

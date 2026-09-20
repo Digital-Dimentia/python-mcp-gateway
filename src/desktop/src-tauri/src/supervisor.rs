@@ -40,6 +40,17 @@
 //! 3. A pidfile, checked at startup, for the case neither of the above can reach: the shell
 //!    itself being `SIGKILL`ed (Force Quit).
 //!
+//! ⚠️ **Layer 1 only exists if something signals the group, and for a long time nothing
+//! did.** The app's exit handler cleared the two pidfiles and relied on `kill_on_drop` --
+//! which cannot fire, because the process exits without unwinding and `panic = "abort"` is
+//! in `Cargo.toml`. So quitting signalled nothing and then deleted the record that would
+//! have let the next launch find the child. Seventeen orphaned daemons, the oldest eight
+//! days, each still holding its backends (python-mcp-gateway-g90.10). `lib::stop_children`
+//! is layer 1 now, `appdata::stop_recorded` is what it calls, and the rule that came out of
+//! it is: **a pidfile is cleared only once its process is confirmed gone.** A record that
+//! outlives a failed kill is the whole point of layer 3; a record deleted beside a live
+//! child is worse than never having written one.
+//!
 //! **Linux.** The same three, plus `prctl(PR_SET_PDEATHSIG, SIGTERM)` in the child, which
 //! is strictly better than all of them: the kernel signals the daemon the moment this
 //! process goes, including the `SIGKILL` no handler of ours can run on. `SIGTERM` and not

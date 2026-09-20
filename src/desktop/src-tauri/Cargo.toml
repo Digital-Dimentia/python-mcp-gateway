@@ -17,7 +17,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time"] }
+# `signal` is the quit path: a SIGTERM or a Ctrl-C has to reach the same teardown a menu
+# quit does, or the children outlive the app -- see `stop_children`.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "signal", "sync", "time"] }
 # `connect` and `handshake` only. No TLS feature of any kind: the one address this process
 # ever dials is 127.0.0.1, and a TLS stack here would be dead weight in the binary and one
 # more thing for the notarisation bead to sign.

@@ -9,6 +9,19 @@ nobody reads.
 
 ## Unreleased
 
+**Quitting the desktop app now stops the gateway it started, instead of leaving it running
+with your credentials.** The exit handler deleted its record of the child and left the
+killing to a drop that never happens — the app exits without unwinding — so every quit
+stranded a daemon, and the deleted record meant the next launch could not find it either.
+They accumulated silently: seventeen on one machine, the oldest eight days old, each still
+holding the backend processes it had spawned and each still holding every value in
+`gateway.env`. The window gave no sign, because from its side everything had gone fine. Now
+the process *group* is signalled — so the backends go too, even if the daemon is wedged —
+then killed if it will not go, and **the pidfile is cleared only once the child is confirmed
+gone**, because that record is the one thing that lets the next launch clean up after a
+failed stop. A `SIGTERM` or a `Ctrl-C` runs the same teardown a menu quit does, which it
+did not before: whether your gateway survived used to depend on how you closed the app.
+
 **A backend can ship a panel as HTML now, and the gateway frames it without handing it the
 keys.** SEP-1865's second tier — `text/html;profile=mcp-app` — is a document the backend
 wrote, run in your browser, and it is the half that was deliberately left out because doing

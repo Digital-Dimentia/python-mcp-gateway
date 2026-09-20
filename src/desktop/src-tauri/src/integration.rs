@@ -230,6 +230,45 @@ async fn stopping_the_app_stops_the_gateway() {
     );
 }
 
+/// The app's **exit path**, against a real daemon, which is the one nothing covered.
+///
+/// `stopping_the_app_stops_the_gateway` above calls `supervisor::terminate` directly, so it
+/// proves that `terminate` works and says nothing about whether quitting ever calls it. For
+/// a long time it did not: the exit handler cleared the pidfiles and left the rest to
+/// `kill_on_drop`, which never runs, and seventeen orphaned daemons accumulated on one
+/// machine over eight days (python-mcp-gateway-g90.10). The gap was not in the killing, it
+/// was in the path to it -- so this test walks that path.
+#[tokio::test(flavor = "multi_thread")]
+async fn quitting_stops_the_gateway_and_only_then_forgets_it() {
+    let Some((layout, seed)) = layout("quit") else {
+        return;
+    };
+    appdata::ensure(&layout.data_dir, &seed).expect("first-run seeding");
+
+    let key = AccessKey::mint();
+    let (mut child, port, _daemon) = start(&layout, key.as_env()).await;
+    let pid = child.id().expect("a running child has a pid");
+    // What the supervise loop records the moment it has a child. The exit path has nothing
+    // else to go on: it runs after that loop's task is beyond reach.
+    appdata::write_pidfile(&layout.pidfile(), pid).expect("a record");
+
+    crate::stop_children(&layout);
+
+    assert!(
+        !layout.pidfile().exists(),
+        "the record is cleared once the child is gone -- and not before"
+    );
+    // The port is free again, which is the observable form of "nothing is left running".
+    // A gateway that outlived its app would still be holding every credential in
+    // `gateway.env`.
+    assert!(
+        std::net::TcpListener::bind(("127.0.0.1", port)).is_ok(),
+        "port {port} is still held; pid {pid} survived the quit"
+    );
+    // Reaped so the child does not linger as a zombie for the rest of the suite.
+    let _ = child.wait().await;
+}
+
 /// What remote mode actually reaches, without needing a second machine.
 ///
 /// The far side of an SSH forward is a daemon somebody else started, bound to loopback with

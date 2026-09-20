@@ -339,6 +339,21 @@ its own process group and teardown signals the *group* (taking the `npx` backend
 even if the daemon is wedged); `kill_on_drop` covers the panic path; and a pidfile, checked
 at startup against the running process's executable, covers Force Quit.
 
+**The first layer was missing for a while, and the way it failed is worth keeping.** The
+exit handler cleared the two pidfiles and left the killing to `kill_on_drop` — which never
+runs, because the process exits without unwinding and this crate aborts on panic. So
+quitting signalled nothing, and then deleted the only record that would have let the next
+launch find what was left. It accumulated silently: seventeen orphaned daemons on one
+machine, the oldest eight days old, each still holding the backends it had spawned, and
+each still holding every credential in `gateway.env` — which is the sentence at the top of
+this section, arriving eight days late.
+
+Two rules came out of it. **A pidfile is cleared only once its process is confirmed gone**;
+a record that outlives a failed kill is exactly what the third layer is for, and one deleted
+beside a live child is worse than never having written it. And **a signal is a quit**:
+`SIGTERM` and `Ctrl-C` are routed into the app's own exit, because otherwise the same app
+stops its gateway or strands it depending on whether somebody used the menu.
+
 Linux keeps all three and adds `prctl(PR_SET_PDEATHSIG, SIGTERM)`, which is better than any
 of them: the kernel signals the daemon when this process goes, including by the `SIGKILL` no
 handler of ours survives. `SIGTERM` rather than `SIGKILL`, so the daemon's own handler still
