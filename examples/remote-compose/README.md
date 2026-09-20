@@ -167,8 +167,16 @@ cp /path/to/python-mcp-gateway/examples/zoo_server.py zoo/
 cp /path/to/python-mcp-gateway/examples/panel_server.py zoo/
 $EDITOR config/servers.yaml                  # delete `enabled: false` under `zoo` and `panel`
 docker compose --profile verify up -d
+docker compose restart gateway               # see below: it must dial after they listen
 docker compose logs gateway | tail -4        # both backends running (http://127.0.0.1:900…)
 ```
+
+That `restart` is not superstition. Compose starts the gateway and the two backends at the
+same time, and the gateway dials a `url:` backend once, at startup — so whichever container
+is not listening yet is recorded as unreachable and **stays that way**. A `SIGHUP` does not
+recover it, because reload restarts only what *changed* and nothing in the config did.
+Restarting the gateway once the others are up is the simplest fix; `gateway__restart_backend`
+is the other one, and the troubleshooting table below says so.
 
 The line to wait for is `backend 'zoo' running (http://127.0.0.1:9001/mcp, MCP 2025-06-18)`,
 and another like it for `panel`. One wrapper serves both: `zoo_http.py --server` names the
@@ -224,6 +232,7 @@ The admin UI is then at `http://127.0.0.1:8765/ui/` in a browser on the laptop.
 | Desktop app: tunnel open, pills stay red | The gateway is not running or not on loopback. Check `docker compose ps` and the `curl` in step 4. |
 | Desktop app gets a 401 | A `WS_ACCESS_KEY` is set in `gateway.env`, or `MCP_GATEWAY_WS_KEY` in the environment. Remove it. |
 | A backend fails with `cannot reach http://127.0.0.1:…` | Its container is down, or publishes a different port, or publishes on a bridge IP instead of `127.0.0.1`. Check `docker compose ps` and the `ports:` line. |
+| …but `curl` reaches that port fine from the box | A startup race: the gateway dialled before that container was listening, and it does not dial again on its own. `docker compose restart gateway`, or call `gateway__restart_backend` with its name. `SIGHUP` will *not* fix it — reload restarts only backends whose config changed. |
 | A backend fails with `HTTP 401` or `HTTP 403` | The header is wrong or its value is. `--check` says whether the `${NAME}` resolves; the server decides whether the value is right. |
 | A backend fails with `HTTP 404` on every call | The url's path is wrong. That is not a lost session: the gateway only renews a session it was actually given. |
 | Saving in the admin UI fails with `cannot write catalogue`, or `./config` files end up owned by someone else | The container is writing as the wrong account: `.env` is missing or holds the wrong numbers. `cat .env` and compare with `id -u` and `id -g`, then `docker compose up -d`. Failing that, `./config` is not writable, or a single file was mounted instead of the directory. |
