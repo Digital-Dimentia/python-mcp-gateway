@@ -78,11 +78,22 @@ negotiated version, is known.
 vocabulary — an animal id, a country name — never names or URIs in the gateway's address
 space. Rewriting one would corrupt the exact string the client is about to send back.
 
-## Results are forwarded verbatim
+## Results are forwarded verbatim, except for one address
 
 `content`, `annotations`, `structuredContent`, `_meta`, and whatever the next revision adds
 all pass through untouched. A proxy that reshaped them would be lossy against every revision
 it had not been taught — the same reason the daemon parses no models at all.
+
+The exception is `contents[].uri` on a `resources/read`, and it is a **correction rather than
+a reshaping**. A backend answers a read by naming *its own* URI — an address the client never
+used and cannot use. Every listing the gateway publishes is rewritten, and so is
+`notifications/resources/updated`; a content item that was not left the client unable to
+match an answer to the question it asked. That was invisible while nobody matched them up,
+and stopped being invisible once a tool could address a panel that way (see
+[`ui_apps.md`](ui_apps.md)).
+
+The narrowness is the point: only `uri`, only on a read, only when it is a non-empty string.
+Everything else in the item, including its `text`, `blob` and `_meta`, is the backend's.
 
 ## The backend name is stamped on the way out
 

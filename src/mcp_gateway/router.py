@@ -38,7 +38,7 @@ import logging
 from contextlib import nullcontext
 from typing import Any
 
-from mcp_gateway import errors
+from mcp_gateway import errors, naming
 from mcp_gateway.backend import Backend, BackendStatus
 from mcp_gateway.catalogue import Catalogue
 from mcp_gateway.mcp_stdio import MCPProtocolError
@@ -223,10 +223,36 @@ class Router:
         backend.touch()
         with backend.serving(session):
             try:
-                return await backend.client.read_resource(uri)
+                result = await backend.client.read_resource(uri)
             except MCPProtocolError as exc:
                 exc.backend = backend.name
                 raise
+        return self._public_contents(backend.name, result)
+
+    @staticmethod
+    def _public_contents(server: str, result: dict[str, Any]) -> dict[str, Any]:
+        """Re-address the `uri` of each content item into the gateway's own space.
+
+        The one place this module reshapes a result, and it is a correction rather than an
+        exception: a backend answers a read by naming *its own* URI, which is an address the
+        client never used and cannot use. Every other listing the gateway publishes is
+        rewritten, `notifications/resources/updated` is rewritten, and a content item that
+        was not left a client unable to match the answer to the question -- harmless while
+        nobody matched them, and not harmless once a panel is addressed this way.
+
+        Rebuilt rather than mutated: `read_resource` may be answering from a backend object
+        a caller still holds.
+        """
+        contents = result.get("contents")
+        if not isinstance(contents, list):
+            return result
+        rewritten = []
+        for item in contents:
+            uri = item.get("uri") if isinstance(item, dict) else None
+            if isinstance(uri, str) and uri:
+                item = {**item, "uri": naming.encode_resource_uri(server, uri)}
+            rewritten.append(item)
+        return {**result, "contents": rewritten}
 
     async def subscribe_resource(self, session: Any, public_uri: str, *, on: bool) -> None:
         """Forward one half of a subscription. `on` picks subscribe or unsubscribe.

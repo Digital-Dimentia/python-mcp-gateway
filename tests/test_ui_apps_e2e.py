@@ -176,3 +176,21 @@ async def test_a_hostile_csp_is_cleaned_before_it_reaches_a_client(tmp_path) -> 
         assert panel["_meta"]["ui"]["csp"]["connectDomains"] == ["ok.example.com"]
     finally:
         await harness.close()
+
+
+async def test_a_reads_content_items_carry_the_public_uri(tmp_path) -> None:
+    """A backend answers a read by naming its own URI, which the client never used.
+
+    Harmless while nobody matched them up; not harmless once a panel is addressed that way,
+    because a host cannot tell which request a content item answers.
+    """
+    servers = "servers:\n" + entry("zoo", MOCK_TOOLS="board", MOCK_RESOURCES="ui://zoo/panel")
+    harness = await daemon(tmp_path, servers=servers)
+    try:
+        client = await harness.connect()
+        listed = (await client.call("resources/list"))["resources"][0]["uri"]
+        read = await client.call("resources/read", {"uri": listed})
+        assert read["contents"][0]["uri"] == listed, "the answer must name the address asked for"
+        assert naming.decode_resource_uri(read["contents"][0]["uri"]) == ("zoo", "ui://zoo/panel")
+    finally:
+        await harness.close()
