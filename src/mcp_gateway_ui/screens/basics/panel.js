@@ -51,7 +51,7 @@
 
 import { isDeclarativePanel, renderPanel } from '../../panel_declarative.js';
 import { isHtmlPanel, renderHtmlPanel } from '../../panel_html.js';
-import { ownerOf } from '../../naming.js';
+import { localName, ownerOf } from '../../naming.js';
 import { el, pretty, renderToolResult } from '../../render.js';
 
 /** Calls one card's panel may make before it has to be reopened. */
@@ -120,9 +120,31 @@ function askConsent({ backend, tool, args }) {
   });
 }
 
-/** The listing entry for a tool name, or undefined. The listing is the authority. */
-function toolEntry(name) {
-  return (port.state.listings.tools || []).find((entry) => entry.name === name);
+/**
+ * The listing entry a panel's action names, or undefined. The listing is the authority.
+ *
+ * **Two spellings, and the backend's own is the one that matters.** A panel is written by a
+ * backend, which knows its tools as `restart` and cannot know that a gateway in front of it
+ * will list that as `panel__restart` -- the prefix is the *operator's* choice of server
+ * name, made in `servers.yaml` long after the panel was written. So an action naming
+ * `restart` is not a mistake to refuse; it is the only thing a panel author can say.
+ *
+ * The public spelling is accepted too, because a panel that learned its own tool's name
+ * from the `tool-input` it was handed will echo that back, and both are the same tool.
+ *
+ * Resolution is scoped to `backend` rather than done by string surgery: `compose`-ing a
+ * prefix onto a name would invent an entry that may not exist, and the point of looking in
+ * the listing at all is that what comes back is something this gateway actually publishes.
+ * The caller's owner check then still has something real to check.
+ */
+function toolEntry(name, backend) {
+  const listed = port.state.listings.tools || [];
+  return (
+    listed.find((entry) => entry.name === name)
+    ?? listed.find(
+      (entry) => ownerOf('tools', entry) === backend && localName('tools', entry) === name,
+    )
+  );
 }
 
 /**
@@ -137,11 +159,17 @@ async function runAction(ledger, backend, { tool, arguments: args }) {
   if (String(tool).startsWith('gateway__')) {
     throw new Error('A panel may not call the gateway’s own tools.');
   }
-  const entry = toolEntry(tool);
+  const entry = toolEntry(tool, backend);
   if (!entry) throw new Error(`No tool named ${tool} is listed.`);
   if (ownerOf('tools', entry) !== backend) {
     throw new Error(`${tool} is not a tool of this panel’s server.`);
   }
+  // From here on it is the *listed* name, never the one the panel asked with. The two can
+  // differ -- see `toolEntry` -- and everything downstream is either a wire call or a thing
+  // a person reads: both have to say what this gateway will actually do. A consent dialog
+  // naming `restart` while the socket carries `panel__restart` would be a prompt about a
+  // different call from the one it authorises.
+  const name = entry.name;
 
   // 3. Budget, checked before asking: there is no point asking about a call that is over
   // the ceiling anyway.
@@ -151,11 +179,12 @@ async function runAction(ledger, backend, { tool, arguments: args }) {
   const now = Date.now();
   if (now - ledger.lastAt < MIN_GAP_MS) throw new Error('Too fast — try that again in a moment.');
 
-  // 2. Consent.
-  if (!ledger.granted.has(tool)) {
-    const answer = await askConsent({ backend, tool, args });
+  // 2. Consent. Granted against the resolved name, so a panel cannot spend one grant twice
+  // by spelling the same tool both ways.
+  if (!ledger.granted.has(name)) {
+    const answer = await askConsent({ backend, tool: name, args });
     if (answer === 'deny') throw new Error('Refused.');
-    if (answer === 'always') ledger.granted.add(tool);
+    if (answer === 'always') ledger.granted.add(name);
   }
 
   ledger.calls += 1;
@@ -163,11 +192,11 @@ async function runAction(ledger, backend, { tool, arguments: args }) {
 
   // Through the same socket as a human's click, and onto its own card.
   const started = performance.now();
-  const result = await port.state.mcp.request('tools/call', { name: tool, arguments: args });
+  const result = await port.state.mcp.request('tools/call', { name, arguments: args });
   port.pushCard({
-    title: tool,
+    title: name,
     subtitle: `tools/call · from ${backend}’s panel`,
-    request: { method: 'tools/call', params: { name: tool, arguments: args } },
+    request: { method: 'tools/call', params: { name, arguments: args } },
     body: renderToolResult(result),
     elapsedMs: performance.now() - started,
     raw: result,

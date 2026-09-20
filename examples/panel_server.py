@@ -94,11 +94,6 @@ HTML_PANEL = """<!doctype html>
   var port = null;
   var next = 1;
   var stopped = null;
-  // The name this tool has *in the host*, learned from the host. A gateway namespaces its
-  // backends' tools, so `restart` here is `<backend>__restart` there -- and the backend's
-  // name is chosen by whoever wrote `servers.yaml`, not by this file. Reading it off the
-  // `tool-input` we are handed is how a panel stays correct under any name.
-  var prefix = '';
 
   function send(message) { if (port) port.postMessage(message); }
   function notify(method, params) { send({ jsonrpc: '2.0', method: method, params: params }); }
@@ -135,19 +130,18 @@ HTML_PANEL = """<!doctype html>
   document.getElementById('restart').addEventListener('click', function () {
     if (!stopped) return;
     var id = next++;
+    // This server's own name for the tool. A panel cannot know what a gateway in front of
+    // it prefixed that with -- the prefix is a server name out of `servers.yaml`, chosen
+    // long after this file was written -- so the host resolves it against the backend whose
+    // panel is asking. See `screens/basics/panel.js::toolEntry`.
     send({
       jsonrpc: '2.0', id: id, method: 'tools/call',
-      params: { name: prefix + 'restart', arguments: { id: stopped } }
+      params: { name: 'restart', arguments: { id: stopped } }
     });
   });
 
   function onPortMessage(event) {
     var message = event.data || {};
-    if (message.method === 'ui/notifications/tool-input') {
-      var name = String(message.params.name || '');
-      var cut = name.lastIndexOf('__');
-      prefix = cut < 0 ? '' : name.slice(0, cut + 2);
-    }
     if (message.method === 'ui/notifications/tool-result') draw(message.params.result);
     if (message.result && message.result.structuredContent) draw(message.result);
   }

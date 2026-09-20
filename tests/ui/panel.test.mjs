@@ -166,7 +166,78 @@ test('when a panel offers both tiers the one that executes nothing wins', async 
   assert.equal(cards[0].body.querySelector('iframe'), null);
 });
 
+// --- which name a panel may use ----------------------------------------------------
+
+test('a panel names its own tool, not the one the gateway prefixed', async () => {
+  // The bug this pins (python-mcp-gateway-5bx): a backend writes `restart`, because the
+  // prefix is a server name out of `servers.yaml` chosen long after the panel was written.
+  // The host resolved that as an exact match, missed, and refused the panel's whole reason
+  // for existing.
+  const { button, sent } = await openWithAction('restart');
+  button.click();
+  await settle();
+  clickIn(dialog(), 'Allow once');
+  await settle();
+
+  const call = sent.find((message) => message.method === 'tools/call');
+  assert.equal(call.params.name, 'zoo__restart', 'the socket carries the listed name');
+});
+
+test('the consent dialog names the call it is authorising, not the one that was asked for', async () => {
+  const { button } = await openWithAction('restart');
+  button.click();
+  await settle();
+
+  // A prompt saying `restart` over a socket carrying `zoo__restart` is a prompt about a
+  // different call from the one it grants.
+  assert.match(dialog().textContent, /zoo__restart/);
+  clickIn(dialog(), 'Deny');
+});
+
+test('the public spelling still works, because a panel may echo back what it was told', async () => {
+  const { button, sent } = await openWithAction('zoo__restart');
+  button.click();
+  await settle();
+  clickIn(dialog(), 'Allow once');
+  await settle();
+
+  assert.equal(sent.find((m) => m.method === 'tools/call').params.name, 'zoo__restart');
+});
+
+test('one grant covers a tool however the panel spells it', async () => {
+  const harness = wire({
+    tools: [withPanel('zoo__board', PANEL_URI), toolEntry('zoo__restart')],
+    onRequest: readsPanel([action('restart'), action('zoo__restart')]),
+  });
+  await panel.openPanel({ entry: withPanel('zoo__board', PANEL_URI), result: {} });
+  const buttons = harness.cards.at(-1).body.querySelectorAll('.panel-action .btn');
+
+  buttons[0].click();
+  await settle();
+  clickIn(dialog(), 'Allow for this panel');
+  await settle();
+
+  // The second block spells the same tool the other way. A ledger keyed on what the panel
+  // said rather than on what it resolved to would ask again -- or, worse, let a second
+  // grant be spent under a name the person never saw.
+  buttons[1].click();
+  await settle();
+  assert.equal(dialog(), null, 'the grant is against the tool, not the spelling');
+});
+
 // --- gate 1: scope ----------------------------------------------------------------
+
+test('a local name is still confined to this panel’s backend', async () => {
+  // `other` has a `restart` too. Resolving the panel's own spelling must not reach it.
+  const { button, sent } = await openWithAction('wipe', {
+    tools: [toolEntry('other__wipe')],
+  });
+  const before = sent.length;
+  button.click();
+  await settle();
+  assert.equal(sent.length, before, 'nothing may reach the socket');
+  assert.equal(dialog(), null, 'and it must not even ask');
+});
 
 test('a panel may not call another backend’s tool', async () => {
   const { button, sent } = await openWithAction('other__wipe', {

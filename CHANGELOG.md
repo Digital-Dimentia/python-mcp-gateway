@@ -67,8 +67,10 @@ a backend referencing another backend's `ui://` is addressed to **itself**, beca
 authority in a `ui://` is a string the backend chose and is never parsed. Panels are JSON,
 not markup: nothing a backend sends is executed or parsed as HTML, which keeps the
 no-`innerHTML` rule the UI has always had. A panel may ask to call one of its own server's
-tools, and the answer goes through the same socket as your own click and lands as its own
-card — so a panel cannot make a call you do not see — after a prompt naming the tool and its
+tools **by the name that server gave it**, because the `zoo__` in front of it is a name you
+chose in `servers.yaml` long after the panel was written; the answer goes through the same
+socket as your own click and lands as its own card — so a panel cannot make a call you do not
+see — after a prompt naming the tool, as the gateway will actually call it, and its
 arguments. SEP-1865's HTML tier arrives later in this same release, under
 `panels.md`; what this entry describes is the tier that executes nothing.
 `examples/panel_server.py` is a
