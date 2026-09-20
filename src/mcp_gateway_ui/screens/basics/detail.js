@@ -360,15 +360,22 @@ const EXPANSIONS_SHOWN = 6;
 // ── The detail panel: a form, and the button that sends it ─────────────────────
 
 /**
- * Empty the panel.
+ * Empty the panel, and forget what was open in it.
  *
- * `sendControl` goes with it, which is the part a bare `replaceChildren` from outside used
- * to miss: the button it names has just left the document, and a send count recomputed
- * against a detached node is a number about nothing.
+ * **All three pieces of state go together, and that is the point.** Emptying the panel is
+ * three separate things -- the DOM, `sendControl`, and `state.item` -- and every caller
+ * wants all three. Leaving any of them to the caller is an invitation to do two and forget
+ * the third, which is exactly what happened: switching servers nulled `state.item` and left
+ * the form on screen, live, calling a tool on a server you were no longer looking at, while
+ * the Injectable values column wrote the new server's picks into its fields.
+ *
+ * `sendControl` matters for a smaller reason: the button it names has just left the
+ * document, and a send count recomputed against a detached node is a number about nothing.
  */
 export function clear() {
   $('detail').replaceChildren();
   sendControl = null;
+  port.state.item = null;
 }
 
 function openItem(kind, entry) {

@@ -703,7 +703,8 @@ function adminResultBody(result) {
 // that trigger it are.
 function select(name) {
   state.selected = name;
-  state.item = null;
+  // Not `state.item = null`: the open form has to leave the page with it. See `detail.clear`.
+  detail.clear();
   renderBackends();
   primitives.render();
   variables.refreshVariables();
@@ -1281,6 +1282,7 @@ connect();
 // in being looked at.
 export {
   state,
+  select,
   SCREENS,
   AVAILABLE,
   SCREEN_MODULES,

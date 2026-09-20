@@ -54,7 +54,7 @@ export function install(dependencies) {
     button.addEventListener('click', () => {
       port.state.kind = button.dataset.kind;
       document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b === button));
-      port.state.item = null;
+      // `clearDetail` forgets the selection too -- one call, not a pair to keep in step.
       port.clearDetail();
       render();
     });
