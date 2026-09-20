@@ -279,8 +279,17 @@ TAURI_DIR := $(DESKTOP_DIR)/src-tauri
 ## The interpreter the app ships: standalone CPython with the gateway installed into it.
 ## Depends on `build` because it installs the wheel that target produces -- there is no
 ## second path that installs from source, so what the app runs is what `make build` made.
+##
+## The `rm -rf` afterwards is not tidiness and it is not optional. Cargo copies this tree
+## into `target/<profile>/python` and overwrites the interpreter **in place**, and macOS
+## caches a binary's code-signing identity per inode: a `python3` whose bytes changed under
+## a cached inode is SIGKILLed on exec, instantly, with no output. `codesign -v` still
+## passes, because the file's own signature is fine -- so what a person sees is an app whose
+## gateway will not start and a `Killed: 9` nobody can explain. Deleting the copy makes the
+## next build write fresh inodes, which is the whole of the fix.
 tauri-python: build
 	$(PYTHON_BIN) scripts/bundle_python.py
+	@rm -rf '$(TAURI_DIR)/target/debug/python' '$(TAURI_DIR)/target/release/python'
 
 ## The UI, where Tauri looks for a frontend. `copy` by default: the bundler follows what it
 ## finds, and a symlink would resolve to a path that does not exist inside the .app.

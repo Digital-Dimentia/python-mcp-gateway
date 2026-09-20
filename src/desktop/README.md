@@ -204,6 +204,15 @@ on screen is a window that says the gateway could not start and retries forever.
 keeps the watcher off that tree; the app still has to be restarted by hand afterwards, since
 the daemon it would start is the one that just changed.
 
+**And a second failure with the same symptom, which is why `tauri-python` deletes the copies
+Cargo made.** Cargo stages `resources/` into `target/<profile>/`, overwriting files *in
+place*. macOS caches a binary's code-signing identity per inode, so a `python3` whose bytes
+changed under an inode the kernel has already seen is `SIGKILL`ed on exec — immediately, with
+no output, and `codesign -v` still reports the file as valid, because the file is. What a
+person sees is an app whose gateway will not start and a `Killed: 9` with nothing to search
+for. The same bytes copied to a fresh path run perfectly, which is the whole diagnosis and
+the whole fix: delete `target/<profile>/python` and let the next build write new inodes.
+
 **`make tauri-python` comes first, once, and `make tauri-check` needs it too.** `tauri-build`
 validates every path in `bundle.resources` at *compile* time, so the crate does not build at
 all until the interpreter is on disk — and what it says when it is not is `resource path
