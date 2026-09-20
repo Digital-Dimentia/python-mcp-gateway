@@ -24,30 +24,53 @@ to negotiate: the method table is fixed, and a client that knows the URL knows t
 Authentication is the same as `/mcp`: the same key, checked in the same handshake hook. See
 [`transport_ws.md`](transport_ws.md).
 
-## Read-only in v1
+## Reading
 
 | Method | |
 |---|---|
 | `admin.status` | uptime, bind address, every connection with its client info and version |
 | `admin.backends` | every configured backend, running or not |
-| `admin.health` | the above plus uptime, restarts, last error, live ping |
+| `admin.health` | the above plus uptime, restarts, last error, live ping, and what was dropped — `skipped_tools`, `unresolved_ui_templates` |
 | `admin.config.get` | the catalogue as parsed, `${VAR}` references **unresolved** |
 | `admin.secrets.keys` | key names only |
-| `admin.logs.tail` / `.stop` | stream redacted log records as `admin.logs` notifications |
+| `admin.secrets.missing` | the names a catalogue needs and the store does not have |
+| `admin.clipboard.get` | the briefing the two right-hand columns render to — see [`clipboard.md`](clipboard.md) |
+| `admin.logs.tail`, `admin.logs.stop` | stream redacted log records as `admin.logs` notifications |
+| `ping` | liveness, so a UI can check it the way anything else does |
+
+## Writing
+
+| Method | |
+|---|---|
+| `admin.config.set` | replace the catalogue wholesale |
+| `admin.backend.add`, `admin.backend.update`, `admin.backend.remove` | one server at a time |
 | `admin.reload` | re-read both files and apply the difference |
 | `admin.backend.restart` | stop and respawn one backend |
-| `admin.clipboard.put` / `.get` | publish the two right-hand columns, and read back the briefing they render to — see [`clipboard.md`](clipboard.md) |
+| `admin.clipboard.put` | publish a snapshot of the two right-hand columns |
 
-The last two ship because they are the same code the meta-tools already expose to the model.
-Withholding them from the UI while the model can call them would be theatre.
+`admin.reload` and `admin.backend.restart` ship because they are the same code the meta-tools
+already expose to the model. Withholding them from the UI while the model can call them would
+be theatre.
 
-`admin.clipboard.put` is the one method here that *writes*, and what it writes is a view of
-the page rather than a view of the machine: the results the person has collected and the
-values they have picked, held in memory for `gateway__clipboard` to render. It configures
-nothing and it touches no file.
+`admin.clipboard.put` writes a view of the *page* rather than a view of the machine: the
+results the person has collected and the values they have picked, held in memory for
+`gateway__clipboard` to render. It configures nothing and it touches no file.
 
-**Not implemented:** `admin.config.set`, `admin.secrets.set`, `admin.backend.add`/`remove`.
-When the UI epic lands they go here and only here — a surface the model cannot reach.
+The four config writers reach `config_writer.py` and the daemon's **own** `config_path` —
+never a path from the request, because a method that took one would let whoever reaches
+`/admin` write YAML anywhere this process can. See `_write`.
+
+## There is no `admin.secrets.set`, and there will not be
+
+This is a rule, not a gap, and it is the reason this file exists at all. Nothing on this
+channel — or on any other — writes a credential. `admin.secrets.keys` answers with key
+*names*, `admin.secrets.missing` exists precisely so the UI can name a key it needs without
+ever being able to ask for or supply its value, and `admin.config.get` returns `${VAR}`
+templates unresolved so an editor never holds a secret to begin with.
+
+`gateway.env` is read-only to the whole program. A UI that could write one would be a second
+way to read the store, because anything that can set a value can set it somewhere it can then
+read it back.
 
 ## `admin.config.get` returns references, not values
 
