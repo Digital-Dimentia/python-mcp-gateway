@@ -57,6 +57,28 @@ ROOTS_LIST = "roots/list"
 SAMPLING_CREATE_MESSAGE = "sampling/createMessage"
 ELICITATION_CREATE = "elicitation/create"
 
+#: MCP Apps (SEP-1865), the extension that lets a server ship a UI for its tools.
+#:
+#: The identifier a **client** declares at `initialize`, under a top-level `extensions`
+#: block, to say it can render one. Here for the same reason as everything else in this
+#: module: `mcp_stdio.py` writes it facing a backend, `ui_apps.py` reads it facing a
+#: catalogue, and two spellings would be a silent interop bug.
+UI_EXTENSION_ID = "io.modelcontextprotocol/ui"
+
+#: The one content type this gateway's own UI renders, and therefore the only one it
+#: declares. SEP-1865's HTML tier is `text/html;profile=mcp-app`; rendering it means a
+#: sandboxed iframe, a `postMessage` bridge and a served endpoint with its own CSP, none of
+#: which exist here yet. Declaring it anyway would be the "a capability block is a promise,
+#: not a wish list" mistake `mcp_stdio.MCPClientCapabilities` warns about, so the HTML type
+#: joins this list on the day something can render it and not before.
+#:
+#: The `profile` parameter is SEP-1865's own, which is what makes the two tiers addressable
+#: the same way: a tool names a `ui://` resource, and the *resource* says which tier it is.
+#: So a backend can offer both and let each host pick, and upgrading a panel from this tier
+#: to HTML never touches the tool definition.
+UI_APP_DECLARATIVE_MIME = "application/json;profile=mcp-app-declarative"
+UI_APP_HTML_MIME = "text/html;profile=mcp-app"
+
 #: MCP's log levels, least to most severe (RFC 5424's). The order is the whole point: a
 #: client that asked for `warning` is asking for warning *and everything above it*, and a
 #: gateway serving several clients has to ask its backends for the most verbose level any
