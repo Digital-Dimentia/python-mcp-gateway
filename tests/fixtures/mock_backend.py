@@ -48,6 +48,7 @@ mechanism it is testing.
 | `MOCK_UI_FLAT` | Use the deprecated flat `_meta["ui/resourceUri"]` spelling instead |
 | `MOCK_UI_BOTH` | Send both spellings, disagreeing, to pin which one wins |
 | `MOCK_UI_CSP` | A raw JSON object for `_meta.ui.csp` on the resource, so hostile values are expressible |
+| `MOCK_UI_READ_CSP` | The same, on the *content item* a read returns -- which the spec says overrides the listing |
 """
 
 from __future__ import annotations
@@ -98,6 +99,7 @@ UI_REF = _env("MOCK_UI_REF", "")
 UI_FLAT = _flag("MOCK_UI_FLAT")
 UI_BOTH = _flag("MOCK_UI_BOTH")
 UI_CSP = _env("MOCK_UI_CSP", "")
+UI_READ_CSP = _env("MOCK_UI_READ_CSP", "")
 
 # Startup-time behaviour, before a single message is read.
 if _flag("MOCK_IGNORE_SIGTERM"):
@@ -375,7 +377,11 @@ def handle_resources_read(request_id, params: dict) -> None:
     if uri not in RESOURCES:
         error(request_id, -32002, f"{NAME} cannot read {uri!r}")
         return
-    result(request_id, {"contents": [{"uri": uri, "mimeType": "text/plain", "text": f"{NAME}:{uri}"}]})
+    item = {"uri": uri, "mimeType": "text/plain", "text": f"{NAME}:{uri}"}
+    if UI_READ_CSP and uri.startswith("ui://"):
+        item["mimeType"] = "application/json;profile=mcp-app-declarative"
+        item["_meta"] = {"ui": {"csp": json.loads(UI_READ_CSP)}}
+    result(request_id, {"contents": [item]})
 
 
 def handle_resources_subscribe(request_id, params: dict) -> None:

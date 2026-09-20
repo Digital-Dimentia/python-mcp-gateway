@@ -194,3 +194,37 @@ async def test_a_reads_content_items_carry_the_public_uri(tmp_path) -> None:
         assert naming.decode_resource_uri(read["contents"][0]["uri"]) == ("zoo", "ui://zoo/panel")
     finally:
         await harness.close()
+
+
+async def test_a_content_item_ui_block_is_cleaned_because_it_overrides_the_listing(tmp_path) -> None:
+    """The spec says the content-item `_meta.ui` wins over the listing-level one.
+
+    So cleaning only the listing would clean the value that *loses*, and a hostile `csp`
+    would reach a host by the one path that beats the clean copy.
+    """
+    hostile = '{\\"connectDomains\\": [\\"ok.example.com\\", \\"evil.example.com; script-src *\\"]}'
+    servers = "servers:\n" + entry(
+        "zoo", MOCK_TOOLS="board", MOCK_RESOURCES="ui://zoo/panel", MOCK_UI_READ_CSP=hostile
+    )
+    harness = await daemon(tmp_path, servers=servers)
+    try:
+        client = await harness.connect()
+        listed = (await client.call("resources/list"))["resources"][0]["uri"]
+        item = (await client.call("resources/read", {"uri": listed}))["contents"][0]
+        assert item["_meta"]["ui"]["csp"]["connectDomains"] == ["ok.example.com"]
+    finally:
+        await harness.close()
+
+
+async def test_a_read_without_a_ui_profile_keeps_its_meta_untouched(tmp_path) -> None:
+    """The verbatim rule still holds everywhere the correction does not reach."""
+    servers = "servers:\n" + entry("zoo", MOCK_TOOLS="board", MOCK_RESOURCES="plain://doc")
+    harness = await daemon(tmp_path, servers=servers)
+    try:
+        client = await harness.connect()
+        listed = (await client.call("resources/list"))["resources"][0]["uri"]
+        item = (await client.call("resources/read", {"uri": listed}))["contents"][0]
+        assert item["mimeType"] == "text/plain"
+        assert item["text"] == "mock:plain://doc"
+    finally:
+        await harness.close()

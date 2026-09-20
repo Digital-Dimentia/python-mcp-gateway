@@ -25,11 +25,16 @@ either result -- so they answer `-32603` and `-32002` respectively.
 is a caller mistake rather than a runtime condition, and telling the two apart is the whole
 value of the distinction.
 
-## Results are forwarded verbatim
+## Results are forwarded verbatim, with two named corrections
 
 `content`, `annotations`, `structuredContent`, `_meta`, and whatever the next spec revision
 adds all pass through untouched. A proxy that reshaped them would be lossy against every
 revision it had not been taught -- which is the same reason the daemon parses no models.
+
+The two exceptions both live in `_public_contents`, on `resources/read` alone: the item's
+`uri` is re-addressed into the space the client actually asked in, and a `_meta.ui` on an
+item declaring a UI profile is cleaned. See that method and `router.md` for why each is a
+correction rather than a reshaping.
 """
 
 from __future__ import annotations
@@ -38,7 +43,7 @@ import logging
 from contextlib import nullcontext
 from typing import Any
 
-from mcp_gateway import errors, naming
+from mcp_gateway import errors, naming, ui_apps
 from mcp_gateway.backend import Backend, BackendStatus
 from mcp_gateway.catalogue import Catalogue
 from mcp_gateway.mcp_stdio import MCPProtocolError
@@ -231,7 +236,9 @@ class Router:
 
     @staticmethod
     def _public_contents(server: str, result: dict[str, Any]) -> dict[str, Any]:
-        """Re-address the `uri` of each content item into the gateway's own space.
+        """Re-address each content item, and clean the one `_meta` a host turns into policy.
+
+        ## The address
 
         The one place this module reshapes a result, and it is a correction rather than an
         exception: a backend answers a read by naming *its own* URI, which is an address the
@@ -239,6 +246,15 @@ class Router:
         rewritten, `notifications/resources/updated` is rewritten, and a content item that
         was not left a client unable to match the answer to the question -- harmless while
         nobody matched them, and not harmless once a panel is addressed this way.
+
+        ## The `_meta.ui`
+
+        Only on an item declaring a UI profile, and only its `ui` member. Narrow because the
+        verbatim rule is a real one, and taken because SEP-1865 says the content-item
+        `_meta.ui` **overrides** the listing-level one -- so cleaning only the listing would
+        be cleaning the value that loses, and a hostile `csp` would reach a host by the one
+        path that wins. Verbatim forwarding is a rule about fields we have not been taught;
+        `csp` is one we have.
 
         Rebuilt rather than mutated: `read_resource` may be answering from a backend object
         a caller still holds.
@@ -248,9 +264,16 @@ class Router:
             return result
         rewritten = []
         for item in contents:
-            uri = item.get("uri") if isinstance(item, dict) else None
+            if not isinstance(item, dict):
+                rewritten.append(item)
+                continue
+            uri = item.get("uri")
             if isinstance(uri, str) and uri:
                 item = {**item, "uri": naming.encode_resource_uri(server, uri)}
+            if ui_apps.profile_of(item.get("mimeType")) is not None:
+                cleaned = ui_apps.sanitize_resource_meta(item.get("_meta"))
+                if cleaned is not None:
+                    item = {**item, "_meta": cleaned}
             rewritten.append(item)
         return {**result, "contents": rewritten}
 
