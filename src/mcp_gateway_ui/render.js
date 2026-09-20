@@ -13,7 +13,9 @@
 // shown as what it is — a *successful* result carrying a tool-level failure, which is
 // MCP's own contract and the thing most likely to be misread as a protocol error.
 
-const el = (tag, props = {}, children = []) => {
+// Exported so the panel renderer builds its nodes with the same helper rather than a
+// second copy: the no-innerHTML rule is only as good as the one way of making a node.
+export const el = (tag, props = {}, children = []) => {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
     if (v === undefined || v === null || v === false) continue;

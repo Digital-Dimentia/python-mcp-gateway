@@ -81,6 +81,11 @@ ASSETS: dict[str, str] = {
     # second copy of the assets that drifts. See `desktop/README.md`.
     "tauri-transport.js": "text/javascript; charset=utf-8",
     "schema_form.js": "text/javascript; charset=utf-8",
+    # A backend's own control surface, as JSON rather than markup. The tier SEP-1865 calls
+    # `mcp-app` is HTML in a sandboxed iframe and is not here: framing it needs an endpoint
+    # with its own CSP, which the desktop shell could not reach anyway. This one renders
+    # through the socket the page already has, in both hosts. See `panel_declarative.js`.
+    "panel_declarative.js": "text/javascript; charset=utf-8",
     # One screen, one directory. The header's `<option>` list is the register of screens and
     # this is the register of their code; `screens/about/screen.js` documents the contract
     # both ends keep, and each screen's directory holds the pieces that exist only to serve
