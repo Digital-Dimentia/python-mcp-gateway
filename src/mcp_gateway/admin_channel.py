@@ -40,7 +40,7 @@ import asyncio
 import logging
 from typing import Any
 
-from mcp_gateway import config_writer, errors, jsonrpc
+from mcp_gateway import config_writer, errors, jsonrpc, panels, protocol, ui_apps
 from mcp_gateway.transport_ws import ClientLink
 
 logger = logging.getLogger(__name__)
@@ -99,6 +99,28 @@ class LogStream(logging.Handler):
         self._subscribers.discard(queue)
 
 
+def _html_panel_item(result: dict[str, Any]) -> dict[str, Any] | None:
+    """The first content item of a read that is an HTML panel with a document in it.
+
+    A resource read answers with a list, and a backend may legitimately return several
+    representations of one URI -- the declarative tier and the HTML tier of the same panel
+    is exactly that case. Picking by `mimeType` rather than taking `contents[0]` is what
+    lets a backend publish both under one `ui://`.
+
+    A `blob` is not accepted in place of `text`: a base64 payload here would be a document
+    this process decoded and served as HTML, and "what did the gateway just execute in
+    somebody's browser" should be answerable by reading the resource.
+    """
+    for item in result.get("contents") or []:
+        if not isinstance(item, dict):
+            continue
+        if ui_apps.profile_of(item.get("mimeType")) != protocol.UI_APP_HTML_PROFILE:
+            continue
+        if isinstance(item.get("text"), str) and item["text"]:
+            return item
+    return None
+
+
 class AdminConnection:
     """One `/admin` connection. Same shape as `Session`, different method table."""
 
@@ -124,6 +146,7 @@ class AdminConnection:
             "admin.backend.restart": self._restart,
             "admin.logs.tail": self._logs_tail,
             "admin.logs.stop": self._logs_stop,
+            "admin.panel.open": self._panel_open,
         }
 
     async def handle(self, message: dict[str, Any]) -> dict[str, Any] | None:
@@ -143,6 +166,11 @@ class AdminConnection:
 
     async def closed(self) -> None:
         await self._stop_tail()
+        # Every panel URL this connection minted dies with it. A closed tab must not leave
+        # a live capability URL on the origin that holds the access key -- see `panels.md`.
+        revoked = self.gateway.panels.revoke_all(self)
+        if revoked:
+            logger.debug("revoked %d panel url(s) with the connection that minted them", revoked)
 
     # --- handlers -----------------------------------------------------------------------
 
@@ -282,6 +310,45 @@ class AdminConnection:
     async def _logs_stop(self, _params: dict) -> dict[str, Any]:
         await self._stop_tail()
         return {"streaming": False}
+
+    async def _panel_open(self, params: dict) -> dict[str, Any]:
+        """Mint a capability URL for one HTML panel, and say what policy it will run under.
+
+        **The gateway reads the resource**, through the same `router.read_resource` a
+        client's own `resources/read` takes -- rather than taking HTML from the caller and
+        serving it back, which is one round trip cheaper and gives up the two properties
+        worth having: that the bytes at a panel URL are the backend's own answer, and that
+        the policy came from the `_meta.ui.csp` `ui_apps.py` already sanitized.
+
+        `self` is the session key the router marks the backend busy with, and the owner of
+        the token. Both are identity comparisons and neither leaves this process.
+
+        Only the HTML tier reaches here. The declarative tier is rendered by the page from
+        the resource it already read, and minting a URL for it would be putting a document
+        on this origin for no reason at all.
+        """
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise errors.InvalidParams("admin.panel.open requires a 'uri'")
+
+        result = await self.gateway.router.read_resource(self, uri)
+        item = _html_panel_item(result)
+        if item is None:
+            raise errors.InvalidParams(
+                f"{uri} is not a {protocol.UI_APP_HTML_MIME} resource with text to render"
+            )
+
+        ui_block = (item.get("_meta") or {}).get("ui")
+        csp = ui_block.get("csp") if isinstance(ui_block, dict) else None
+        panel = self.gateway.panels.mint(body=item["text"], csp=csp, owner=self)
+        logger.info("minted a panel url for %s", uri)
+        # No token field beside the URL: one spelling of a capability, so nothing downstream
+        # has to decide which is the real one or log "the harmless half".
+        return {
+            "url": panel.url,
+            "policy": panel.policy,
+            "expiresInSeconds": panels.TOKEN_TTL_SECONDS,
+        }
 
     async def _pump(self, stream: LogStream, queue: asyncio.Queue) -> None:
         try:

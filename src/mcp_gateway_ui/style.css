@@ -1493,6 +1493,20 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 0.8rem; color: var(--muted); }
 .panel-action-bar { display: flex; gap: 0.4rem; }
 .panel-action-note:empty { display: none; }
 
+/* SEP-1865's HTML tier: a document the backend wrote, in a frame of its own. The
+   border is not decoration -- it is the edge of the sandbox, and a panel that bled
+   into the card around it would be a panel pretending to be part of this page. A
+   backend may ask for a height and the host clamps it; see `panel_html.js`. */
+.panel-html { display: flex; flex-direction: column; gap: 0.35rem; }
+.panel-frame {
+  width: 100%;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--panel);
+  display: block;
+}
+.panel-html .note:empty { display: none; }
+
 /* A block this build would not render, shown as itself. The whole doctrine in one
    rule: visible, quoted, and never mistaken for something that worked. */
 .panel-decline {

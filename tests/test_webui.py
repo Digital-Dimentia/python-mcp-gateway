@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from mcp_gateway import webui
+from mcp_gateway import protocol, webui
 from tests.fixtures.ws_client import daemon
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -227,6 +227,23 @@ def test_the_screen_modules_do_not_import_the_frame() -> None:
     ):
         text = (ASSET_DIR / name).read_text()
         assert not re.search(r"""from\s+['"][^'"]*app\.js['"]""", text), name
+
+
+def test_the_page_declares_the_panel_types_this_repo_names() -> None:
+    """`rpc.js` and `protocol.py` hold the same pair of mime types, so check they agree.
+
+    The page declares at `initialize` which panel tiers it can render, and the gateway takes
+    the union of its clients' declarations and passes *that* down to backends. A typo in one
+    of the two spellings would not fail anything: a backend would simply see a content type
+    nobody asked for, and ship the other tier, or none. That is a bug you find by wondering
+    why a panel stopped appearing, which is the worst way to find one.
+    """
+    text = (ASSET_DIR / "rpc.js").read_text()
+    declared = re.search(r"PANEL_MIME_TYPES = \[(.*?)\]", text, re.S)
+    assert declared, "rpc.js no longer declares a list of panel mime types"
+    assert protocol.UI_APP_DECLARATIVE_MIME in declared.group(1)
+    assert protocol.UI_APP_HTML_MIME in declared.group(1)
+    assert protocol.UI_EXTENSION_ID in text
 
 
 def test_the_modules_parse() -> None:

@@ -60,7 +60,7 @@ from urllib.parse import parse_qs, urlsplit
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.http11 import Request, Response
 
-from mcp_gateway import errors, jsonrpc, transport_http, webui
+from mcp_gateway import errors, jsonrpc, panels, transport_http, webui
 
 logger = logging.getLogger(__name__)
 
@@ -334,7 +334,11 @@ def _offered_http_keys(head: transport_http.Head) -> list[str]:
     return offered
 
 
-def _access_check(expected: str | None, origins: Callable[[], frozenset[str]]) -> Any:
+def _access_check(
+    expected: str | None,
+    origins: Callable[[], frozenset[str]],
+    panel_store: panels.PanelStore | None = None,
+) -> Any:
     """A `process_request` hook: serve the UI, 404 an unknown path, 401 a client without the key.
 
     All of it happens during the opening handshake, so a rejected client never reaches
@@ -342,6 +346,10 @@ def _access_check(expected: str | None, origins: Callable[[], frozenset[str]]) -
 
     `origins` is a callable rather than a set because the allowed set names the bound port,
     and with `--port 0` that is not known until after `serve()` has been handed this hook.
+
+    `panel_store` is the live panel URLs. `None` is a transport with no gateway behind it,
+    which is every test that binds this class on its own: a `/panel` request then 404s like
+    any other path nobody claimed.
     """
     expected_bytes = expected.encode("utf-8") if expected else None
 
@@ -353,6 +361,12 @@ def _access_check(expected: str | None, origins: Callable[[], frozenset[str]]) -
             # The whole target, not the split path: the redirect `/ui` -> `/ui/` has to
             # carry the query string, which is where the access key is.
             return webui.response(request.path)
+        # Also before the key check, and for an argument that shares no premise with the
+        # one above -- see `panels.md`. The token in the path *is* the credential, it was
+        # minted over `/admin`, which did check the key, and a browser cannot put an
+        # `Authorization` header on a frame load any more than on a navigation.
+        if panel_store is not None and panels.is_panel_path(path):
+            return panels.response(panel_store, path)
         if path not in (MCP_PATH, ADMIN_PATH):
             logger.warning("Rejected WebSocket connection to unknown path %r", path)
             return connection.respond(
@@ -562,6 +576,7 @@ class GatewayServer:
         access_key: str | None = None,
         allow_unauthenticated: bool = False,
         tls: ssl.SSLContext | None = None,
+        panel_store: panels.PanelStore | None = None,
     ) -> None:
         # Before anything else, and in the constructor rather than in `start()`: the point
         # of the guard is that the misconfiguration never gets as far as a listening port.
@@ -572,6 +587,10 @@ class GatewayServer:
         self._port = port
         self._access_key = access_key
         self._tls = tls
+        #: The live panel URLs, owned by the `Gateway` above and read here by the hook that
+        #: serves them. `None` when this class is bound on its own, which is what most of
+        #: the transport tests do; `/panel` is then a path nobody claimed.
+        self._panel_store = panel_store
         self._server: Server | None = None
         self._links: set[ClientLink] = set()
         #: The Streamable HTTP endpoint on the same path and port. Its sessions are not
@@ -701,7 +720,9 @@ class GatewayServer:
             max_size=MAX_MESSAGE_BYTES,
             ping_interval=PING_INTERVAL_SECONDS,
             ping_timeout=PING_TIMEOUT_SECONDS,
-            process_request=_access_check(self._access_key, self._allowed_origins),
+            process_request=_access_check(
+                self._access_key, self._allowed_origins, self._panel_store
+            ),
             create_connection=connection_class,
             ssl=self._tls,
         )

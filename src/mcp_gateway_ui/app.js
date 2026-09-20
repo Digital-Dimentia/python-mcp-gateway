@@ -1198,12 +1198,16 @@ variables.install({
   ...detail.formPort,
 });
 
-// The panel host wants exactly two things: the session a call goes out on, and the column a
-// result lands in. Deliberately not the admin socket -- a backend's panel has no route to an
-// admin method, and the shortest way to keep it that way is to never hand it one.
+// The panel host wants three things: the session a call goes out on, the column a result
+// lands in, and -- for SEP-1865's HTML tier only -- a URL to frame. That last one is the
+// single admin method in its reach, handed in as a function rather than as the socket, so
+// what a panel can reach is this line rather than a judgement call inside another module.
+// `admin.panel.open` answers with a short-lived, single-use path and nothing else; no admin
+// method hands back a credential, which is what makes one safe to pass along at all.
 panel.install({
   state,
   pushCard: results.pushCard,
+  mint: (uri) => state.admin.request('admin.panel.open', { uri }),
 });
 
 state.key = initialKey();

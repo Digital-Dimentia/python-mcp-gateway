@@ -17,6 +17,14 @@ The split is not cosmetic. Admin verbs must not appear in the model's tool list,
 should not have to speak MCP to ask which backends are up. Anything else gets a 404 during
 the handshake, before a connection object exists.
 
+Two things on this port are not sockets at all, and both are answered by `process_request`
+before the key check. [`webui.py`](webui.md) serves `/ui`, because a browser cannot put an
+`Authorization` header on a navigation and those files are inert. [`panels.py`](panels.md)
+serves `/panel/<token>`, because a browser cannot put one on a frame load either — and there
+the token in the path *is* the credential, minted over `/admin`, which did check the key.
+**Those are two different arguments for the same exemption**, they share no premise, and each
+doc makes its own; this hook is just where they both land.
+
 ## The bind guard
 
 `refuse_unauthenticated_bind` refuses a non-loopback bind with no key, unless

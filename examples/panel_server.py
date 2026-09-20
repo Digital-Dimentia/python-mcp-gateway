@@ -51,13 +51,123 @@ from typing import Any
 
 PROTOCOL_VERSION = "2025-06-18"
 
-#: The tier this server's panel is written in. The `profile` parameter is SEP-1865's own, and
-#: it is what lets one tool serve two tiers: swap this resource for `text/html;profile=mcp-app`
-#: and the tool definition does not change.
+#: The tier a panel is written in. The `profile` parameter is SEP-1865's own, and it is what
+#: lets one tool serve two tiers: a resource's `mimeType` says which tier its document is,
+#: and the tool definition never changes.
 PANEL_MIME = "application/json;profile=mcp-app-declarative"
+HTML_PANEL_MIME = "text/html;profile=mcp-app"
 
-#: The panel's address. `panel` here is an authority this file invented; see the header.
+#: The two panels' addresses. `panel` here is an authority this file invented; see the header.
 PANEL_URI = "ui://panel/board"
+HTML_PANEL_URI = "ui://panel/gauge"
+
+#: The HTML tier, in full. Two things about it are worth copying into a real server.
+#:
+#: **The script is inline, and it has to be.** The gateway frames this with no
+#: `allow-same-origin`, so the document's origin is opaque and `'self'` in a CSP matches
+#: nothing at all -- a `<script src="./panel.js">` beside this file would be refused. That is
+#: a conformance gap in the host rather than a rule of the spec, and it is written down in
+#: `src/mcp_gateway/panels.md` rather than left to be discovered.
+#:
+#: **The port arrives; it is never asked for.** The host posts a `MessagePort` to this
+#: document once it has loaded, and every message after that crosses that port. Nothing here
+#: reads `event.origin`: a sandboxed document's origin is the string `"null"`, which every
+#: sandboxed frame on the page shares, so it identifies nobody.
+HTML_PANEL = """<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fleet gauge</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 13px/1.4 system-ui, sans-serif; margin: 0; padding: 10px; }
+  .bar { height: 10px; background: #8884; border-radius: 5px; overflow: hidden; }
+  .bar span { display: block; height: 100%; background: #4a8; }
+  .row { margin-bottom: 8px; }
+  .id { font-weight: 600; }
+  button { font: inherit; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="fleet">Waiting for the host&hellip;</div>
+<button id="restart" hidden>Restart the stopped one</button>
+<script>
+(function () {
+  var port = null;
+  var next = 1;
+  var stopped = null;
+  // The name this tool has *in the host*, learned from the host. A gateway namespaces its
+  // backends' tools, so `restart` here is `<backend>__restart` there -- and the backend's
+  // name is chosen by whoever wrote `servers.yaml`, not by this file. Reading it off the
+  // `tool-input` we are handed is how a panel stays correct under any name.
+  var prefix = '';
+
+  function send(message) { if (port) port.postMessage(message); }
+  function notify(method, params) { send({ jsonrpc: '2.0', method: method, params: params }); }
+
+  function resize() {
+    notify('ui/notifications/size-changed', { height: document.body.scrollHeight + 20 });
+  }
+
+  function draw(result) {
+    var fleet = (result && result.structuredContent) || { machines: [] };
+    var host = document.getElementById('fleet');
+    host.textContent = '';
+    fleet.machines.forEach(function (machine) {
+      var row = document.createElement('div');
+      row.className = 'row';
+      var label = document.createElement('div');
+      label.textContent = machine.id + ' \u00b7 ' + machine.state;
+      label.className = 'id';
+      var bar = document.createElement('div');
+      bar.className = 'bar';
+      var fill = document.createElement('span');
+      fill.style.width = Math.round(machine.load * 100) + '%';
+      bar.appendChild(fill);
+      row.appendChild(label);
+      row.appendChild(bar);
+      host.appendChild(row);
+      if (machine.state !== 'running') stopped = machine.id;
+    });
+    var button = document.getElementById('restart');
+    button.hidden = !stopped;
+    resize();
+  }
+
+  document.getElementById('restart').addEventListener('click', function () {
+    if (!stopped) return;
+    var id = next++;
+    send({
+      jsonrpc: '2.0', id: id, method: 'tools/call',
+      params: { name: prefix + 'restart', arguments: { id: stopped } }
+    });
+  });
+
+  function onPortMessage(event) {
+    var message = event.data || {};
+    if (message.method === 'ui/notifications/tool-input') {
+      var name = String(message.params.name || '');
+      var cut = name.lastIndexOf('__');
+      prefix = cut < 0 ? '' : name.slice(0, cut + 2);
+    }
+    if (message.method === 'ui/notifications/tool-result') draw(message.params.result);
+    if (message.result && message.result.structuredContent) draw(message.result);
+  }
+
+  // The host hands the port in; nothing here dials out. No origin is checked, because a
+  // sandboxed document has none worth checking -- arrival on the port is the identity.
+  window.addEventListener('message', function (event) {
+    if (port || !event.ports || !event.ports.length) return;
+    port = event.ports[0];
+    port.onmessage = onPortMessage;
+    port.start();
+    send({ jsonrpc: '2.0', id: 0, method: 'ui/initialize', params: {} });
+    notify('ui/notifications/initialized', {});
+    resize();
+  });
+}());
+</script>
+</body>
+</html>
+"""
 
 #: The fleet, such as it is. Mutable so `restart` visibly changes something.
 FLEET: list[dict[str, Any]] = [
@@ -127,6 +237,14 @@ TOOLS: list[dict[str, Any]] = [
         "_meta": {"ui": {"resourceUri": PANEL_URI}},
     },
     {
+        "name": "gauge",
+        "description": "The same fleet, as SEP-1865's HTML tier -- a document this server wrote.",
+        "inputSchema": {"type": "object", "properties": {}},
+        # The tool definition is identical in shape to `board` above. Only the *resource* it
+        # names differs, which is the whole point of the `profile` parameter.
+        "_meta": {"ui": {"resourceUri": HTML_PANEL_URI}},
+    },
+    {
         "name": "describe",
         "description": "The same fleet, with no panel -- the control for comparison.",
         "inputSchema": {"type": "object", "properties": {}},
@@ -163,7 +281,7 @@ def call_tool(name: str, arguments: dict) -> dict:
     `structuredContent`, and the `content` text is what a model reads. Sending only one would
     make the server render *or* explain, never both.
     """
-    if name in ("board", "describe"):
+    if name in ("board", "gauge", "describe"):
         snapshot = fleet_snapshot()
         summary = f"{snapshot['counts']['running']} of {snapshot['counts']['total']} running"
         return {"content": [{"type": "text", "text": summary}], "structuredContent": snapshot}
@@ -216,26 +334,30 @@ def handle(message: dict) -> None:
             {
                 "resources": [
                     {"uri": PANEL_URI, "name": "Fleet panel", "mimeType": PANEL_MIME},
+                    {
+                        "uri": HTML_PANEL_URI,
+                        "name": "Fleet gauge",
+                        "mimeType": HTML_PANEL_MIME,
+                        # A panel may ask for the hosts it needs. This one needs none, and
+                        # says so: the gateway turns this into a real `Content-Security-Policy`
+                        # on the document, and an empty list is a document that can reach
+                        # nothing at all. See `src/mcp_gateway/panels.md`.
+                        "_meta": {"ui": {"csp": {"connectDomains": [], "resourceDomains": []}}},
+                    },
                 ]
             },
         )
     elif method == "resources/read":
-        if params.get("uri") != PANEL_URI:
+        uri = params.get("uri")
+        if uri == PANEL_URI:
+            item = {"uri": uri, "mimeType": PANEL_MIME, "text": json.dumps(PANEL_DOCUMENT)}
+        elif uri == HTML_PANEL_URI:
+            item = {"uri": uri, "mimeType": HTML_PANEL_MIME, "text": HTML_PANEL}
+        else:
             # MCP's dedicated code for "that URI is not something I can read".
-            error(request_id, -32002, f"no resource at {params.get('uri')!r}")
+            error(request_id, -32002, f"no resource at {uri!r}")
             return
-        result(
-            request_id,
-            {
-                "contents": [
-                    {
-                        "uri": PANEL_URI,
-                        "mimeType": PANEL_MIME,
-                        "text": json.dumps(PANEL_DOCUMENT),
-                    }
-                ]
-            },
-        )
+        result(request_id, {"contents": [item]})
     elif method == "resources/templates/list":
         result(request_id, {"resourceTemplates": []})
     elif method == "ping":

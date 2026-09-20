@@ -47,6 +47,7 @@ Authentication is the same as `/mcp`: the same key, checked in the same handshak
 | `admin.reload` | re-read both files and apply the difference |
 | `admin.backend.restart` | stop and respawn one backend |
 | `admin.clipboard.put` | publish a snapshot of the two right-hand columns |
+| `admin.panel.open` | mint a short-lived, single-use URL for one backend's HTML panel |
 
 `admin.reload` and `admin.backend.restart` ship because they are the same code the meta-tools
 already expose to the model. Withholding them from the UI while the model can call them would
@@ -59,6 +60,19 @@ results the person has collected and the values they have picked, held in memory
 The four config writers reach `config_writer.py` and the daemon's **own** `config_path` —
 never a path from the request, because a method that took one would let whoever reaches
 `/admin` write YAML anywhere this process can. See `_write`.
+
+`admin.panel.open` is the odd one in that table: it writes nothing anywhere, and it is here
+rather than under *Reading* because it **creates a capability**. It takes the `mcpgw://` URI
+of a `ui://` resource, reads it through [`router.py`](router.md) like any client would, and
+answers with a path under `/panel/` that will serve that document exactly once, within
+seconds, in an opaque origin. Three things make that safe to hand out and all three are
+argued in [`panels.md`](panels.md); the one that belongs *here* is the last: the URL is owned
+by this connection and `closed()` revokes it, so a closed tab leaves nothing live behind.
+
+The gateway reads the resource itself rather than accepting HTML from the caller. One round
+trip cheaper, and it would give up the two properties worth having: that the bytes at a panel
+URL are the backend's own answer, and that the policy was built from the `_meta.ui.csp`
+[`ui_apps.py`](ui_apps.md) sanitized rather than from whatever the caller said it was.
 
 ## There is no `admin.secrets.set`, and there will not be
 

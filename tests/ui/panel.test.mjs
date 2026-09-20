@@ -21,10 +21,15 @@ const clickIn = (root, text) => {
 };
 
 /** A page with one backend's tools listed and a socket that records rather than sends. */
-function wire({ tools = [], onRequest } = {}) {
+function wire({ tools = [], onRequest, mint } = {}) {
   const sent = [];
   const cards = [];
+  const minted = [];
   panel.install({
+    mint: async (uri) => {
+      minted.push(uri);
+      return mint ? mint(uri) : { url: '/panel/tok' };
+    },
     state: {
       listings: { tools, prompts: [], resources: [], templates: [] },
       mcp: {
@@ -36,7 +41,7 @@ function wire({ tools = [], onRequest } = {}) {
     },
     pushCard: (card) => cards.push(card),
   });
-  return { sent, cards };
+  return { sent, cards, minted };
 }
 
 const toolEntry = (name, extra = {}) => ({ name, inputSchema: { type: 'object' }, ...extra });
@@ -116,8 +121,8 @@ test('a panel that cannot be read still shows you the result you already have', 
   assert.match(cards[0].body.textContent, /the actual answer/);
 });
 
-test('an html-tier panel says so rather than drawing nothing', async () => {
-  const { cards } = wire({
+test('an html-tier panel is framed from a minted url, never inlined into this page', async () => {
+  const { cards, minted } = wire({
     tools: [withPanel('zoo__board', PANEL_URI)],
     onRequest: () => ({
       contents: [{ uri: PANEL_URI, mimeType: 'text/html;profile=mcp-app', text: '<h1>hi</h1>' }],
@@ -127,8 +132,38 @@ test('an html-tier panel says so rather than drawing nothing', async () => {
     entry: withPanel('zoo__board', PANEL_URI),
     result: { content: [{ type: 'text', text: 'the actual answer' }] },
   });
-  assert.match(cards[0].body.textContent, /not one this build renders/);
-  assert.equal(cards[0].body.querySelector('h1'), null, 'and certainly does not run it');
+
+  // The document went nowhere near this DOM: it is fetched by the frame, from an endpoint
+  // that serves it under `sandbox allow-scripts`. A build that "helpfully" inlined it would
+  // be running a backend's script on the origin that holds the access key.
+  assert.deepEqual(minted, [PANEL_URI]);
+  assert.equal(cards[0].body.querySelector('h1'), null);
+  const frame = cards[0].body.querySelector('iframe');
+  assert.equal(frame.getAttribute('sandbox'), 'allow-scripts');
+});
+
+test('when a panel offers both tiers the one that executes nothing wins', async () => {
+  const { cards } = wire({
+    tools: [withPanel('zoo__board', PANEL_URI)],
+    onRequest: () => ({
+      contents: [
+        { uri: PANEL_URI, mimeType: 'text/html;profile=mcp-app', text: '<h1>hi</h1>' },
+        {
+          uri: PANEL_URI,
+          mimeType: 'application/json;profile=mcp-app-declarative',
+          text: JSON.stringify({ panel: 1, blocks: [{ type: 'text', text: 'drawn' }] }),
+        },
+      ],
+    }),
+  });
+  await panel.openPanel({
+    entry: withPanel('zoo__board', PANEL_URI),
+    result: { ok: true },
+  });
+
+  // Picked by mimeType rather than by position -- the HTML one is first here on purpose.
+  assert.match(cards[0].body.textContent, /drawn/);
+  assert.equal(cards[0].body.querySelector('iframe'), null);
 });
 
 // --- gate 1: scope ----------------------------------------------------------------

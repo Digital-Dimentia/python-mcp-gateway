@@ -15,7 +15,7 @@ import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  AdminSocket, McpSocket, RpcError, PROTOCOL_VERSION, setTransport,
+  AdminSocket, McpSocket, RpcError, PROTOCOL_VERSION, PANEL_MIME_TYPES, setTransport,
 } from '../../src/mcp_gateway_ui/rpc.js';
 
 /** The documented schedule in `rpc.js`. Spelled again here so a change has to be meant. */
@@ -296,8 +296,12 @@ describe('the MCP handshake', () => {
     assert.equal(init.method, 'initialize');
     assert.equal(init.params.protocolVersion, PROTOCOL_VERSION);
     // Declared honestly: claiming `sampling` here would make a backend ask this page to
-    // run a model.
-    assert.deepEqual(init.params.capabilities, {});
+    // run a model. MCP Apps is the one thing here, and it is here because it is true --
+    // the gateway declares the union of its clients' lists downward, so a type in it that
+    // this page cannot draw is a backend shipping a panel to a blank card.
+    assert.deepEqual(init.params.capabilities, {
+      extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: PANEL_MIME_TYPES } },
+    });
     assert.equal(socket.state, 'open', 'not ready until the handshake finishes');
 
     Wire.latest.deliver({

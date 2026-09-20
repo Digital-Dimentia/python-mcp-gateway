@@ -49,6 +49,7 @@ mechanism it is testing.
 | `MOCK_UI_BOTH` | Send both spellings, disagreeing, to pin which one wins |
 | `MOCK_UI_CSP` | A raw JSON object for `_meta.ui.csp` on the resource, so hostile values are expressible |
 | `MOCK_UI_READ_CSP` | The same, on the *content item* a read returns -- which the spec says overrides the listing |
+| `MOCK_UI_HTML` | Answer a `ui://` read with **two** content items, the declarative one and this string as `text/html;profile=mcp-app` -- one URI, both tiers, which is what SEP-1865's `profile` parameter is for |
 """
 
 from __future__ import annotations
@@ -100,6 +101,7 @@ UI_FLAT = _flag("MOCK_UI_FLAT")
 UI_BOTH = _flag("MOCK_UI_BOTH")
 UI_CSP = _env("MOCK_UI_CSP", "")
 UI_READ_CSP = _env("MOCK_UI_READ_CSP", "")
+UI_HTML = _env("MOCK_UI_HTML", "")
 
 # Startup-time behaviour, before a single message is read.
 if _flag("MOCK_IGNORE_SIGTERM"):
@@ -381,7 +383,16 @@ def handle_resources_read(request_id, params: dict) -> None:
     if UI_READ_CSP and uri.startswith("ui://"):
         item["mimeType"] = "application/json;profile=mcp-app-declarative"
         item["_meta"] = {"ui": {"csp": json.loads(UI_READ_CSP)}}
-    result(request_id, {"contents": [item]})
+    contents = [item]
+    if UI_HTML and uri.startswith("ui://"):
+        # Second, deliberately. A host must pick its tier by `mimeType` rather than by
+        # taking `contents[0]`, and a fixture that put the HTML first would let a
+        # take-the-first implementation pass.
+        html = {"uri": uri, "mimeType": "text/html;profile=mcp-app", "text": UI_HTML}
+        if UI_READ_CSP:
+            html["_meta"] = {"ui": {"csp": json.loads(UI_READ_CSP)}}
+        contents.append(html)
+    result(request_id, {"contents": contents})
 
 
 def handle_resources_subscribe(request_id, params: dict) -> None:

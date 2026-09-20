@@ -23,6 +23,20 @@ The Tauri window's content security policy is *narrower* than the one below: its
 `connect-src` names `ipc:` and drops `ws:`/`wss:` entirely, which is the machine-checkable
 form of "that page opens no sockets". `tests/test_desktop_layout.py` asserts it.
 
+## The one thing the page may frame
+
+The policy below carries `frame-src 'self'`, and it is there for exactly one thing: a
+backend's HTML panel, served by [`panels.py`](panels.md) from this same origin at
+`/panel/<token>` under a policy of its own that is far narrower than this one. `default-src
+'none'` blocks every iframe, so without that entry the panel endpoint would answer correctly
+to a frame the page was never allowed to create.
+
+It is `'self'` and nothing else — no `https:`, no host list — because the only framed
+document is one this daemon served, and the reason it is safe to frame is not that we trust
+it: it is that the *response* carrying it says `sandbox allow-scripts`, which puts it in an
+opaque origin whatever frames it. That argument, and why it is not the argument below about
+the assets, is [`panels.md`](panels.md)'s.
+
 
 The UI is, in full: [`index.html`](../mcp_gateway_ui/index.html), [`style.css`](../mcp_gateway_ui/style.css),
 [`app.js`](../mcp_gateway_ui/app.js), [`rpc.js`](../mcp_gateway_ui/rpc.js), [`schema_form.js`](../mcp_gateway_ui/schema_form.js),
@@ -30,7 +44,8 @@ The UI is, in full: [`index.html`](../mcp_gateway_ui/index.html), [`style.css`](
 [`markdown.js`](../mcp_gateway_ui/markdown.js), [`format.js`](../mcp_gateway_ui/format.js),
 [`screens/basics/variables.js`](../mcp_gateway_ui/screens/basics/variables.js), [`screens/basics/detail.js`](../mcp_gateway_ui/screens/basics/detail.js),
 [`screens/basics/primitives.js`](../mcp_gateway_ui/screens/basics/primitives.js), [`screens/basics/results.js`](../mcp_gateway_ui/screens/basics/results.js),
-[`panel_declarative.js`](../mcp_gateway_ui/panel_declarative.js), [`screens/basics/panel.js`](../mcp_gateway_ui/screens/basics/panel.js),
+[`panel_declarative.js`](../mcp_gateway_ui/panel_declarative.js), [`panel_html.js`](../mcp_gateway_ui/panel_html.js),
+[`screens/basics/panel.js`](../mcp_gateway_ui/screens/basics/panel.js),
 [`naming.js`](../mcp_gateway_ui/naming.js), [`screens/about/screen.js`](../mcp_gateway_ui/screens/about/screen.js),
 [`screens/about/tour.js`](../mcp_gateway_ui/screens/about/tour.js), [`screens/about/slides.js`](../mcp_gateway_ui/screens/about/slides.js),
 [`screens/connection/screen.js`](../mcp_gateway_ui/screens/connection/screen.js),

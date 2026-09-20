@@ -149,3 +149,27 @@ against a single call.
   session, and `_meta` is MCP's designated channel for things a peer may ignore.
 - **It does not fetch, cache or render.** A `ui://` resource is read through
   [`router.py`](router.md) like any other.
+
+## Where the two tiers part company
+
+This module is the same for both of SEP-1865's tiers, because both are addressed the same
+way: a tool names a `ui://` resource, and the *resource's* `mimeType` says which tier its
+document is written in. That is the whole reason the rewrite here knows nothing about
+rendering.
+
+What happens after the read is where they differ, and it is worth knowing which door a panel
+went through:
+
+| | declarative | HTML |
+|---|---|---|
+| `mimeType` | `application/json;profile=mcp-app-declarative` | `text/html;profile=mcp-app` |
+| rendered by | `panel_declarative.js`, as DOM | the browser, in a frame |
+| executes backend code | never | yes, which is what [`panels.md`](panels.md) is about |
+| needs an endpoint | no | `/panel/<token>`, with its own policy |
+| works in the desktop shell | yes | not yet — python-mcp-gateway-u5s.5 |
+
+The `csp` and `permissions` members sanitized above finally *mean* something on the second
+row: [`panels.py`](panels.md) turns `csp` into the real `Content-Security-Policy` a panel is
+served under. Until the HTML tier existed, that sanitising was done purely on behalf of
+downstream hosts; now this gateway is one of them, which is a good reason for the rule to
+have been written before it was needed.

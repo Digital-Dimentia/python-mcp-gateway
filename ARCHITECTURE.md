@@ -59,6 +59,8 @@ flowchart TB
 | [`secret_providers.py`](src/mcp_gateway/secret_providers.md) | the `secrets:` block: pluggable sources ahead of that file |
 | [`logging_redaction.py`](src/mcp_gateway/logging_redaction.md) | scrubs known values from every log record |
 | [`naming.py`](src/mcp_gateway/naming.md) | the `__` separator and the `mcpgw://` scheme |
+| [`ui_apps.py`](src/mcp_gateway/ui_apps.md) | MCP Apps (SEP-1865) at the proxy boundary: the `_meta.ui` rewrite and its sanitising |
+| [`panels.py`](src/mcp_gateway/panels.md) | `/panel/<token>`: one backend's HTML panel, single-use and sandboxed by its own header |
 | [`protocol.py`](src/mcp_gateway/protocol.md) | method names, versions, the capability block |
 | [`errors.py`](src/mcp_gateway/errors.md) | exceptions → JSON-RPC errors, and the `source` tag |
 | [`jsonrpc.py`](src/mcp_gateway/jsonrpc.md) | framing and classification, shared by all three transports |
@@ -140,11 +142,11 @@ drop in-flight work on the other eleven. See [`supervisor.md`](src/mcp_gateway/s
 | Admin | no method returns a credential value; secret *writing* is not implemented anywhere. Config writing is on `/admin` only, where the model cannot reach it |
 | Origin | a socket whose `Origin` header names anywhere but this server is refused: WS has no same-origin policy, and a browser is now a client |
 | UI | static files only, and a CSP that forbids loading anything the page did not ship |
+| Panels | a backend's HTML runs only at `/panel/<token>`: unguessable, single-use, seconds long, minted over `/admin` and revoked with it — and served under `Content-Security-Policy: sandbox allow-scripts`, so it holds an opaque origin however it is reached |
 
 ## The UI
 
-`/ui` serves nine static files -- HTML, CSS and seven ES modules -- from the same port as
-the two sockets. No build step and no dependency; `webui.py` answers the GET, and the files
+`/ui` serves the page and its ES modules from the same port as the two sockets. No build step and no dependency; `webui.py` answers the GET, and the files
 themselves live in `src/mcp_gateway_ui/`, a package of their own beside the daemon.
 
 ```mermaid

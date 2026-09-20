@@ -9,6 +9,31 @@ nobody reads.
 
 ## Unreleased
 
+**A backend can ship a panel as HTML now, and the gateway frames it without handing it the
+keys.** SEP-1865's second tier — `text/html;profile=mcp-app` — is a document the backend
+wrote, run in your browser, and it is the half that was deliberately left out because doing
+it wrong is worse than not doing it. It is served from a new `/panel/<token>` endpoint whose
+URL is unguessable, single-use, lives for seconds, is minted over the already-authenticated
+`/admin` socket and is revoked the moment that tab closes. **The lock is the response
+header** — `Content-Security-Policy: sandbox allow-scripts` — not the `<iframe>` attribute,
+because the attribute belongs to whoever wrote the embed while the header follows the
+document: a panel lands in an opaque origin however it is reached, and the origin it does not
+get is the one holding your access key. The rest of the policy is built from the `csp` the
+backend asked for, already sanitized, with `default-src 'none'` underneath, so a host it did
+not name is refused rather than defaulted in. The panel talks to the page over one
+`MessagePort` carrying MCP JSON-RPC, and the only thing it can ask for is a tool call — which
+passes the same three gates a declarative panel's does, needs your click, and lands as its
+own result card, so a panel still cannot make a call you do not see. The admin UI now says at
+`initialize` which tiers it renders, which is what a backend reads to decide what to publish;
+a panel offering both gets the declarative one, because DOM this page built beats a document
+it merely framed. `examples/panel_server.py` grew a `gauge` tool so both tiers sit in one
+file and the difference is one `mimeType`. **Two honest limits**: the desktop window cannot
+frame a panel yet — its content policy has no `frame-src` and the page is not served from the
+daemon — and says so rather than showing an empty box; and because the frame has no
+`allow-same-origin`, `'self'` in a panel's own CSP matches nothing, so a panel that loads a
+sibling `.js` works elsewhere and fails here. Inline the script. Both are written down in
+`src/mcp_gateway/panels.md` rather than left to be discovered.
+
 **A notification queued when the daemon shuts down is now sent, not dropped.** The gateway
 debounces `list_changed` by a quarter-second and flushes what is pending before closing the
 server — except that the flush cancelled the pending emission instead of sending it, so a
@@ -44,8 +69,9 @@ not markup: nothing a backend sends is executed or parsed as HTML, which keeps t
 no-`innerHTML` rule the UI has always had. A panel may ask to call one of its own server's
 tools, and the answer goes through the same socket as your own click and lands as its own
 card — so a panel cannot make a call you do not see — after a prompt naming the tool and its
-arguments. SEP-1865's HTML tier is deliberately not implemented, and the gateway says so:
-it declares only the content type it can actually render. `examples/panel_server.py` is a
+arguments. SEP-1865's HTML tier arrives later in this same release, under
+`panels.md`; what this entry describes is the tier that executes nothing.
+`examples/panel_server.py` is a
 worked one, beside the zoo rather than inside it, and `examples/remote-compose/`'s `verify`
 profile now stands it up beside the zoo so a container deployment has a panel to look at
 rather than only the capability to draw one. `zoo_http.py` gained a `--server` flag to make

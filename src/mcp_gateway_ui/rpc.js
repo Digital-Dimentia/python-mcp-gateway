@@ -200,6 +200,22 @@ export class AdminSocket extends RpcSocket {
   constructor(key) { super('/admin', key); }
 }
 
+/** MCP Apps (SEP-1865): the extension a *client* declares to say it can render a panel. */
+export const UI_EXTENSION_ID = 'io.modelcontextprotocol/ui';
+
+/**
+ * The two panel types this page draws, declared at `initialize`.
+ *
+ * Written out here rather than imported from the two renderers, because this file is the
+ * transport and knows nothing about drawing. `src/mcp_gateway/protocol.py` holds the same
+ * pair for the daemon's side, and `tests/test_webui.py` asserts the two agree -- so the
+ * duplication is checked rather than trusted.
+ */
+export const PANEL_MIME_TYPES = [
+  'application/json;profile=mcp-app-declarative',
+  'text/html;profile=mcp-app',
+];
+
 /** `/mcp`: a real MCP client, so what the UI shows is what the model would see. */
 export class McpSocket extends RpcSocket {
   constructor(key) {
@@ -216,7 +232,12 @@ export class McpSocket extends RpcSocket {
         // Declared honestly and minimally. The gateway takes the union of its clients'
         // capabilities and declares *that* downward, so claiming `sampling` here would
         // make a backend ask this page to run a model.
-        capabilities: {},
+        //
+        // MCP Apps is the one thing declared, and it is declared because it is true: this
+        // page renders both of SEP-1865's tiers. A backend reads this list to decide which
+        // one to publish, so a type in it that nothing here draws would be a backend
+        // shipping a panel to a host that shows a blank card.
+        capabilities: { extensions: { [UI_EXTENSION_ID]: { mimeTypes: PANEL_MIME_TYPES } } },
         clientInfo: { name: 'mcp-gateway-ui', title: 'MCP Gateway UI', version: '0.1.0' },
       });
       this.serverInfo = result.serverInfo || null;

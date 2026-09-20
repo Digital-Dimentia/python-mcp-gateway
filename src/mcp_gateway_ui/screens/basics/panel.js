@@ -37,11 +37,20 @@
 // own result card.** A panel cannot make a call you do not see. The clipboard therefore
 // records panel activity with no code of its own.
 //
-// `/admin` is not reachable from here at all. This module holds `state.mcp` and nothing
-// else, so the rule that no admin method hands back a credential is kept by there being no
-// route to an admin method.
+// ## The one admin method in reach, and why
+//
+// A panel's calls go out on `/mcp`, and that has not changed. What did change is that the
+// HTML tier needs a URL to frame, and that URL is minted by `admin.panel.open` -- so this
+// module is handed a `mint` function by `app.js`, and that is the whole of its access to
+// `/admin`. It takes a `mcpgw://` URI and answers with a short-lived, single-use path.
+//
+// It is handed in rather than imported for the same reason everything else here is: the
+// route is then visible in `app.js` beside the others, and it is one function rather than a
+// socket. The rule that has not moved is the one that matters -- no admin method hands back
+// a credential, on this path or any other.
 
 import { isDeclarativePanel, renderPanel } from '../../panel_declarative.js';
+import { isHtmlPanel, renderHtmlPanel } from '../../panel_html.js';
 import { ownerOf } from '../../naming.js';
 import { el, pretty, renderToolResult } from '../../render.js';
 
@@ -175,7 +184,7 @@ async function runAction(ledger, backend, { tool, arguments: args }) {
  * because fetching it earlier would mean reading a backend's resource for a call the person
  * may never make.
  */
-export async function openPanel({ entry, result, elapsedMs }) {
+export async function openPanel({ entry, result, args, elapsedMs }) {
   const reference = panelFor(entry);
   const backend = ownerOf('tools', entry);
   const started = performance.now();
@@ -184,27 +193,41 @@ export async function openPanel({ entry, result, elapsedMs }) {
   let raw = result;
   try {
     const read = await port.state.mcp.request('resources/read', { uri: reference });
-    const item = (read.contents || [])[0];
-    if (!item || !isDeclarativePanel(item.mimeType)) {
-      // The HTML tier is the other half of SEP-1865 and is not built: it needs a served
-      // endpoint with its own CSP, which the desktop shell could not reach anyway. Saying so
-      // beats drawing nothing.
+    const contents = read.contents || [];
+    // By `mimeType`, never by position. SEP-1865's `profile` parameter is what lets one
+    // `ui://` carry both tiers, and a backend that publishes both is publishing them for
+    // hosts to choose between -- so a host that took `contents[0]` would be choosing by
+    // whatever order the backend happened to serialise.
+    const declarative = contents.find((item) => isDeclarativePanel(item?.mimeType));
+    const html = contents.find((item) => isHtmlPanel(item?.mimeType));
+    const ledger = newLedger();
+    if (declarative) {
+      // Preferred when both are offered: it is DOM built by this page out of JSON, with
+      // nothing executed and no frame to sandbox. The HTML tier is for the panels that
+      // cannot be written that way, not the ones that can.
+      const document_ = JSON.parse(declarative.text ?? 'null');
+      body = renderPanel(document_, {
+        result,
+        onAction: (request) => runAction(ledger, backend, request),
+      });
+    } else if (html) {
+      body = renderHtmlPanel({
+        reference,
+        call: { name: entry.name, arguments: args ?? {} },
+        result,
+        onAction: (request) => runAction(ledger, backend, request),
+        mint: port.mint,
+      });
+    } else {
       body = el('div', {}, [
         el('p', {
           class: 'note',
-          text: item
+          text: contents.length
             ? 'This panel is not one this build renders; showing the result instead.'
             : 'That panel could not be read; showing the result instead.',
         }),
         renderToolResult(result),
       ]);
-    } else {
-      const ledger = newLedger();
-      const document_ = JSON.parse(item.text ?? 'null');
-      body = renderPanel(document_, {
-        result,
-        onAction: (request) => runAction(ledger, backend, request),
-      });
     }
   } catch (error) {
     // A panel that fails to load must never cost you the result you already have.

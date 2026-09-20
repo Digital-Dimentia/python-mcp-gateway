@@ -55,6 +55,10 @@ function pushCard(options) {
   const card = resultCard({
     ...options,
     onRemove: () => {
+      // An HTML panel's body holds a live `MessagePort` to a framed document. Deleting the
+      // card takes the frame off the page; without this the port would stay open and a
+      // panel nobody can see could still be answering. Every other body ignores it.
+      options.body?.closePanel?.();
       if (!results.querySelector('.card')) clearResults();
       clipboardChanged();
     },

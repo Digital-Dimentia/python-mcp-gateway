@@ -55,6 +55,7 @@ from mcp_gateway.mcp_stdio import (
     UnsupportedServerRequest,
 )
 from mcp_gateway.notifications import Notifier, Subscriptions
+from mcp_gateway.panels import PanelStore
 from mcp_gateway.router import Router
 from mcp_gateway.secret_providers import build_store
 from mcp_gateway.secrets import SecretError, SecretStore
@@ -103,6 +104,11 @@ class Gateway:
         #: process rather than per connection: the point of it is that the model on
         #: `/mcp` reads what the person did on `/admin`. See `clipboard.md`.
         self.workbench = Workbench()
+        #: The live panel URLs: minted on `/admin`, served by the transport's HTTP hook.
+        #: One per process for the same reason as the workbench above -- the minter and the
+        #: server cannot reach each other except through the object they share. See
+        #: `panels.md`.
+        self.panels = PanelStore()
         self._server_request_handler = self.backend_request
         self.notifier = Notifier(self._broadcast)
         #: Who is watching which resource. See `notifications.md`.
@@ -757,6 +763,7 @@ class Gateway:
             access_key=access_key,
             allow_unauthenticated=allow_unauthenticated,
             tls=tls,
+            panel_store=self.panels,
         )
         await self.server.start()
 

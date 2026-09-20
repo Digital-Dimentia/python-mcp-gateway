@@ -187,6 +187,10 @@ Then, in the admin UI:
   control surface instead of the generic form. `panel__describe` returns the same data with
   no panel, which is the comparison: one server, two renderings, one `_meta` line between
   them.
+- Then `panel__gauge`, which is the same fleet again as SEP-1865's *HTML* tier — a document
+  the backend wrote, served from `/panel/<token>` and framed in an opaque origin under its
+  own content security policy. Arriving through a real `url:` backend is the interesting
+  part: the document crossed a network and is still confined to the frame it was given.
 
 When you are done, `docker compose --profile verify down` stops both and leaves the gateway
 running. Set `zoo` and `panel` back to `enabled: false` so the gateway stops dialling ports

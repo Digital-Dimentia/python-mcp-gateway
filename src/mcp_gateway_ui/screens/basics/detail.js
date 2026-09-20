@@ -498,7 +498,9 @@ function renderToolDetail(detail, entry) {
           name: entry.name,
           arguments: args,
         });
-        await panel.openPanel({ entry, result, elapsedMs: performance.now() - started });
+        await panel.openPanel({
+          entry, result, args, elapsedMs: performance.now() - started,
+        });
       } catch (err) {
         // The same card shape a failed `Call tool` produces: a panel button that failed
         // should not look different from a call that failed.

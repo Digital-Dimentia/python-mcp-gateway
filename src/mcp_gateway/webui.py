@@ -81,11 +81,14 @@ ASSETS: dict[str, str] = {
     # second copy of the assets that drifts. See `desktop/README.md`.
     "tauri-transport.js": "text/javascript; charset=utf-8",
     "schema_form.js": "text/javascript; charset=utf-8",
-    # A backend's own control surface, as JSON rather than markup. The tier SEP-1865 calls
-    # `mcp-app` is HTML in a sandboxed iframe and is not here: framing it needs an endpoint
-    # with its own CSP, which the desktop shell could not reach anyway. This one renders
-    # through the socket the page already has, in both hosts. See `panel_declarative.js`.
+    # A backend's own control surface, in the two tiers SEP-1865 defines. The declarative
+    # one is JSON turned into DOM by this page, executing nothing, over the socket it
+    # already has -- so it works in both hosts. The HTML one is a document the backend
+    # wrote, framed from `/panel/<token>` under the policy `panels.py` serves it with; that
+    # endpoint is on this origin, which is why the file below is a bridge and not a
+    # renderer. See `panels.md`.
     "panel_declarative.js": "text/javascript; charset=utf-8",
+    "panel_html.js": "text/javascript; charset=utf-8",
     # One screen, one directory. The header's `<option>` list is the register of screens and
     # this is the register of their code; `screens/about/screen.js` documents the contract
     # both ends keep, and each screen's directory holds the pieces that exist only to serve
@@ -234,6 +237,12 @@ def _response(status: HTTPStatus, body: bytes, content_type: str) -> Response:
             "Content-Security-Policy": (
                 "default-src 'none'; script-src 'self'; style-src 'self'; "
                 "img-src 'self' data:; media-src 'self' data:; connect-src 'self' ws: wss:; "
+                # One thing is framed, and only one: a backend's HTML panel, served by
+                # `panels.py` from this same origin under its own far narrower policy.
+                # `default-src 'none'` blocks every iframe, so without this entry the panel
+                # endpoint would answer correctly to a frame the page was not allowed to
+                # create. `'self'` is the whole grant -- no `https:`, no host list.
+                "frame-src 'self'; "
                 "form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
             ),
             "X-Content-Type-Options": "nosniff",

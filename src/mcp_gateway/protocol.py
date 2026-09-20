@@ -65,19 +65,29 @@ ELICITATION_CREATE = "elicitation/create"
 #: catalogue, and two spellings would be a silent interop bug.
 UI_EXTENSION_ID = "io.modelcontextprotocol/ui"
 
-#: The one content type this gateway's own UI renders, and therefore the only one it
-#: declares. SEP-1865's HTML tier is `text/html;profile=mcp-app`; rendering it means a
-#: sandboxed iframe, a `postMessage` bridge and a served endpoint with its own CSP, none of
-#: which exist here yet. Declaring it anyway would be the "a capability block is a promise,
-#: not a wish list" mistake `mcp_stdio.MCPClientCapabilities` warns about, so the HTML type
-#: joins this list on the day something can render it and not before.
+#: The two content types a panel can be written in, and the two this gateway's own UI now
+#: renders -- so the two it declares. Nothing is declared it cannot draw: a capability block
+#: is a promise rather than a wish list, which is what `mcp_stdio.MCPClientCapabilities`
+#: refuses to let anybody forget.
 #:
 #: The `profile` parameter is SEP-1865's own, which is what makes the two tiers addressable
 #: the same way: a tool names a `ui://` resource, and the *resource* says which tier it is.
-#: So a backend can offer both and let each host pick, and upgrading a panel from this tier
-#: to HTML never touches the tool definition.
+#: So a backend can offer both under one URI and let each host take the one it understands,
+#: and upgrading a panel from one tier to the other never touches the tool definition.
+#:
+#: The declarative tier is JSON this gateway's UI turns into DOM, executing nothing (see
+#: `ui_apps.md`). The HTML tier is a document the backend wrote, run in a sandboxed iframe
+#: from an endpoint with its own policy (see `panels.md`). They are not two spellings of one
+#: thing, and the difference is the whole of that second doc.
 UI_APP_DECLARATIVE_MIME = "application/json;profile=mcp-app-declarative"
 UI_APP_HTML_MIME = "text/html;profile=mcp-app"
+
+#: The `profile` parameter alone, for the comparison `ui_apps.profile_of` is built to make.
+#: Split out rather than parsed at each call site: a `mimeType` carries spacing and casing a
+#: backend chose, so matching the whole string is a bug waiting for a server that writes
+#: `text/html; profile=mcp-app`.
+UI_APP_HTML_PROFILE = "mcp-app"
+UI_APP_DECLARATIVE_PROFILE = "mcp-app-declarative"
 
 #: MCP's log levels, least to most severe (RFC 5424's). The order is the whole point: a
 #: client that asked for `warning` is asking for warning *and everything above it*, and a
