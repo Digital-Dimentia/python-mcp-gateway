@@ -39,3 +39,17 @@ servers:
       # your shell finds it.
       - "PATH"
     enabled: true
+
+  # The panel example, beside the zoo rather than inside it: `zoo_server.py` is vendored
+  # verbatim from python-acp and its header says so, so a panel belongs in its own file.
+  #
+  # `board` ships a control surface; `describe` returns the same data with no panel, which
+  # is the comparison worth having -- the same server rendered two ways, and the difference
+  # is one `_meta` line. See `examples/panel_server.py`.
+  panel:
+    command: python3
+    args: ["examples/panel_server.py"]
+    description: "A backend that ships its own control surface"
+    env_passthrough:
+      - "PATH"
+    enabled: true
