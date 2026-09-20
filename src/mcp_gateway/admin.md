@@ -32,6 +32,34 @@ can be alive and wedged, and only a round trip tells the two apart. `ping_ms: nu
 Every schema sets `additionalProperties: false`, so a model's invented argument fails loudly
 instead of being ignored.
 
+## Two of the schemas depend on the configuration
+
+`backend_health` and `restart_backend` take a backend name, and that property carries an
+`enum` of the configured servers rather than being a bare string. For a person the admin UI
+renders it as a dropdown with no UI code at all — [`schema_form.js`](../mcp_gateway_ui/schema_form.js)
+already turns an `enum` into a `<select>`. For a model it is the difference between a name
+it has to have learned from `list_backends` and remembered, and one it can simply choose;
+a typo stops being a runtime failure and becomes something that cannot be expressed.
+
+**A tool definition that varies is a change in kind, so it is worth saying why it is safe.**
+A client may cache a listing, and this one goes stale when the catalogue changes — but that
+is exactly the case MCP has a signal for, and the gateway already sends it: `reload` and
+`restart_backend` each emit `notifications/tools/list_changed`. A client that holds a
+listing is told to re-read it, whether the change was a backend appearing or this enum
+following it.
+
+Two smaller calls, both deliberate:
+
+- **Every configured backend, not just the running ones.** A disabled or failed backend is
+  the one you most want to ask about or restart, and omitting it would have the dropdown
+  answer "no such server" for a server the operator can see in the header.
+- **No `enumNames`.** A backend's name is what the header, the log lines and `servers.yaml`
+  all call it. A dropdown showing its description instead would be the single place in the
+  UI naming it something else.
+
+With no backends configured the `enum` is omitted entirely rather than published empty: an
+empty `enum` matches nothing, so it would be a field no value could satisfy.
+
 ## `admin.status` carries the branding
 
 The one non-status thing in that payload, and deliberately: the page needs the deployment's

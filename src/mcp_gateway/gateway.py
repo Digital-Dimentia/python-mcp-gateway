@@ -365,7 +365,10 @@ class Gateway:
         per-client state for no gain.
         """
         await self.supervisor.wait_ready()
-        return {"tools": tool_definitions() + await self.catalogue.tools()}
+        return {
+            "tools": tool_definitions([b.name for b in self.supervisor.all])
+            + await self.catalogue.tools()
+        }
 
     async def call_tool(self, session: Session, params: dict) -> dict[str, Any]:
         name = params.get("name")

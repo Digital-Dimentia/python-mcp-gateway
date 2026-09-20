@@ -180,3 +180,86 @@ async def test_a_backend_cannot_shadow_the_meta_tools(tmp_path) -> None:
         raise AssertionError("a backend named 'gateway' should be refused")
     except ConfigError as exc:
         assert "reserved" in str(exc)
+
+
+# --- the two tools that take a backend name offer the configured ones -------------
+
+
+def name_schema(tools: list[dict], tool: str) -> dict:
+    definition = next(t for t in tools if t["name"] == f"gateway__{tool}")
+    return definition["inputSchema"]["properties"]["name"]
+
+
+async def test_the_tools_that_take_a_backend_name_offer_the_configured_ones(tmp_path) -> None:
+    """A choice rather than a free-text box: for a person a dropdown, and for a model a
+    name it does not have to have learned from `list_backends` and remembered."""
+    harness = await daemon(tmp_path, servers=SERVERS, env=ENV)
+    try:
+        client = await harness.connect()
+        tools = (await client.call("tools/list"))["tools"]
+        for tool in ("backend_health", "restart_backend"):
+            assert name_schema(tools, tool)["enum"] == ["alpha", "beta", "gamma"], tool
+    finally:
+        await harness.close()
+
+
+async def test_a_disabled_backend_is_still_offered(tmp_path) -> None:
+    """It is precisely the one you want to ask about, and the header shows it either way."""
+    harness = await daemon(tmp_path, servers=SERVERS, env=ENV)
+    try:
+        client = await harness.connect()
+        tools = (await client.call("tools/list"))["tools"]
+        assert "beta" in name_schema(tools, "backend_health")["enum"]
+    finally:
+        await harness.close()
+
+
+async def test_with_no_backends_there_is_no_enum_at_all(tmp_path) -> None:
+    """An empty `enum` matches nothing, so it would publish a field no value can satisfy.
+    The plain string is the honest schema for "there is nothing to choose from"."""
+    harness = await daemon(tmp_path)
+    try:
+        client = await harness.connect()
+        tools = (await client.call("tools/list"))["tools"]
+        schema = name_schema(tools, "restart_backend")
+        assert "enum" not in schema
+        assert schema["type"] == "string"
+    finally:
+        await harness.close()
+
+
+async def test_the_optional_name_keeps_its_description(tmp_path) -> None:
+    """`backend_health` takes no name to mean "all of them", and the enum must not cost
+    the sentence that says so."""
+    harness = await daemon(tmp_path, servers=SERVERS, env=ENV)
+    try:
+        client = await harness.connect()
+        tools = (await client.call("tools/list"))["tools"]
+        schema = name_schema(tools, "backend_health")
+        assert "omit for all" in schema["description"]
+        assert next(
+            t for t in tools if t["name"] == "gateway__backend_health"
+        )["inputSchema"]["required"] == []
+    finally:
+        await harness.close()
+
+
+async def test_the_enum_follows_a_reload(tmp_path) -> None:
+    """The definition depends on the configuration, so it has to track it -- and clients are
+    told, because `reload` emits `tools/list_changed`."""
+    harness = await daemon(tmp_path, servers=SERVERS, env=ENV)
+    try:
+        client = await harness.connect()
+        before = name_schema((await client.call("tools/list"))["tools"], "restart_backend")
+        assert "gamma" in before["enum"]
+
+        (tmp_path / "servers.yaml").write_text(
+            SERVERS.split("  gamma:")[0], encoding="utf-8"
+        )
+        await client.call("tools/call", {"name": "gateway__reload_config", "arguments": {}})
+
+        after = name_schema((await client.call("tools/list"))["tools"], "restart_backend")
+        assert "gamma" not in after["enum"]
+        assert after["enum"] == ["alpha", "beta"]
+    finally:
+        await harness.close()

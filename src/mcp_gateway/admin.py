@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from mcp_gateway import clipboard, errors, naming
@@ -61,8 +62,46 @@ def _tool(name: str, description: str, schema: dict | None = None) -> dict[str, 
     }
 
 
-def tool_definitions() -> list[dict[str, Any]]:
-    """What `tools/list` publishes for the gateway itself."""
+def _backend_name_schema(backends: Sequence[str], description: str | None = None) -> dict[str, Any]:
+    """The `name` property of the two tools that take one, offering the configured servers.
+
+    **An `enum` rather than a bare string, which makes this definition depend on the
+    configuration.** That is a real change in kind for a tool definition and it is worth
+    being deliberate about: the alternative is what was here before, a free-text box in the
+    UI and, for a model, a name it has to have learned from `gateway__list_backends` and
+    remembered. An enum turns both into a choice, and turns a typo from a runtime failure
+    into something that cannot be expressed.
+
+    It is safe to vary because the gateway already tells clients when it has: `reload` and
+    `restart_backend` each emit `notifications/tools/list_changed`, which is exactly the
+    signal a client needs to re-read a listing it has cached. See `admin.md`.
+
+    **Every configured backend, not just the running ones.** A disabled or failed backend is
+    precisely the one you want to ask about or restart, and leaving it out would make the
+    dropdown answer "no such server" for a server the operator can see in the header.
+
+    No `enumNames`: a backend's name is what the header, the log lines and `servers.yaml`
+    all call it, and a dropdown that showed its description instead would be the one place
+    in the UI naming it something else.
+    """
+    schema: dict[str, Any] = {"type": "string"}
+    if description:
+        schema["description"] = description
+    # An empty `enum` matches nothing, so a gateway with no backends configured would
+    # publish a field no value can satisfy. Omitting it leaves the plain string, which is
+    # the honest schema for "there is nothing to choose from".
+    if backends:
+        schema["enum"] = list(backends)
+    return schema
+
+
+def tool_definitions(backends: Sequence[str] = ()) -> list[dict[str, Any]]:
+    """What `tools/list` publishes for the gateway itself.
+
+    `backends` names the configured servers, so the two tools that take one can offer them.
+    It defaults to empty for the callers that only want the tool *names* -- the unknown-tool
+    error below -- where the enum is irrelevant.
+    """
     return [
         _tool(
             "list_backends",
@@ -78,7 +117,7 @@ def tool_definitions() -> list[dict[str, Any]]:
             {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Backend name; omit for all"}
+                    "name": _backend_name_schema(backends, "Backend name; omit for all"),
                 },
                 "required": [],
                 "additionalProperties": False,
@@ -90,7 +129,7 @@ def tool_definitions() -> list[dict[str, Any]]:
             "loaded store. Use after rotating a token for a single service.",
             {
                 "type": "object",
-                "properties": {"name": {"type": "string"}},
+                "properties": {"name": _backend_name_schema(backends)},
                 "required": ["name"],
                 "additionalProperties": False,
             },

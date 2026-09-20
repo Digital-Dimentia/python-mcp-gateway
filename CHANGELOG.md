@@ -9,6 +9,14 @@ nobody reads.
 
 ## Unreleased
 
+**The gateway's own tools offer your servers instead of asking you to type one.**
+`gateway__backend_health` and `gateway__restart_backend` take a backend name, and that
+argument now carries the configured servers as an `enum` — a dropdown in the admin UI, and
+for a model a name it can choose rather than one it had to learn from `gateway__list_backends`
+and remember. Disabled backends are offered too, since those are the ones you most want to
+ask about. The listing tracks a reload, and clients are told, because a reload already emits
+`tools/list_changed`.
+
 **A backend can ship its own control surface, and the admin UI draws it.** A tool that
 carries `_meta.ui.resourceUri` (MCP Apps, SEP-1865) names a `ui://` resource describing a
 panel, and *Call and open panel* renders it beside the ordinary result rather than instead of
