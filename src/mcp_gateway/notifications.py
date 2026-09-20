@@ -89,6 +89,7 @@ nothing to replay it against, and the resource it names no longer exists.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -128,6 +129,9 @@ class Notifier:
         self._broadcast = broadcast
         self._debounce = debounce
         self._pending: dict[str, asyncio.Task[None]] = {}
+        #: One event per scheduled emission, which `flush` sets to end the wait early.
+        #: Keyed the same way as `_pending` and torn down with it.
+        self._due: dict[str, asyncio.Event] = {}
 
     def kind_of(self, method: str) -> str | None:
         return _LIST_CHANGED.get(method)
@@ -141,11 +145,16 @@ class Notifier:
         """
         if method in self._pending and not self._pending[method].done():
             return
+        self._due[method] = asyncio.Event()
         self._pending[method] = asyncio.create_task(self._emit_after_delay(method))
 
     async def _emit_after_delay(self, method: str) -> None:
+        """Wait out the debounce, or until `flush` says now, and then send it once."""
         try:
-            await asyncio.sleep(self._debounce)
+            # `wait_for` rather than `sleep`, so the delay has a door in it. Timing out is
+            # the ordinary path and means nobody hurried it.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._due[method].wait(), self._debounce)
             await self._broadcast(method, None)
         except asyncio.CancelledError:
             raise
@@ -153,14 +162,29 @@ class Notifier:
             logger.debug("failed to emit %s: %s", method, exc)
         finally:
             self._pending.pop(method, None)
+            self._due.pop(method, None)
 
     async def flush(self) -> None:
-        """Emit anything pending now. For shutdown, and for tests that cannot wait."""
-        tasks = list(self._pending.values())
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        """Emit anything pending now. For shutdown, and for tests that cannot wait.
+
+        **It signals the wait rather than cancelling the task**, and the difference is the
+        whole of this method. Cancelling used to mean the emission never happened at all:
+        `_emit_after_delay` re-raises `CancelledError`, so a debounced `list_changed` was
+        discarded by the one call whose name promised to deliver it -- and `Gateway.stop`
+        calls this before closing the server precisely so that what is queued goes out.
+        A client that reconnected through a restart could be owed a notification that was
+        thrown away instead.
+
+        Cancelling also cannot be made to work by catching the error and sending anyway: a
+        task already past its wait is *inside* `_broadcast`, and cancelling that tears a
+        notification in half rather than hurrying it. Setting an event leaves each task to
+        finish its own send, exactly once.
+        """
+        for event in list(self._due.values()):
+            event.set()
+        await asyncio.gather(*list(self._pending.values()), return_exceptions=True)
         self._pending.clear()
+        self._due.clear()
 
     def log_backend_message(self, name: str, params: dict) -> None:
         """Put a backend's `notifications/message` in our log, not on the client's wire."""

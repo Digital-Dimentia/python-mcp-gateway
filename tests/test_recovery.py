@@ -11,7 +11,6 @@ floor; what was missing was anything that ever looked at it again.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -142,11 +141,10 @@ async def test_a_backend_that_comes_back_is_announced_and_its_tools_appear(tmp_p
         assert await harness.gateway.recover_once() == ["late"]
         assert backend.status is BackendStatus.RUNNING
 
-        # Waited out rather than flushed: `Notifier.flush` cancels a pending emission
-        # instead of sending it (python-mcp-gateway-76u). Then a round trip, for the reason
-        # `Client.initialize` gives -- a notification has no reply of its own, so without it
-        # the test reads the list before the socket has delivered anything.
-        await asyncio.sleep(0.4)
+        # Then a round trip, for the reason `Client.initialize` gives: a notification has
+        # no reply of its own, so without it the test reads the list before the socket has
+        # delivered anything.
+        await harness.gateway.notifier.flush()
         await client.call("ping")
         methods = {n["method"] for n in client.notifications}
         assert "notifications/tools/list_changed" in methods, client.notifications
@@ -168,7 +166,7 @@ async def test_a_failed_attempt_announces_nothing(tmp_path) -> None:
         client.notifications.clear()
 
         assert await harness.gateway.recover_once() == []
-        await asyncio.sleep(0.4)
+        await harness.gateway.notifier.flush()
         await client.call("ping")
         assert client.notifications == [], "a retry that failed is not news"
     finally:

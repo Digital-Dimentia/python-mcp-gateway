@@ -46,6 +46,28 @@ An already-scheduled emission is **left alone rather than restarted**. Restartin
 classic debounce bug: a steady trickle of changes postpones the notification forever, so the
 busiest deployment is the one that never hears about anything.
 
+## `flush` hurries an emission; it does not cancel one
+
+A debounce puts a delay between a change and the client hearing about it, and shutdown is
+the one moment that delay is unaffordable: `Gateway.stop` calls `flush` before closing the
+server precisely so that what is queued goes out while there is still a socket to write to.
+
+So `flush` **sets an event the waiting task is watching**, rather than cancelling the task.
+The distinction is not stylistic, and both halves of it matter:
+
+- Cancelling meant the emission never happened at all. `_emit_after_delay` re-raises
+  `CancelledError`, so the one call whose name promised delivery was the one that discarded
+  it, and a client reconnecting through a restart could be owed a `list_changed` that was
+  quietly thrown away.
+- Cancelling cannot be repaired by catching the error and broadcasting anyway. A task that
+  is already past its wait is *inside* `_broadcast`, and cancelling that tears a
+  notification in half rather than hurrying it. Only the task itself knows which side of the
+  wait it is on, so only the task gets to do the send.
+
+The event is per scheduled emission and dies with it. A single shared flag would stay set
+after the first flush and turn the debounce off for the rest of the run — which is the sort
+of thing that shows up as "notifications are fine in production and storm in tests".
+
 ## Why progress goes to one connection
 
 The `progressToken` in a `notifications/progress` is the **client's own**, forwarded down

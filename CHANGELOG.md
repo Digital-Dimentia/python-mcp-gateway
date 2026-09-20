@@ -9,6 +9,12 @@ nobody reads.
 
 ## Unreleased
 
+**A notification queued when the daemon shuts down is now sent, not dropped.** The gateway
+debounces `list_changed` by a quarter-second and flushes what is pending before closing the
+server — except that the flush cancelled the pending emission instead of sending it, so a
+client reconnecting through a restart could be owed a refresh it never received and go on
+showing a stale catalogue. It now hurries the emission rather than cancelling it.
+
 **A backend that failed to start is tried again, instead of staying down until somebody
 notices.** Start a gateway alongside the containers it proxies and one of them will
 sometimes not be listening in the second the gateway dials it; that backend used to stay

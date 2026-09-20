@@ -218,3 +218,104 @@ async def test_progress_with_no_call_in_flight_goes_nowhere(tmp_path) -> None:
         assert of_kind(client, "notifications/progress") == []
     finally:
         await harness.close()
+
+
+# --- flush delivers what is queued, which is the whole reason it is called ----------
+
+
+async def test_flush_emits_a_pending_notification_rather_than_dropping_it() -> None:
+    """`Gateway.stop` calls this before closing the server precisely so that what is queued
+    goes out. It used to cancel the task instead, and `_emit_after_delay` re-raises
+    `CancelledError` -- so the one call whose name promised delivery was the one that threw
+    the notification away, and a client that reconnected through a restart was owed a
+    `list_changed` it never got."""
+    emitted: list[str] = []
+
+    async def broadcast(method, _params):
+        emitted.append(method)
+        return 1
+
+    # A long debounce, so nothing can fire on its own and pass this by accident.
+    notifier = Notifier(broadcast, debounce=30.0)
+    await notifier.list_changed("notifications/tools/list_changed")
+    assert emitted == [], "precondition: still waiting"
+
+    await notifier.flush()
+
+    assert emitted == ["notifications/tools/list_changed"]
+
+
+async def test_flush_emits_each_pending_kind_once(tmp_path) -> None:
+    emitted: list[str] = []
+
+    async def broadcast(method, _params):
+        emitted.append(method)
+        return 1
+
+    notifier = Notifier(broadcast, debounce=30.0)
+    for method in (
+        "notifications/tools/list_changed",
+        "notifications/prompts/list_changed",
+        "notifications/resources/list_changed",
+    ):
+        await notifier.list_changed(method)
+    await notifier.flush()
+
+    assert sorted(emitted) == sorted(
+        [
+            "notifications/prompts/list_changed",
+            "notifications/resources/list_changed",
+            "notifications/tools/list_changed",
+        ]
+    )
+
+
+async def test_flush_does_not_send_a_second_copy_of_one_that_already_fired() -> None:
+    """Hurrying an emission and duplicating it are different things."""
+    emitted: list[str] = []
+
+    async def broadcast(method, _params):
+        emitted.append(method)
+        return 1
+
+    notifier = Notifier(broadcast, debounce=0.02)
+    await notifier.list_changed("notifications/tools/list_changed")
+    await asyncio.sleep(0.1)
+    assert emitted == ["notifications/tools/list_changed"], "precondition: it fired on its own"
+
+    await notifier.flush()
+    assert emitted == ["notifications/tools/list_changed"]
+
+
+async def test_flush_with_nothing_pending_is_a_no_op() -> None:
+    emitted: list[str] = []
+
+    async def broadcast(method, _params):
+        emitted.append(method)
+        return 1
+
+    notifier = Notifier(broadcast, debounce=30.0)
+    await notifier.flush()
+    await notifier.flush()
+    assert emitted == []
+
+
+async def test_a_later_notification_still_waits_its_debounce_after_a_flush() -> None:
+    """The door `flush` opens must close behind it: a shared flag left set would make every
+    later emission immediate, quietly turning the debounce off for the rest of the run."""
+    emitted: list[str] = []
+
+    async def broadcast(method, _params):
+        emitted.append(method)
+        return 1
+
+    notifier = Notifier(broadcast, debounce=0.08)
+    await notifier.list_changed("notifications/tools/list_changed")
+    await notifier.flush()
+    assert len(emitted) == 1
+
+    await notifier.list_changed("notifications/tools/list_changed")
+    await asyncio.sleep(0.02)
+    assert len(emitted) == 1, "the second one must still be waiting, not fired instantly"
+    await asyncio.sleep(0.12)
+    assert len(emitted) == 2
