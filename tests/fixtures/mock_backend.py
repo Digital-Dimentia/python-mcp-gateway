@@ -43,6 +43,11 @@ mechanism it is testing.
 | `MOCK_OMIT_PROTOCOL_VERSION` | Leave `protocolVersion` out of the initialize result |
 | `MOCK_LIST_PAGES` | Serve this many `tools/list` pages via `nextCursor` |
 | `MOCK_LIST_STUCK` | Always hand back the same `nextCursor`, forever |
+| `MOCK_UI_TOOL` | Give that tool a `_meta.ui.resourceUri` pointing at `MOCK_UI_REF` |
+| `MOCK_UI_REF` | What that reference says (default `ui://<name>/panel`). Set it to another server's `ui://` for the cross-backend case |
+| `MOCK_UI_FLAT` | Use the deprecated flat `_meta["ui/resourceUri"]` spelling instead |
+| `MOCK_UI_BOTH` | Send both spellings, disagreeing, to pin which one wins |
+| `MOCK_UI_CSP` | A raw JSON object for `_meta.ui.csp` on the resource, so hostile values are expressible |
 """
 
 from __future__ import annotations
@@ -88,6 +93,11 @@ ISERROR_ON = _env("MOCK_ISERROR_ON_CALL")
 STALL_ON = _env("MOCK_STALL_ON_CALL")
 LIST_PAGES = int(_env("MOCK_LIST_PAGES", "1"))
 LIST_STUCK = _flag("MOCK_LIST_STUCK")
+UI_TOOL = _env("MOCK_UI_TOOL", "")
+UI_REF = _env("MOCK_UI_REF", "")
+UI_FLAT = _flag("MOCK_UI_FLAT")
+UI_BOTH = _flag("MOCK_UI_BOTH")
+UI_CSP = _env("MOCK_UI_CSP", "")
 
 # Startup-time behaviour, before a single message is read.
 if _flag("MOCK_IGNORE_SIGTERM"):
@@ -170,7 +180,7 @@ def tool_names() -> list[str]:
 def tool_definitions(page: int) -> list[dict]:
     if page > 0:
         return [{"name": f"page{page}-tool", "description": "", "inputSchema": {"type": "object"}}]
-    return [
+    definitions = [
         {
             "name": name,
             "description": f"{name} on {NAME}",
@@ -181,6 +191,24 @@ def tool_definitions(page: int) -> list[dict]:
         }
         for name in tool_names()
     ]
+    for definition in definitions:
+        if definition["name"] == UI_TOOL:
+            definition["_meta"] = _ui_meta()
+    return definitions
+
+
+def _ui_meta() -> dict:
+    """The MCP Apps reference, in whichever spelling this run is exercising."""
+    reference = UI_REF or f"ui://{NAME}/panel"
+    meta: dict = {}
+    if UI_BOTH:
+        meta["ui"] = {"resourceUri": reference}
+        meta["ui/resourceUri"] = reference + "-flat"
+    elif UI_FLAT:
+        meta["ui/resourceUri"] = reference
+    else:
+        meta["ui"] = {"resourceUri": reference}
+    return meta
 
 
 def capabilities() -> dict:
@@ -322,10 +350,17 @@ def handle_prompts_get(request_id, params: dict) -> None:
 
 
 def handle_resources_list(request_id, _params: dict) -> None:
-    result(
-        request_id,
-        {"resources": [{"uri": uri, "name": uri.rsplit("/", 1)[-1] or uri} for uri in RESOURCES]},
-    )
+    resources = []
+    for uri in RESOURCES:
+        entry = {"uri": uri, "name": uri.rsplit("/", 1)[-1] or uri}
+        if UI_CSP and uri.startswith("ui://"):
+            # Raw JSON, not a structured knob, so a test can express a hostile csp block --
+            # a source list carrying a `;`, a non-list directive -- that a typed knob would
+            # quietly make well-formed before the gateway ever saw it.
+            entry["mimeType"] = "application/json;profile=mcp-app-declarative"
+            entry["_meta"] = {"ui": {"csp": json.loads(UI_CSP)}}
+        resources.append(entry)
+    result(request_id, {"resources": resources})
 
 
 def handle_resources_templates_list(request_id, _params: dict) -> None:

@@ -182,6 +182,7 @@ async def describe_health(
             "last_error": backend.error,
             "last_call_at": backend.last_call_at,
             "skipped_tools": list(backend.skipped_tools),
+            "unresolved_ui_templates": list(backend.unresolved_ui_templates),
             # The live round trip is what makes this a health check rather than a status
             # dump. `None` means "did not answer", which is not the same as "not running".
             "ping_ms": (await backend.ping()) if ping and backend.running else None,

@@ -247,6 +247,11 @@ class Backend:
     #: backend that was busy a second ago. Set together by `touch`.
     last_call_monotonic: float | None = None
     skipped_tools: list[str] = field(default_factory=list)
+    #: `ui://` panels this backend's tools reference but its own resource listing does not
+    #: name. Reported rather than enforced: the check reads a cache and cannot be
+    #: authoritative, so the reference is still published and a genuinely absent panel fails
+    #: at `resources/read` with a clean `-32002`. See `catalogue._publishes` and `ui_apps.md`.
+    unresolved_ui_templates: list[str] = field(default_factory=list)
     #: Sessions with a call in flight on this backend, with a count each (one session can
     #: have several). This is how a backend's own `roots/list` or `elicitation/create` finds
     #: the client to ask -- see `origin_session` and `gateway.md`.

@@ -35,7 +35,7 @@ import asyncio
 import logging
 from typing import Any
 
-from mcp_gateway import naming
+from mcp_gateway import naming, ui_apps
 from mcp_gateway.backend import Backend
 from mcp_gateway.mcp_stdio import MCPProtocolError
 from mcp_gateway.supervisor import Supervisor
@@ -136,6 +136,7 @@ class Catalogue:
         published: list[dict[str, Any]] = []
         for backend, items in await self._gather(self._tools, "tools", lambda b: b.client.list_tools()):
             skipped: list[str] = []
+            unresolved: list[str] = []
             for tool in items:
                 name = tool.get("name")
                 if not isinstance(name, str) or not name:
@@ -148,6 +149,17 @@ class Catalogue:
                 # later reader (health, /admin) must see it as the backend gave it.
                 entry = dict(tool)
                 entry["name"] = public
+                # The panel reference, moved into the same address space as the name above.
+                # `rewrite_tool_meta` rebuilds every dict it touches rather than mutating,
+                # because `tool` here is the *cached* entry and the cache is the backend's
+                # own answer -- see `ui_apps.md`, "Nothing here mutates its argument".
+                new_meta, referenced = ui_apps.rewrite_tool_meta(
+                    tool.get("_meta"), backend.name, tool=name
+                )
+                if new_meta is not None:
+                    entry["_meta"] = new_meta
+                if referenced is not None and not self._publishes(backend.name, referenced):
+                    unresolved.append(referenced)
                 published.append(entry)
             if skipped:
                 logger.warning(
@@ -156,8 +168,40 @@ class Catalogue:
                     len(skipped),
                     ", ".join(skipped),
                 )
+            if unresolved:
+                logger.debug(
+                    "backend %r: %d tool(s) reference a ui:// resource it does not list: %s",
+                    backend.name,
+                    len(unresolved),
+                    ", ".join(sorted(set(unresolved))),
+                )
             backend.skipped_tools = skipped
+            backend.unresolved_ui_templates = sorted(set(unresolved))
         return published
+
+    def _publishes(self, server: str, uri: str) -> bool:
+        """Whether `server`'s cached resource listing already names `uri`.
+
+        **Advisory, and true when we do not know.** This reads the cache and never fetches:
+        making `tools()` wake a sleeping backend to check a panel reference would couple two
+        fan-outs for a question that cannot be answered authoritatively anyway --
+        `resources/list` is paginated and cached, and a `ui://` template may legitimately
+        appear only under `resources/templates/list`.
+
+        So a miss is a log line and a health field, never a dropped reference. A panel that
+        really is absent fails at `resources/read` with a clean `-32002`, which is a better
+        answer than a tool that silently lost its interface. It also keeps the two caches
+        independent: because this never changes the published bytes, invalidating a
+        backend's resources does not have to invalidate its tools.
+        """
+        listings = (self._resources.get(server), self._templates.get(server))
+        if all(items is None for items in listings):
+            return True
+        for items in listings:
+            for item in items or ():
+                if item.get("uri") == uri or item.get("uriTemplate") == uri:
+                    return True
+        return False
 
     async def find_tool(self, public_name: str) -> tuple[Backend, str] | None:
         """Resolve a namespaced tool name to its backend.
@@ -211,6 +255,9 @@ class Catalogue:
                     continue
                 entry = dict(resource)
                 entry["uri"] = naming.encode_resource_uri(backend.name, uri)
+                cleaned = ui_apps.sanitize_resource_meta(resource.get("_meta"))
+                if cleaned is not None:
+                    entry["_meta"] = cleaned
                 if isinstance(resource.get("name"), str):
                     entry["name"] = naming.compose_display_name(backend.name, resource["name"])
                 published.append(entry)
@@ -229,6 +276,9 @@ class Catalogue:
                 # `encode_resource_uri` leaves RFC 6570 braces unescaped, so the expression
                 # survives and the client can still expand it.
                 entry["uriTemplate"] = naming.encode_resource_uri(backend.name, uri)
+                cleaned = ui_apps.sanitize_resource_meta(template.get("_meta"))
+                if cleaned is not None:
+                    entry["_meta"] = cleaned
                 if isinstance(template.get("name"), str):
                     entry["name"] = naming.compose_display_name(backend.name, template["name"])
                 published.append(entry)

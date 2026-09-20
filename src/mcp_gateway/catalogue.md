@@ -59,11 +59,34 @@ That is what keeps a call correct after a `list_changed` nobody has refetched ye
 why the `__` separator rule in [`naming.md`](naming.md) has to hold, since there is no table
 to fall back on.
 
+## A tool's panel reference is namespaced with its name
+
+A tool that ships a user interface carries `_meta.ui.resourceUri` naming a `ui://` resource
+(MCP Apps, SEP-1865). That address means nothing in this gateway's listing, so
+[`ui_apps.py`](ui_apps.md) rewrites it into the same `mcpgw://` space as the resource
+listing, right beside the name composition it mirrors.
+
+**The `ui://` authority is never consulted.** The reference is encoded under *the backend
+that published the tool*, whatever the URI happens to say — which is the whole of what stops
+one backend nominating another's interface. `ui_apps.md` has the argument; this note exists
+so nobody adds the "obvious" resolution here.
+
+A reference to a `ui://` the backend does not list is **published anyway** and recorded in
+`unresolved_ui_templates` — the same visibility-instead-of-enforcement trade as
+`skipped_tools`, for a check that reads a cache and therefore cannot be authoritative.
+`_publishes` returns `True` when the listing is unknown, so "we have not looked" never reads
+as "it is missing".
+
 ## Entries are copied, never mutated
 
 The cached entry is the backend's own answer. A later reader — health, `/admin`, a refetch
 comparison — must see it as the backend gave it, so namespacing builds a new dict rather than
 rewriting the cached one in place.
+
+This is why `rewrite_tool_meta` returns a rebuilt `_meta` rather than editing one: `dict()` is
+a **shallow** copy, so reaching into `entry["_meta"]["ui"]` would write straight through to
+the cache — and then rewrite the already-rewritten reference on the next call, encoding it
+twice. A test asserting two consecutive listings are equal is what catches that.
 
 ## `counts` returns `None`, not `0`, for a backend nobody has listed
 
