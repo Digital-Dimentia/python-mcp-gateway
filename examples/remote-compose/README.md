@@ -149,6 +149,35 @@ Then, on the box:
 curl -fsS -o /dev/null http://127.0.0.1:8765/ui/ && echo up
 ```
 
+## 4a. Check it end to end, before you have a server of your own
+
+Step 4 proves the gateway is up. It does not prove a `url:` backend works, because at this
+point there is nothing to reach. The schema zoo fills that gap: 14 tools, 6 prompts, 8
+resources and every JSON Schema construct, served over Streamable HTTP by
+[`../zoo_http.py`](../zoo_http.py) — a worked example of putting an stdio MCP server behind
+a URL, which is what most of them still are.
+
+It runs from the same image, so there is nothing extra to build. Copy the two files it
+needs and start it under the `verify` profile:
+
+```bash
+mkdir -p zoo
+cp /path/to/python-mcp-gateway/examples/zoo_http.py zoo/
+cp /path/to/python-mcp-gateway/examples/zoo_server.py zoo/
+$EDITOR config/servers.yaml                  # delete `enabled: false` under `zoo` only
+docker compose --profile verify up -d
+docker compose logs gateway | tail -3        # backend 'zoo' running (http://127.0.0.1:9001/mcp, …)
+```
+
+The line to wait for is `backend 'zoo' running (http://127.0.0.1:9001/mcp, MCP 2025-06-18)`.
+Then open the admin UI, call `zoo__zoo-types` with a number, and watch it come back as a
+number rather than a string — that round trip is the thing worth seeing, because it is where
+a transport that stringifies everything would show itself.
+
+When you are done, `docker compose --profile verify down` stops the zoo and leaves the
+gateway running. Set `zoo` back to `enabled: false` so the gateway stops dialling a port
+with nothing on it.
+
 ## 5. Connect from the laptop
 
 **Desktop app:** open **Connection**, choose *On another machine, over SSH*, and enter

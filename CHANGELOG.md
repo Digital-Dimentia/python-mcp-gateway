@@ -9,6 +9,17 @@ nobody reads.
 
 ## Unreleased
 
+**A `url:` backend you can actually deploy, to check the arrangement before you have one of
+your own.** `examples/zoo_http.py` puts the schema zoo — 14 tools, 6 prompts, 8 resources,
+every JSON Schema construct — behind MCP's Streamable HTTP, so `examples/remote-compose/`
+can name it as a real `url:` entry instead of proving the transport against an empty
+catalogue. It runs from the gateway's own image, needs no dependency, and leaves
+`zoo_server.py` untouched, which matters because that file is vendored verbatim. Both the
+container and the catalogue entry are off by default and turn on together, behind compose's
+`verify` profile, so a deployment that has graduated to real servers is not carrying a test
+fixture. It is also the worked example of the general problem: most MCP servers still speak
+stdio, and a container deployment reaches them by URL.
+
 **The container runs as you, not as root, and building it no longer ships your whole
 working tree.** The image drops to an unprivileged account, so a save from the admin UI
 leaves `config/servers.yaml` owned by the account that laid the directory out and still

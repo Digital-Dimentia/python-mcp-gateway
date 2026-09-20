@@ -8,6 +8,16 @@
 version: 1
 
 servers:
+  # The schema zoo, for checking the arrangement before you have a server of your own.
+  # Paired with the `zoo` service in ../compose.yaml, which only starts under the `verify`
+  # profile -- so this stays `enabled: false` and the two are flipped on together. No
+  # `headers:`: there is no credential here, and inventing one would suggest the transport
+  # needs one. See "Check it end to end" in ../README.md.
+  zoo:
+    url: http://127.0.0.1:9001/mcp
+    description: "The schema zoo, over Streamable HTTP"
+    enabled: false
+
   search:
     url: http://127.0.0.1:9001/mcp
     headers:

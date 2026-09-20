@@ -40,6 +40,30 @@ services:
       - ./config:/config
     restart: unless-stopped
 
+  # A real backend to check the arrangement against, before you have one of your own. It is
+  # the schema zoo -- 14 tools, 6 prompts, 8 resources, every JSON Schema construct -- put
+  # behind a URL by `examples/zoo_http.py`, which is what a `url:` backend looks like from
+  # the inside. Same image as the gateway: it carries Python, and the zoo needs nothing else.
+  #
+  # Behind a profile, so `docker compose up -d` never starts it and a deployment that has
+  # graduated to real servers does not carry a test fixture. See "Check it end to end" in
+  # README.md, which is also where the two files under ./zoo come from.
+  zoo:
+    image: python-mcp-gateway:local
+    profiles: ["verify"]
+    network_mode: host
+    user: "${MCPGW_UID:-1000}:${MCPGW_GID:-1000}"
+    # The image's entrypoint is the daemon; this container runs a different program from
+    # the same image, so the entrypoint is replaced rather than argued with.
+    entrypoint: ["python3"]
+    command: ["/opt/zoo/zoo_http.py"]
+    environment:
+      MCP_ZOO_HTTP_HOST: 127.0.0.1
+      MCP_ZOO_HTTP_PORT: "9001"
+    volumes:
+      - ./zoo:/opt/zoo:ro
+    restart: unless-stopped
+
   # One MCP server that speaks Streamable HTTP. Replace the image and its port with yours;
   # anything that serves MCP over HTTP on a path works. Published on 127.0.0.1 only: the
   # gateway is the one thing on this box that should talk to it, and a port on the LAN
