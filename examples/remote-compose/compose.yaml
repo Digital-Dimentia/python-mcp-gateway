@@ -64,6 +64,23 @@ services:
       - ./zoo:/opt/zoo:ro
     restart: unless-stopped
 
+  # The same wrapper, a different child: a backend that ships its own control surface, so
+  # the admin UI has a panel to draw rather than only the capability to draw one. Its own
+  # port, because each backend publishes on a loopback port of its own.
+  panel:
+    image: python-mcp-gateway:local
+    profiles: ["verify"]
+    network_mode: host
+    user: "${MCPGW_UID:-1000}:${MCPGW_GID:-1000}"
+    entrypoint: ["python3"]
+    command: ["/opt/zoo/zoo_http.py", "--server", "/opt/zoo/panel_server.py"]
+    environment:
+      MCP_ZOO_HTTP_HOST: 127.0.0.1
+      MCP_ZOO_HTTP_PORT: "9002"
+    volumes:
+      - ./zoo:/opt/zoo:ro
+    restart: unless-stopped
+
   # One MCP server that speaks Streamable HTTP. Replace the image and its port with yours;
   # anything that serves MCP over HTTP on a path works. Published on 127.0.0.1 only: the
   # gateway is the one thing on this box that should talk to it, and a port on the LAN

@@ -77,12 +77,16 @@ from typing import Any
 
 #: Where `zoo_server.py` lives, relative to this file. Both are copied into the container
 #: together, so "beside me" is the only assumption that survives being mounted anywhere.
-ZOO = Path(__file__).resolve().parent / "zoo_server.py"
+DEFAULT_SERVER = Path(__file__).resolve().parent / "zoo_server.py"
 
 #: The zoo publishes its full catalogue only with this set, and `env_mode: curated` in
 #: `servers.dev.yaml` means it is named explicitly there too. Same reason here: the child
 #: inherits a deliberate environment, not this process's.
-ZOO_ENV = {"MOCK_MCP_SCHEMA_ZOO": "1"}
+#:
+#: Set for whichever child runs, not only the zoo. A server that does not read it is not
+#: affected by it, and one variable named in one place beats a branch that has to decide
+#: which child deserves which environment.
+CHILD_ENV = {"MOCK_MCP_SCHEMA_ZOO": "1"}
 
 #: How long to wait for the child's reply to one request. Long enough that a slow container
 #: start is not mistaken for a hang, short enough that a wedged child fails the call instead
@@ -90,21 +94,22 @@ ZOO_ENV = {"MOCK_MCP_SCHEMA_ZOO": "1"}
 REPLY_TIMEOUT = 30.0
 
 
-class Zoo:
-    """One `zoo_server.py` child, and the mailbox that turns its stdout into replies.
+class Child:
+    """One stdio MCP server, and the mailbox that turns its stdout into replies.
 
     A single stdio pipe cannot interleave, so every write is serialised. Reads are not:
     a background thread owns stdout and hands each reply to whoever is waiting for that id,
     which keeps a slow call from blocking the answer to a fast one behind it.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, server: Path) -> None:
+        self.server = server
         self._proc = subprocess.Popen(
-            [sys.executable, str(ZOO)],
+            [sys.executable, str(server)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=None,  # straight to ours, so `docker compose logs` shows the zoo's own
-            env={**os.environ, **ZOO_ENV},
+            stderr=None,  # straight to ours, so `docker compose logs` shows the child's own
+            env={**os.environ, **CHILD_ENV},
             text=True,
             bufsize=1,
         )
@@ -114,9 +119,9 @@ class Zoo:
         threading.Thread(target=self._reader, daemon=True).start()
 
     def _reader(self) -> None:
-        """Deliver each line the zoo writes to whoever asked for it, and drop the rest.
+        """Deliver each line the child writes to whoever asked for it, and drop the rest.
 
-        The "rest" is anything the zoo says unprompted. With no GET stream there is nowhere
+        The "rest" is anything the child says unprompted. With no GET stream there is nowhere
         to deliver it, so it is dropped on purpose rather than queued for a reader that will
         never come. See the module docstring.
         """
@@ -127,7 +132,7 @@ class Zoo:
             try:
                 message = json.loads(line)
             except json.JSONDecodeError:
-                print(f"zoo_http: unparseable line from the zoo: {line[:200]}", file=sys.stderr)
+                print(f"zoo_http: unparseable line from {self.server.name}: {line[:200]}", file=sys.stderr)
                 continue
             with self._waiting_lock:
                 mailbox = self._waiting.pop(message.get("id"), None)
@@ -143,7 +148,7 @@ class Zoo:
             self._send(payload)
             return mailbox.get(timeout=REPLY_TIMEOUT)
         except queue.Empty:
-            raise TimeoutError(f"the zoo did not answer {payload.get('method')} in {REPLY_TIMEOUT}s")
+            raise TimeoutError(f"{self.server.name} did not answer {payload.get('method')} in {REPLY_TIMEOUT}s")
         finally:
             with self._waiting_lock:
                 self._waiting.pop(payload["id"], None)
@@ -154,7 +159,7 @@ class Zoo:
 
     def _send(self, payload: dict) -> None:
         if self._proc.poll() is not None:
-            raise BrokenPipeError(f"the zoo exited with {self._proc.returncode}")
+            raise BrokenPipeError(f"{self.server.name} exited with {self._proc.returncode}")
         with self._write_lock:
             self._proc.stdin.write(json.dumps(payload) + "\n")  # type: ignore[union-attr]
             self._proc.stdin.flush()  # type: ignore[union-attr]
@@ -173,7 +178,7 @@ class Handler(BaseHTTPRequestHandler):
 
     protocol_version = "HTTP/1.1"  # so Content-Length framing is honoured and connections reused
 
-    zoo: Zoo
+    child: Child
     path_name: str
     session: str | None = None
 
@@ -201,9 +206,9 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             if "id" not in payload:
-                type(self).zoo.notify(payload)
+                type(self).child.notify(payload)
                 return self._empty(202)
-            reply = type(self).zoo.request(payload)
+            reply = type(self).child.request(payload)
         except (BrokenPipeError, TimeoutError) as exc:
             return self._rpc_error(payload.get("id"), -32603, str(exc))
 
@@ -258,7 +263,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        """One line per request on stderr, beside the zoo's own, rather than stdout."""
+        """One line per request on stderr, beside the child's own, rather than stdout."""
         print(f"zoo_http: {self.address_string()} {fmt % args}", file=sys.stderr)
 
 
@@ -267,23 +272,39 @@ def main() -> int:
     parser.add_argument("--host", default=os.environ.get("MCP_ZOO_HTTP_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("MCP_ZOO_HTTP_PORT", "9001")))
     parser.add_argument("--path", default=os.environ.get("MCP_ZOO_PATH", "/mcp"))
+    # The child to put behind the URL. Defaults to the zoo beside this file, which is what
+    # the name promises; naming another one is what makes the "worked example of the shape
+    # generally" in the header true rather than merely claimed.
+    parser.add_argument(
+        "--server",
+        type=Path,
+        default=Path(os.environ.get("MCP_ZOO_SERVER", DEFAULT_SERVER)),
+    )
     args = parser.parse_args()
 
-    if not ZOO.exists():
-        print(f"zoo_http: no zoo_server.py beside me at {ZOO}", file=sys.stderr)
+    if not args.server.exists():
+        print(f"zoo_http: no stdio server at {args.server}", file=sys.stderr)
         return 1
 
-    Handler.zoo = Zoo()
+    Handler.child = Child(args.server)
     Handler.path_name = args.path
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"zoo_http: MCP on http://{args.host}:{args.port}{args.path} (zoo pid {Handler.zoo._proc.pid})", file=sys.stderr)
+    where = f"http://{args.host}:{args.port}{args.path}"
+    print(
+        f"zoo_http: MCP on {where} "
+        f"({args.server.name} pid {Handler.child._proc.pid})",
+        file=sys.stderr,
+    )
     try:
+        server = ThreadingHTTPServer((args.host, args.port), Handler)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
-        Handler.zoo.stop()
+        try:
+            server.server_close()
+        except NameError:
+            pass
+        Handler.child.stop()
     return 0
 
 

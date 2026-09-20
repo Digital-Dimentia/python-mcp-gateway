@@ -18,6 +18,12 @@ servers:
     description: "The schema zoo, over Streamable HTTP"
     enabled: false
 
+  # Paired with the `panel` service, same profile, same rule: both flip on together.
+  panel:
+    url: http://127.0.0.1:9002/mcp
+    description: "A backend that ships its own control surface"
+    enabled: false
+
   search:
     url: http://127.0.0.1:9001/mcp
     headers:

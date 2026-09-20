@@ -164,19 +164,29 @@ needs and start it under the `verify` profile:
 mkdir -p zoo
 cp /path/to/python-mcp-gateway/examples/zoo_http.py zoo/
 cp /path/to/python-mcp-gateway/examples/zoo_server.py zoo/
-$EDITOR config/servers.yaml                  # delete `enabled: false` under `zoo` only
+cp /path/to/python-mcp-gateway/examples/panel_server.py zoo/
+$EDITOR config/servers.yaml                  # delete `enabled: false` under `zoo` and `panel`
 docker compose --profile verify up -d
-docker compose logs gateway | tail -3        # backend 'zoo' running (http://127.0.0.1:9001/mcp, …)
+docker compose logs gateway | tail -4        # both backends running (http://127.0.0.1:900…)
 ```
 
-The line to wait for is `backend 'zoo' running (http://127.0.0.1:9001/mcp, MCP 2025-06-18)`.
-Then open the admin UI, call `zoo__zoo-types` with a number, and watch it come back as a
-number rather than a string — that round trip is the thing worth seeing, because it is where
-a transport that stringifies everything would show itself.
+The line to wait for is `backend 'zoo' running (http://127.0.0.1:9001/mcp, MCP 2025-06-18)`,
+and another like it for `panel`. One wrapper serves both: `zoo_http.py --server` names the
+stdio program to put behind the URL, which is the general shape of the problem — most MCP
+servers still speak stdio, and a container deployment reaches them by URL.
 
-When you are done, `docker compose --profile verify down` stops the zoo and leaves the
-gateway running. Set `zoo` back to `enabled: false` so the gateway stops dialling a port
-with nothing on it.
+Then, in the admin UI:
+
+- Call `zoo__zoo-types` with a number, and watch it come back as a number rather than a
+  string. That round trip is where a transport that stringifies everything would show itself.
+- Open `panel__board` and press **Call and open panel**. The card draws the backend's own
+  control surface instead of the generic form. `panel__describe` returns the same data with
+  no panel, which is the comparison: one server, two renderings, one `_meta` line between
+  them.
+
+When you are done, `docker compose --profile verify down` stops both and leaves the gateway
+running. Set `zoo` and `panel` back to `enabled: false` so the gateway stops dialling ports
+with nothing on them.
 
 ## 5. Connect from the laptop
 

@@ -22,7 +22,11 @@ tools, and the answer goes through the same socket as your own click and lands a
 card — so a panel cannot make a call you do not see — after a prompt naming the tool and its
 arguments. SEP-1865's HTML tier is deliberately not implemented, and the gateway says so:
 it declares only the content type it can actually render. `examples/panel_server.py` is a
-worked one, beside the zoo rather than inside it.
+worked one, beside the zoo rather than inside it, and `examples/remote-compose/`'s `verify`
+profile now stands it up beside the zoo so a container deployment has a panel to look at
+rather than only the capability to draw one. `zoo_http.py` gained a `--server` flag to make
+that possible, which is also what makes its own claim to be the general example true: one
+wrapper, any stdio server, behind a URL.
 
 **A `url:` backend you can actually deploy, to check the arrangement before you have one of
 your own.** `examples/zoo_http.py` puts the schema zoo — 14 tools, 6 prompts, 8 resources,
