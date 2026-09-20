@@ -38,6 +38,7 @@ import * as variables from './screens/basics/variables.js';
 import * as results from './screens/basics/results.js';
 import * as primitives from './screens/basics/primitives.js';
 import * as detail from './screens/basics/detail.js';
+import * as panel from './screens/basics/panel.js';
 
 
 //: The gateway's own meta-tools live under this name and have no backend behind them, so
@@ -1194,6 +1195,14 @@ variables.install({
   state,
   ownListings: primitives.ownListings,
   ...detail.formPort,
+});
+
+// The panel host wants exactly two things: the session a call goes out on, and the column a
+// result lands in. Deliberately not the admin socket -- a backend's panel has no route to an
+// admin method, and the shortest way to keep it that way is to never hand it one.
+panel.install({
+  state,
+  pushCard: results.pushCard,
 });
 
 state.key = initialKey();

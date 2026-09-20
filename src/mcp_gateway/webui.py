@@ -107,6 +107,7 @@ ASSETS: dict[str, str] = {
     "screens/basics/variables.js": "text/javascript; charset=utf-8",
     # The form a primitive opens into, and the port the column above writes through.
     "screens/basics/detail.js": "text/javascript; charset=utf-8",
+    "screens/basics/panel.js": "text/javascript; charset=utf-8",
     # The left column and the hover tooltip that belongs to its rows.
     "screens/basics/primitives.js": "text/javascript; charset=utf-8",
     # The middle column: the result cards, and what each one was about.

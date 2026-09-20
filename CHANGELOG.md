@@ -9,6 +9,21 @@ nobody reads.
 
 ## Unreleased
 
+**A backend can ship its own control surface, and the admin UI draws it.** A tool that
+carries `_meta.ui.resourceUri` (MCP Apps, SEP-1865) names a `ui://` resource describing a
+panel, and *Call and open panel* renders it beside the ordinary result rather than instead of
+it — the card still keeps the wire JSON one click away. The gateway moves that reference into
+its own address space on the way out, so the panel resolves for any client, not just this UI;
+a backend referencing another backend's `ui://` is addressed to **itself**, because the
+authority in a `ui://` is a string the backend chose and is never parsed. Panels are JSON,
+not markup: nothing a backend sends is executed or parsed as HTML, which keeps the
+no-`innerHTML` rule the UI has always had. A panel may ask to call one of its own server's
+tools, and the answer goes through the same socket as your own click and lands as its own
+card — so a panel cannot make a call you do not see — after a prompt naming the tool and its
+arguments. SEP-1865's HTML tier is deliberately not implemented, and the gateway says so:
+it declares only the content type it can actually render. `examples/panel_server.py` is a
+worked one, beside the zoo rather than inside it.
+
 **A `url:` backend you can actually deploy, to check the arrangement before you have one of
 your own.** `examples/zoo_http.py` puts the schema zoo — 14 tools, 6 prompts, 8 resources,
 every JSON Schema construct — behind MCP's Streamable HTTP, so `examples/remote-compose/`

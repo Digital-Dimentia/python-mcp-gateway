@@ -1445,3 +1445,75 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 0.8rem; color: var(--muted); }
 
 .pill-remote { color: var(--ink-soft); }
 .pill-remote .dot { margin-right: 0.3rem; }
+
+/* ── A backend's own control surface ──────────────────────────────────────────
+   Rendered inside a result card, so it inherits the column's width, scroll and
+   split. No screen rules here and nothing in the header: a panel is a card.
+   See `panel_declarative.js`. */
+
+.badge-panel { background: var(--accent-soft); color: var(--accent); }
+
+.panel { display: flex; flex-direction: column; gap: 0.5rem; }
+.panel-title { margin: 0; font-size: 0.85rem; }
+.panel-text { margin: 0; }
+.panel-section { display: flex; flex-direction: column; gap: 0.4rem; }
+.panel-section-title { margin: 0.2rem 0 0; font-size: 0.78rem; color: var(--ink-soft); }
+
+.panel-value { display: flex; align-items: baseline; gap: 0.4rem; }
+.panel-label { font-size: 0.72rem; color: var(--muted); }
+.panel-datum { font-family: var(--mono); font-size: 0.78rem; }
+/* A pointer that named nothing. Dimmed rather than hidden: absent is a fact
+   about the data, and a panel that silently dropped the row would be hiding it. */
+.panel-missing { color: var(--muted); }
+
+.panel-kv { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; margin: 0; }
+.panel-kv dt { font-size: 0.72rem; color: var(--muted); }
+.panel-kv dd { margin: 0; font-family: var(--mono); font-size: 0.78rem; overflow-wrap: anywhere; }
+
+.panel-table { border-collapse: collapse; width: 100%; font-size: 0.76rem; }
+.panel-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--rule);
+  padding: 0.2rem 0.4rem 0.2rem 0;
+}
+.panel-table td {
+  padding: 0.2rem 0.4rem 0.2rem 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.panel-raw { margin: 0; }
+.panel-action { display: flex; flex-direction: column; gap: 0.35rem; }
+.panel-action-bar { display: flex; gap: 0.4rem; }
+.panel-action-note:empty { display: none; }
+
+/* A block this build would not render, shown as itself. The whole doctrine in one
+   rule: visible, quoted, and never mistaken for something that worked. */
+.panel-decline {
+  border-left: 2px solid var(--warn);
+  background: var(--warn-soft);
+  padding: 0.3rem 0.5rem;
+  border-radius: 3px;
+}
+.panel-decline .note { margin: 0 0 0.25rem; }
+
+/* The consent dialog. Built in JS by `screens/basics/panel.js` rather than sitting
+   in `index.html`: only one module ever opens it, and markup nobody else touches is
+   a thing to keep in step for no reason. */
+.panel-consent {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0.9rem 1rem;
+  max-width: 34rem;
+}
+.panel-consent::backdrop { background: rgb(0 0 0 / 35%); }
+.panel-consent h3 { margin: 0 0 0.3rem; font-size: 0.9rem; }
+.panel-consent .block { max-height: 12rem; overflow: auto; }

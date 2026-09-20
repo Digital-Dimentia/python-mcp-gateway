@@ -223,6 +223,7 @@ def test_the_screen_modules_do_not_import_the_frame() -> None:
         "screens/basics/results.js",
         "screens/basics/variables.js",
         "screens/basics/detail.js",
+        "screens/basics/panel.js",
     ):
         text = (ASSET_DIR / name).read_text()
         assert not re.search(r"""from\s+['"][^'"]*app\.js['"]""", text), name

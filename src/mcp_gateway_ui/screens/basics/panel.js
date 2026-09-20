@@ -1,0 +1,226 @@
+// The page's side of a backend-supplied panel: fetch it, draw it, and stand between it and
+// the socket.
+//
+// `panel_declarative.js` turns a panel document into DOM. This decides *when* that happens
+// and *what a panel is allowed to do afterwards*, which is the part with the sharp edges.
+//
+// ## A panel is a result card, not a screen
+//
+// Registering a screen means an `<option>` in `#screen-select`, which lives in the header,
+// and the header does not change. A panel is a different `body` node handed to the
+// `pushCard` the Results column already has.
+//
+// That is also the right shape on the merits. SEP-1865's model is "a tool result, rendered
+// by an app the tool shipped", and a result card is already one call, deletable, with its
+// raw JSON a click away and its place in the clipboard snapshot. The card keeps recording
+// the *wire result*; the panel is a second way of looking at it, never a replacement for
+// the evidence.
+//
+// ## Three gates before a panel reaches the socket
+//
+// A panel can ask for a tool call. That is the whole point of `action`, and it is the only
+// thing here that could hurt.
+//
+// 1. **Scope.** The tool must be in the current listing *and* owned by the backend whose
+//    panel this is -- a lookup, not a prefix test. `gateway__*` is refused outright: the
+//    gateway's own meta-tools restart backends and reload config, and no backend's panel has
+//    any business calling them.
+// 2. **Consent.** The first call to a given tool from a given panel asks, naming the backend,
+//    the tool and the arguments. A grant is `(card, tool)` and dies when the card does.
+//    There is no global grant and nothing is remembered across a reload.
+// 3. **Budget.** A ceiling per card and a minimum gap between calls, in the same spirit as
+//    `FAN_OUT_ASKS_ABOVE` in `detail.js`: a speed bump, not a security boundary, because the
+//    thing in front of it is a person who has to click.
+//
+// And the property worth stating plainly, because it is what makes the rest legible:
+// **every panel-originated call goes through the same socket as a human's and lands as its
+// own result card.** A panel cannot make a call you do not see. The clipboard therefore
+// records panel activity with no code of its own.
+//
+// `/admin` is not reachable from here at all. This module holds `state.mcp` and nothing
+// else, so the rule that no admin method hands back a credential is kept by there being no
+// route to an admin method.
+
+import { isDeclarativePanel, renderPanel } from '../../panel_declarative.js';
+import { ownerOf } from '../../naming.js';
+import { el, pretty, renderToolResult } from '../../render.js';
+
+/** Calls one card's panel may make before it has to be reopened. */
+export const MAX_CALLS = 20;
+
+/** Milliseconds between one panel call and the next. */
+export const MIN_GAP_MS = 250;
+
+let port = null;
+
+/**
+ * Wire this module to the page.
+ *
+ * The same shape as the other three installs in `app.js`: dependencies in, nothing imported
+ * from the frame. `state` carries the MCP session and the listings; `pushCard` is the
+ * Results column.
+ */
+export function install(dependencies) {
+  port = dependencies;
+}
+
+/** The `ui://` a tool names, in the gateway's address space, or null. */
+export function panelFor(entry) {
+  const reference = entry?._meta?.ui?.resourceUri;
+  return typeof reference === 'string' && reference ? reference : null;
+}
+
+/** One card's standing permissions and spend. Dropped with the card. */
+function newLedger() {
+  return { granted: new Set(), calls: 0, lastAt: 0 };
+}
+
+/**
+ * Ask before a panel calls a tool.
+ *
+ * Built here rather than in `index.html` because it is the panel's, and a dialog in the
+ * markup that only one module ever opens is a thing to keep in step for no reason. Returns
+ * `'once' | 'always' | 'deny'`.
+ */
+function askConsent({ backend, tool, args }) {
+  const dialog = el('dialog', { class: 'panel-consent' });
+  const body = el('div', {}, [
+    el('h3', { text: 'Run this tool?' }),
+    el('p', { class: 'note', text: `${backend}'s panel wants to call ${tool}.` }),
+    el('pre', { class: 'block' }, [el('code', { text: pretty(args) })]),
+  ]);
+  const once = el('button', { type: 'button', class: 'primary', text: 'Allow once' });
+  const always = el('button', { type: 'button', text: 'Allow for this panel' });
+  const deny = el('button', { type: 'button', text: 'Deny' });
+  dialog.append(body, el('div', { class: 'detail-actions' }, [once, always, deny]));
+  document.body.append(dialog);
+
+  return new Promise((resolve) => {
+    const settle = (answer) => {
+      dialog.close();
+      dialog.remove();
+      resolve(answer);
+    };
+    once.addEventListener('click', () => settle('once'));
+    always.addEventListener('click', () => settle('always'));
+    deny.addEventListener('click', () => settle('deny'));
+    // Escape, or any other way a dialog closes, is a refusal. Defaulting the other way
+    // would make walking away from the keyboard into a grant.
+    dialog.addEventListener('cancel', () => settle('deny'));
+    dialog.showModal();
+  });
+}
+
+/** The listing entry for a tool name, or undefined. The listing is the authority. */
+function toolEntry(name) {
+  return (port.state.listings.tools || []).find((entry) => entry.name === name);
+}
+
+/**
+ * Run one `action`, or refuse it with a message the panel will show.
+ *
+ * Throws rather than returning a failure, because `panel_declarative.js` puts a thrown
+ * message on the action and carries on -- a refusal is an ordinary outcome for a panel, not
+ * a broken one.
+ */
+async function runAction(ledger, backend, { tool, arguments: args }) {
+  // 1. Scope.
+  if (String(tool).startsWith('gateway__')) {
+    throw new Error('A panel may not call the gateway’s own tools.');
+  }
+  const entry = toolEntry(tool);
+  if (!entry) throw new Error(`No tool named ${tool} is listed.`);
+  if (ownerOf('tools', entry) !== backend) {
+    throw new Error(`${tool} is not a tool of this panel’s server.`);
+  }
+
+  // 3. Budget, checked before asking: there is no point asking about a call that is over
+  // the ceiling anyway.
+  if (ledger.calls >= MAX_CALLS) {
+    throw new Error('This panel has made enough calls; reopen it to make more.');
+  }
+  const now = Date.now();
+  if (now - ledger.lastAt < MIN_GAP_MS) throw new Error('Too fast — try that again in a moment.');
+
+  // 2. Consent.
+  if (!ledger.granted.has(tool)) {
+    const answer = await askConsent({ backend, tool, args });
+    if (answer === 'deny') throw new Error('Refused.');
+    if (answer === 'always') ledger.granted.add(tool);
+  }
+
+  ledger.calls += 1;
+  ledger.lastAt = Date.now();
+
+  // Through the same socket as a human's click, and onto its own card.
+  const started = performance.now();
+  const result = await port.state.mcp.request('tools/call', { name: tool, arguments: args });
+  port.pushCard({
+    title: tool,
+    subtitle: `tools/call · from ${backend}’s panel`,
+    request: { method: 'tools/call', params: { name: tool, arguments: args } },
+    body: renderToolResult(result),
+    elapsedMs: performance.now() - started,
+    raw: result,
+    failed: !!result.isError,
+  });
+  return result;
+}
+
+/**
+ * Read a tool's panel and push a card showing it.
+ *
+ * `result` is the call the panel is about. The document is fetched *after* the call, not
+ * before, because a panel with no result to render is a panel with nothing in it -- and
+ * because fetching it earlier would mean reading a backend's resource for a call the person
+ * may never make.
+ */
+export async function openPanel({ entry, result, elapsedMs }) {
+  const reference = panelFor(entry);
+  const backend = ownerOf('tools', entry);
+  const started = performance.now();
+
+  let body;
+  let raw = result;
+  try {
+    const read = await port.state.mcp.request('resources/read', { uri: reference });
+    const item = (read.contents || [])[0];
+    if (!item || !isDeclarativePanel(item.mimeType)) {
+      // The HTML tier is the other half of SEP-1865 and is not built: it needs a served
+      // endpoint with its own CSP, which the desktop shell could not reach anyway. Saying so
+      // beats drawing nothing.
+      body = el('div', {}, [
+        el('p', {
+          class: 'note',
+          text: item
+            ? 'This panel is not one this build renders; showing the result instead.'
+            : 'That panel could not be read; showing the result instead.',
+        }),
+        renderToolResult(result),
+      ]);
+    } else {
+      const ledger = newLedger();
+      const document_ = JSON.parse(item.text ?? 'null');
+      body = renderPanel(document_, {
+        result,
+        onAction: (request) => runAction(ledger, backend, request),
+      });
+    }
+  } catch (error) {
+    // A panel that fails to load must never cost you the result you already have.
+    body = el('div', {}, [
+      el('p', { class: 'note', text: `That panel could not be shown: ${error.message}` }),
+      renderToolResult(result),
+    ]);
+  }
+
+  port.pushCard({
+    title: entry.name,
+    subtitle: 'tools/call · panel',
+    request: { method: 'tools/call', params: { name: entry.name } },
+    body,
+    elapsedMs: elapsedMs ?? performance.now() - started,
+    raw,
+    failed: !!result.isError,
+  });
+}

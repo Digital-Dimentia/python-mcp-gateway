@@ -134,6 +134,11 @@ function render() {
       el('span', { class: 'primitive-note', text: entry.description || entry.title || '' }),
     ]);
     for (const badge of annotationBadges(entry)) button.append(badge);
+    // A tool that ships its own control surface says so on the row, so "which of these has
+    // a panel" is answerable by looking rather than by opening each one.
+    if (entry?._meta?.ui?.resourceUri) {
+      button.append(el('span', { class: 'badge badge-panel', text: 'panel' }));
+    }
     tooltipOn(button, entry.description || entry.title || '');
     button.addEventListener('click', () => port.openItem(port.state.kind, entry));
     row.append(button);

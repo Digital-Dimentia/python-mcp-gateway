@@ -30,6 +30,7 @@ The UI is, in full: [`index.html`](../mcp_gateway_ui/index.html), [`style.css`](
 [`markdown.js`](../mcp_gateway_ui/markdown.js), [`format.js`](../mcp_gateway_ui/format.js),
 [`screens/basics/variables.js`](../mcp_gateway_ui/screens/basics/variables.js), [`screens/basics/detail.js`](../mcp_gateway_ui/screens/basics/detail.js),
 [`screens/basics/primitives.js`](../mcp_gateway_ui/screens/basics/primitives.js), [`screens/basics/results.js`](../mcp_gateway_ui/screens/basics/results.js),
+[`panel_declarative.js`](../mcp_gateway_ui/panel_declarative.js), [`screens/basics/panel.js`](../mcp_gateway_ui/screens/basics/panel.js),
 [`naming.js`](../mcp_gateway_ui/naming.js), [`screens/about/screen.js`](../mcp_gateway_ui/screens/about/screen.js),
 [`screens/about/tour.js`](../mcp_gateway_ui/screens/about/tour.js), [`screens/about/slides.js`](../mcp_gateway_ui/screens/about/slides.js),
 [`screens/connection/screen.js`](../mcp_gateway_ui/screens/connection/screen.js),
@@ -135,6 +136,9 @@ are different from each other, which is the point: `screens/basics/primitives.js
 it may do to the panel, and a `listingsChanged` callback, so the column that re-read a listing
 never learns that vocabularies exist. `screens/basics/detail.js` gets the state, `selectionChanged` and
 `pushCard`. `screens/basics/variables.js` gets the state, `ownListings`, and the panel's own `formPort`.
+`screens/basics/panel.js` gets the state and `pushCard` -- and pointedly not the admin socket, because a
+backend's panel has no business reaching an admin method and the shortest way to keep it that
+way is to never hand it one.
 `screens/basics/results.js` and `screens/basics/screen.js` get nothing, and say so rather than growing an `install`
 to look like the others.
 

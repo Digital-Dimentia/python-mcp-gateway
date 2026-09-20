@@ -29,6 +29,7 @@
 // speaks MCP rather than `admin.*`.
 
 import { RpcError } from '../../rpc.js';
+import * as panel from './panel.js';
 import { buildForm, buildPromptForm, templateVariables, expandTemplate } from '../../schema_form.js';
 import {
   renderToolResult, renderPromptResult, renderResourceResult, renderError, pretty,
@@ -409,8 +410,16 @@ function renderToolDetail(detail, entry) {
   }
 
   const send = el('button', { type: 'button', class: 'primary', text: 'Call tool' });
+  // A tool that ships a control surface gets a second way to run it. `Call tool` still
+  // produces the ordinary JSON card, so a panel is offered and never imposed -- and the
+  // evidence is always one click away whichever button was used.
+  const hasPanel = !!panel.panelFor(entry);
+  const open = hasPanel
+    ? el('button', { type: 'button', text: 'Call and open panel' })
+    : null;
   const bar = el('div', { class: 'detail-actions' }, [
     send,
+    open,
     el('details', { class: 'raw preview-wrap' }, [el('summary', { text: 'Wire payload' }), preview]),
   ]);
   detail.append(problems, bar);
@@ -464,6 +473,42 @@ function renderToolDetail(detail, entry) {
     }, send);
   };
   send.addEventListener('click', () => fanOut(once));
+
+  if (open) {
+    open.addEventListener('click', async () => {
+      let args;
+      try {
+        args = form.collect();
+      } catch (err) {
+        problems.replaceChildren(el('li', { text: err.message }));
+        problems.hidden = false;
+        return;
+      }
+      open.disabled = true;
+      const started = performance.now();
+      try {
+        const result = await port.state.mcp.request('tools/call', {
+          name: entry.name,
+          arguments: args,
+        });
+        await panel.openPanel({ entry, result, elapsedMs: performance.now() - started });
+      } catch (err) {
+        // The same card shape a failed `Call tool` produces: a panel button that failed
+        // should not look different from a call that failed.
+        port.pushCard({
+          title: entry.name,
+          subtitle: 'tools/call \u00b7 panel',
+          request: { method: 'tools/call', params: { name: entry.name, arguments: args } },
+          body: renderError({ code: -32000, message: String(err.message || err), data: null }),
+          elapsedMs: performance.now() - started,
+          raw: { error: String(err.message || err) },
+          failed: true,
+        });
+      } finally {
+        open.disabled = false;
+      }
+    });
+  }
 }
 
 function renderPromptDetail(detail, entry) {
