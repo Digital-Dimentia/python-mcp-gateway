@@ -72,3 +72,139 @@ def test_negotiation_counters_an_unsupported_proposal() -> None:
 def test_a_missing_version_reads_as_the_older_revision() -> None:
     """2024-11-05 servers omit it; refusing them would drop working backends."""
     assert protocol.negotiate_version(None) == ("2024-11-05", True)
+
+
+# --- what a declared capability entitles a server to ------------------------------
+
+
+def test_only_some_declared_capabilities_entitle_the_server_to_a_request() -> None:
+    """`roots` and `elicitation` buy the server a method to call back with. Nothing else
+    here does, and `_declared_capabilities` may only refuse a block over the ones that do.
+    """
+    from mcp_gateway.mcp_stdio import MCPClientCapabilities
+
+    assert MCPClientCapabilities().requestable() == frozenset()
+    assert MCPClientCapabilities(roots=True).requestable() == {"roots"}
+    assert MCPClientCapabilities(elicitation=True).requestable() == {"elicitation"}
+    assert MCPClientCapabilities(roots=True, elicitation=True).requestable() == {
+        "roots",
+        "elicitation",
+    }
+
+
+def test_a_requestable_capability_without_a_handler_is_refused_before_the_wire() -> None:
+    """A conformance bug in this process, caught here rather than as a late `-32601`."""
+    import pytest
+
+    from mcp_gateway.mcp_stdio import MCPClientCapabilities, MCPStdioClient
+
+    client = MCPStdioClient(
+        command=["true"],
+        client_capabilities=MCPClientCapabilities(roots=True),
+    )
+    with pytest.raises(RuntimeError, match="roots"):
+        client._declared_capabilities()
+
+
+def test_a_capability_that_entitles_no_request_needs_no_handler() -> None:
+    """The MCP Apps extension is the live example: it tells the server what this client can
+    render, and the server answers by putting `_meta` on a tool -- never by calling back.
+
+    Written against a synthetic non-requestable key rather than the extension itself, so it
+    keeps testing the rule after the extension's own spelling changes.
+    """
+    from mcp_gateway.mcp_stdio import MCPClientCapabilities, MCPStdioClient
+
+    class Rendering(MCPClientCapabilities):
+        def to_wire(self) -> dict:
+            return {"example.test/rendering": {"mimeTypes": ["text/plain"]}}
+
+    client = MCPStdioClient(command=["true"], client_capabilities=Rendering())
+    assert client._declared_capabilities() == {
+        "example.test/rendering": {"mimeTypes": ["text/plain"]}
+    }
+
+
+# --- MCP Apps: what the gateway tells its backends --------------------------------
+
+
+def test_the_ui_extension_is_not_advertised_upward_because_it_is_a_client_capability() -> None:
+    """The gateway is the *server* to its clients, so there is nothing to advertise and the
+    manifest is untouched. A row here would be the mistake, not the fix."""
+    block = protocol.advertised_capabilities()
+    assert "extensions" not in block
+    assert protocol.UI_EXTENSION_ID not in block
+    assert all(capability.key != "extensions" for capability in protocol.CAPABILITY_MANIFEST)
+
+
+def test_the_ui_extension_rides_under_extensions_not_at_the_top_level() -> None:
+    from mcp_gateway.mcp_stdio import MCPClientCapabilities
+
+    wire = MCPClientCapabilities(ui_app_mime_types=("text/plain",)).to_wire()
+    assert wire == {"extensions": {protocol.UI_EXTENSION_ID: {"mimeTypes": ["text/plain"]}}}
+
+
+def test_no_declared_mime_types_means_no_extension_key_at_all() -> None:
+    """Absent reads as unsupported; an empty list would read as supported-but-nothing."""
+    from mcp_gateway.mcp_stdio import MCPClientCapabilities
+
+    assert MCPClientCapabilities().to_wire() == {}
+
+
+def test_the_ui_extension_does_not_require_a_server_request_handler() -> None:
+    """It entitles a backend to no request, so the guard must not fire on it."""
+    from mcp_gateway.mcp_stdio import MCPClientCapabilities, MCPStdioClient
+
+    client = MCPStdioClient(
+        command=["true"],
+        client_capabilities=MCPClientCapabilities(ui_app_mime_types=("text/plain",)),
+    )
+    assert protocol.UI_EXTENSION_ID in client._declared_capabilities()["extensions"]
+
+
+def _union_of(*capability_blocks) -> tuple[str, ...]:
+    """`Gateway._ui_app_mime_types` reads only `self._sessions`, so a stub is the whole
+    fixture. Keeps this about the union rule rather than about starting a daemon."""
+    from types import SimpleNamespace
+
+    from mcp_gateway.gateway import Gateway
+
+    stub = SimpleNamespace(
+        _sessions=[SimpleNamespace(client_capabilities=block) for block in capability_blocks]
+    )
+    return Gateway._ui_app_mime_types(stub)
+
+
+def _declares(*mime_types: str) -> dict:
+    return {"extensions": {protocol.UI_EXTENSION_ID: {"mimeTypes": list(mime_types)}}}
+
+
+def test_a_backend_is_told_what_the_attached_clients_can_render() -> None:
+    assert _union_of(_declares("text/plain")) == ("text/plain",)
+
+
+def test_two_clients_that_render_different_things_are_unioned() -> None:
+    """A backend offering for the union lets each host take the one it understands."""
+    assert _union_of(_declares("a/x"), _declares("b/y")) == ("a/x", "b/y")
+
+
+def test_the_union_is_sorted_so_a_restart_is_not_mistaken_for_a_change() -> None:
+    assert _union_of(_declares("z/z", "a/a")) == ("a/a", "z/z")
+
+
+def test_a_client_that_declares_nothing_contributes_nothing() -> None:
+    assert _union_of({}, {"roots": {}}) == ()
+
+
+def test_no_clients_at_all_means_no_extension() -> None:
+    assert _union_of() == ()
+
+
+def test_a_malformed_extension_block_is_ignored_rather_than_trusted() -> None:
+    """It arrives from a client, so every level of it is someone else's input."""
+    assert _union_of({"extensions": "nonsense"}) == ()
+    assert _union_of({"extensions": {protocol.UI_EXTENSION_ID: "nonsense"}}) == ()
+    assert _union_of({"extensions": {protocol.UI_EXTENSION_ID: {"mimeTypes": "a/x"}}}) == ()
+    assert _union_of({"extensions": {protocol.UI_EXTENSION_ID: {"mimeTypes": [1, "a/x"]}}}) == (
+        "a/x",
+    )

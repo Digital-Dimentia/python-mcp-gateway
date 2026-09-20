@@ -30,6 +30,26 @@ start total, and a UI that observes exactly what the agent is using.
 
 `initialize` itself never waits on this; see [`session.md`](session.md).
 
+## What the backends are told the clients can do
+
+`client_capability_union()` recomputes, on every connect and disconnect, the block handed to
+a backend at *its* `initialize`. MCP has no renegotiation, so a capability declared by a
+client that arrived later reaches only backends started after it.
+
+`roots` and `elicitation` are claims this process can keep, and it keeps them by forwarding
+the request up — hence the origin rule below, and hence the refusal to declare either with
+no `on_server_request` handler behind it.
+
+**MCP Apps (SEP-1865) is not that kind of claim, and is computed outside that guard.** The
+gateway renders nothing; its clients do. So `_ui_app_mime_types()` carries the union of the
+content types the attached clients declared under `extensions`, and what it promises a
+backend is "a host on the far side of me can render these" — the strongest true statement a
+proxy can make, and the one a backend needs in order to decide which panels to offer. It
+entitles the backend to no request at all, so there is nothing for a handler to answer and
+gating it on one would stop a gateway that forwards nothing upward from carrying a panel,
+which are unrelated things. See [`ui_apps.py`](ui_apps.md) for what happens to the panel
+reference itself.
+
 ## Reverse passthrough and the origin-connection rule
 
 A backend may ask `roots/list`, `sampling/createMessage`, or `elicitation/create`. Those must

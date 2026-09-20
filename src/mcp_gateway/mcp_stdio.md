@@ -69,8 +69,13 @@ Where the headings below say `MCPStdioClient`, everything outside the process se
   raises is `-32603`, which says *we* broke.
 - `MCPStdioClient.client_capabilities`: what this client will declare. Empty by
   default.
-- `MCPStdioClient._declared_capabilities()`: builds the block and refuses to send
-  a non-empty one with no `on_server_request` handler behind it.
+- `MCPStdioClient._declared_capabilities()`: builds the block and refuses to send it when
+  it declares a capability that entitles the server to a request and there is no
+  `on_server_request` handler behind it. The check is
+  `MCPClientCapabilities.requestable()`, not "is the block non-empty" — an *extension*
+  capability such as MCP Apps (see [`ui_apps.py`](ui_apps.md)) tells the server what this
+  client can render and buys it no method to call back with, so refusing the whole block
+  would crash every backend handshake in a process that wires no handler.
 - `UnsupportedServerRequest`: raised by a handler for a method it does not serve;
   becomes `-32601` rather than `-32603`.
 - `MCPStdioClient.request()`: sends a request and awaits its correlated reply.

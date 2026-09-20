@@ -207,15 +207,47 @@ class Gateway:
         forward a `sampling/createMessage` to a client that declared it, but the lifted
         capability type predates that and adding the field is its own change.
         """
+        # MCP Apps is computed outside the handler guard below, and has to be: it entitles a
+        # backend to no request at all, so there is nothing for a handler to answer. Gating
+        # it on one would make a gateway that forwards nothing upward also unable to carry a
+        # panel, which are unrelated things.
+        ui_mime_types = self._ui_app_mime_types()
+
         if self._server_request_handler is None:
-            return MCPClientCapabilities()
+            return MCPClientCapabilities(ui_app_mime_types=ui_mime_types)
         declared: set[str] = set()
         for session in self._sessions:
             declared.update(session.client_capabilities)
         return MCPClientCapabilities(
             roots="roots" in declared,
             elicitation="elicitation" in declared,
+            ui_app_mime_types=ui_mime_types,
         )
+
+    def _ui_app_mime_types(self) -> tuple[str, ...]:
+        """The panel content types some attached client says it can render.
+
+        A union rather than a constant, and it is the one capability here that is not a
+        claim about this process: the gateway renders nothing. What a backend needs to know
+        is what the host on the far side of the gateway can render, so that is what it is
+        told -- and when two clients disagree, a backend offering for the union lets each
+        host take the one it understands and ignore the other.
+
+        Sorted so a backend restarted with the same clients attached is handed the same
+        block, rather than one that reorders with set iteration and looks like a change.
+        """
+        mime_types: set[str] = set()
+        for session in self._sessions:
+            extensions = session.client_capabilities.get("extensions")
+            if not isinstance(extensions, dict):
+                continue
+            block = extensions.get(protocol.UI_EXTENSION_ID)
+            if not isinstance(block, dict):
+                continue
+            declared = block.get("mimeTypes")
+            if isinstance(declared, list):
+                mime_types.update(item for item in declared if isinstance(item, str))
+        return tuple(sorted(mime_types))
 
     async def session_ready(self, session: Session) -> None:
         self._sessions.add(session)

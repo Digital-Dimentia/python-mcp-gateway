@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
-from mcp_gateway import __version__
+from mcp_gateway import __version__, protocol
 from mcp_gateway.protocol import (
     MCP_PROTOCOL_VERSION as _MCP_PROTOCOL_VERSION,
 )
@@ -88,12 +88,38 @@ class MCPClientCapabilities:
     #: `2025-06-18` or later — which is why `_MCP_PROTOCOL_VERSION` moved.
     #: `gateway.py` answers it by forwarding the question to a client connection.
     elicitation: bool = False
+    #: MCP Apps (SEP-1865): the content types something downstream can render a panel in.
+    #:
+    #: Unlike every other field here, this is not a claim about *this* process. The gateway
+    #: renders nothing; its clients do. So this carries the union of what the attached
+    #: clients declared, and the promise it makes to a backend is "a host on the other side
+    #: of me can render these" -- which is the strongest true statement a proxy can make and
+    #: the one a backend actually needs, since it decides which panels to offer.
+    #:
+    #: Empty means the extension is not declared at all. Absent reads as unsupported, and a
+    #: backend that hears nothing simply offers no panels.
+    ui_app_mime_types: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.roots_list_changed and not self.roots:
             raise ValueError(
                 "roots_list_changed without roots: there is no list to change"
             )
+
+    def requestable(self) -> frozenset[str]:
+        """The declared keys that entitle the server to send *us* a request.
+
+        Not every capability does, and the difference decides whether
+        `_declared_capabilities` may refuse the block. `roots` and `elicitation` each buy
+        the server a method to call back with; the MCP Apps extension buys it nothing --
+        it tells the server what this client can *render*, and the server answers by
+        putting `_meta` on a tool, which is not a request and needs no handler.
+
+        Returning the declared subset rather than a constant keeps the caller's error
+        message naming only the capabilities actually at fault.
+        """
+        block = self.to_wire()
+        return frozenset(key for key in block if key in {"roots", "elicitation"})
 
     def to_wire(self) -> dict[str, Any]:
         """The `capabilities` member of the `initialize` request.
@@ -106,6 +132,12 @@ class MCPClientCapabilities:
             block["roots"] = {"listChanged": self.roots_list_changed}
         if self.elicitation:
             block["elicitation"] = {}
+        if self.ui_app_mime_types:
+            # SEP-1865 puts an extension under its own `extensions` member rather than at
+            # the top level, so the identifier cannot collide with a future core capability.
+            block["extensions"] = {
+                protocol.UI_EXTENSION_ID: {"mimeTypes": list(self.ui_app_mime_types)}
+            }
         return block
 
 
@@ -312,11 +344,20 @@ class MCPClient:
     def _declared_capabilities(self) -> dict[str, Any]:
         """The capability block to send, refusing to promise what nobody answers.
 
-        Every declared capability becomes a request the server is entitled to
+        A declared capability *may* become a request the server is entitled to
         send, and `on_server_request` is the only thing that can answer one.
-        Declaring without a handler is a conformance bug in *this* process, not
-        a bad input, so it is a `RuntimeError` and it fires before the promise
-        reaches the wire rather than as a `-32601` the server gets much later.
+        Declaring one of those without a handler is a conformance bug in *this*
+        process, not a bad input, so it is a `RuntimeError` and it fires before
+        the promise reaches the wire rather than as a `-32601` the server gets
+        much later.
+
+        **The check is on `requestable()`, not on the whole block**, and the
+        difference is load-bearing rather than fussy. An extension capability
+        such as MCP Apps entitles the server to no request at all: it says what
+        this client can render, and the server answers by putting `_meta` on a
+        tool. Refusing the whole block would make declaring it crash every
+        backend handshake in a process that happens to wire no handler — which
+        is every process that forwards nothing upward.
 
         The check is presence, not coverage: one callable stands behind every
         capability and nothing here can tell which methods it actually handles.
@@ -324,9 +365,10 @@ class MCPClient:
         raise `UnsupportedServerRequest`.
         """
         block = self.client_capabilities.to_wire()
-        if block and self.on_server_request is None:
+        requestable = self.client_capabilities.requestable()
+        if requestable and self.on_server_request is None:
             raise RuntimeError(
-                f"MCP client declares {sorted(block)} but has no on_server_request "
+                f"MCP client declares {sorted(requestable)} but has no on_server_request "
                 "handler to answer them"
             )
         return block
