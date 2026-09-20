@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
@@ -896,12 +897,23 @@ class MCPStdioClient(MCPClient):
     # gets to exit on EOF before SIGTERM, and after SIGTERM before SIGKILL.
     _STOP_STDIN_TIMEOUT = 2.0
     _STOP_TERMINATE_TIMEOUT = 2.0
+    # What a dead server's own last words are worth carrying: the final few stderr lines,
+    # each clipped, so the failure a caller sees can name the thing the server named.
+    _STDERR_TAIL_LINES = 3
+    _STDERR_TAIL_WIDTH = 200
+    # How long a process that has closed stdout gets to be reaped, and its stderr to
+    # drain, before the failure goes out without them. Both are already over.
+    _DEATH_NOTICE_TIMEOUT = 0.5
 
     def __post_init__(self) -> None:
         super().__post_init__()
         self._proc: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._stdout_task: asyncio.Task[None] | None = None
+        #: The last few stderr lines, kept only to explain a death. A server that refuses
+        #: to start says why on stderr -- a missing directory, a rejected token -- and
+        #: `MCP process closed stdout` on its own throws that away.
+        self._stderr_tail: deque[str] = deque(maxlen=self._STDERR_TAIL_LINES)
 
     async def start(self) -> None:
         if self._proc is not None:
@@ -1039,7 +1051,46 @@ class MCPStdioClient(MCPClient):
         except Exception as exc:
             logger.debug("MCP read loop failed", exc_info=True)
             reason = f"MCP read loop failed: {exc}"
+        else:
+            reason = await self._death_notice(proc)
         self._fail_pending(MCPProtocolError(reason))
+
+    async def _death_notice(self, proc: asyncio.subprocess.Process) -> str:
+        """Why the process is gone, in the server's own words where it left any.
+
+        `MCP process closed stdout` is true and almost useless: it is what a backend
+        pointed at a directory that does not exist looks like, and what a rejected token
+        looks like, and the thing that would tell them apart went to stderr and the debug
+        log. An operator reading `backend filesystem not started` has no reason to think of
+        `--debug`, so the last few stderr lines come along -- which is the only part of this
+        that knows the difference, without the gateway having to guess which argument was
+        meant to be a path.
+
+        Both waits are for something already finished: stdout has closed, so the process is
+        exiting and its stderr is at EOF. They are bounded anyway, because a failure
+        message is never worth hanging a startup on.
+        """
+        if self._stderr_task is not None and not self._stderr_task.done():
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(self._stderr_task), timeout=self._DEATH_NOTICE_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                pass
+            except Exception:  # noqa: BLE001 -- draining is best-effort, and so is this
+                pass
+        status = proc.returncode
+        if status is None:
+            try:
+                status = await asyncio.wait_for(proc.wait(), timeout=self._DEATH_NOTICE_TIMEOUT)
+            except asyncio.TimeoutError:
+                status = None
+        reason = "MCP process closed stdout"
+        if status is not None:
+            reason = f"{reason} and exited with status {status}"
+        if self._stderr_tail:
+            reason = f"{reason}; last stderr: " + " | ".join(self._stderr_tail)
+        return reason
 
     async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
         """Continuously read the server's stderr so its pipe buffer cannot fill.
@@ -1075,8 +1126,8 @@ class MCPStdioClient(MCPClient):
             if buffer:
                 self._log_stderr_line(buffer)
 
-    @staticmethod
-    def _log_stderr_line(line: bytes) -> None:
+    def _log_stderr_line(self, line: bytes) -> None:
         text = line.decode("utf-8", errors="replace").rstrip()
         if text:
             logger.debug("MCP server stderr: %s", text)
+            self._stderr_tail.append(text[: self._STDERR_TAIL_WIDTH])

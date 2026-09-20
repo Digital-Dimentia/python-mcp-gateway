@@ -102,6 +102,9 @@ Where the headings below say `MCPStdioClient`, everything outside the process se
 - `MCPStdioClient._read_loop()`: background task consuming all stdout messages.
 - `MCPStdioClient._handle_message()`: routes one inbound message by shape.
 - `MCPStdioClient._drain_stderr()`: background task consuming the subprocess's stderr.
+- `MCPStdioClient._death_notice()`: what a caller is told when the process it was
+  waiting on is gone — exit status and the server's last stderr lines, not only that
+  stdout closed. See "What a dead process is reported as".
 - `on_server_request` / `on_notification`: optional async hooks for inbound server traffic.
 
 ## Message Routing
@@ -545,6 +548,34 @@ rather than buffered without bound.
 
 Draining is best-effort: unexpected errors stop the task quietly instead of
 propagating into the client.
+
+The last few lines are also kept, clipped, in a bounded deque — the only state
+this module holds about stderr. They exist for `_death_notice()`.
+
+## What a dead process is reported as
+
+`MCP process closed stdout` is what a backend pointed at a directory that does
+not exist looks like. It is also what a rejected token, a missing interpreter
+and a server that segfaults look like, and an operator reading `backend
+filesystem not started: MCP process closed stdout` has been told only that the
+thing that did not work did not work.
+
+Everything that distinguishes those cases, the server already said on stderr —
+and it went to the debug log, which nobody turns on before they know they have
+a problem. So when the stdout loop ends normally, `_death_notice()` waits
+briefly for stderr to drain and the process to be reaped, and reports the exit
+status and the last few stderr lines along with the fact of the death.
+
+Both waits are bounded at half a second and are for something already over:
+stdout closing *is* the process exiting. A better failure message is never
+worth hanging a startup on.
+
+The alternative was for the gateway to inspect `args` for things that look like
+paths and check them before spawning — which is guessing. `npx -y
+@modelcontextprotocol/server-filesystem /srv/code` has one path argument and
+two strings that are not, and no rule tells them apart that does not also fire
+on a server whose second positional argument happens to contain a slash. The
+server knows. Quoting it costs a deque.
 
 ## Stream Limit
 

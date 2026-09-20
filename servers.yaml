@@ -35,10 +35,15 @@ defaults:
 servers:
   # Every entry below is an example. Delete what you do not use.
 
+  # Disabled like the rest, because the path below is a placeholder and a backend pointed
+  # at a directory that is not there dies at startup -- `make check` would still pass, since
+  # it validates credentials and not the filesystem. Put your own directory in and drop the
+  # `enabled` line.
   filesystem:
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/you/src"]
-    description: "Read and write files under ~/src"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/your/code"]
+    description: "Read and write files under one directory"
+    enabled: false
     # No credential: nothing to reference.
 
   github:

@@ -50,6 +50,43 @@ async def test_a_backend_with_a_missing_secret_is_skipped_and_the_daemon_serves(
         await harness.close()
 
 
+#: A server that refuses to start and says why, which is what every real one does: the
+#: filesystem server told a directory that is not there prints exactly this shape.
+REFUSES = """
+servers:
+  fs:
+    command: /bin/sh
+    args: ["-c", "echo 'Error: Directory /path/to/your/code does not exist' >&2; exit 1"]
+"""
+
+
+async def test_a_backend_that_refuses_to_start_is_failed_in_its_own_words(tmp_path) -> None:
+    """`MCP process closed stdout` is true of a missing directory and of a bad token alike.
+
+    The thing that tells them apart is on stderr, which went to the debug log -- and nobody
+    reading `backend fs not started` has a reason to reach for `--debug`. So the server's
+    last words come with the failure, and the exit status with them.
+    """
+    harness = await daemon(tmp_path, servers=REFUSES)
+    try:
+        error = harness.gateway.backend("fs").error
+        assert "/path/to/your/code does not exist" in error
+        assert "exited with status 1" in error
+    finally:
+        await harness.close()
+
+
+async def test_a_silent_refusal_still_says_what_it_can(tmp_path) -> None:
+    """No stderr to quote is not a reason to say less than was known."""
+    harness = await daemon(tmp_path, servers="servers:\n  quiet:\n    command: /usr/bin/false\n")
+    try:
+        error = harness.gateway.backend("quiet").error
+        assert "closed stdout" in error and "exited with status 1" in error
+        assert "last stderr" not in error
+    finally:
+        await harness.close()
+
+
 async def test_calling_a_down_backends_tool_returns_readable_content(tmp_path) -> None:
     """The decision that matters.
 

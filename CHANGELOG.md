@@ -9,6 +9,21 @@ nobody reads.
 
 ## Unreleased
 
+**A backend that refuses to start now tells you what it said on the way out.** Every stdio
+backend that dies at startup used to fail with `MCP process closed stdout` — true of a
+directory that does not exist, a rejected token, a missing interpreter and a segfault
+alike, and the line that told them apart went to the debug log, which nobody turns on
+before they know they have a problem. The exit status and the server's last few stderr
+lines now come with the failure, so `gateway__list_backends` says *Error: Directory
+/srv/code does not exist* instead of only that something closed. Nothing guesses which
+argument was supposed to be a path; the server already knows, and this quotes it.
+
+Relatedly, the `filesystem` entry in the shipped `servers.yaml` is **disabled** like the
+other examples. Its path was a placeholder, and a fresh checkout — on Linux especially —
+started one backend that could only fail. `make check` never caught it, because validating
+a credential is not validating a filesystem; `GET_STARTED.md` now says so where the example
+is introduced.
+
 **A backend that only speaks the old HTTP+SSE transport now says so, instead of failing as
 if it were unreachable.** `url:` backends speak Streamable HTTP, the transport MCP has had
 since 2025-03-26; the 2024-11-05 one it replaced is a different conversation shape, not a

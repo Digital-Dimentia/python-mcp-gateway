@@ -107,9 +107,15 @@ defaults:
 servers:
   filesystem:
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/you/src"]
-    description: "Read and write files under ~/src"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/your/code"]
+    description: "Read and write files under one directory"
 ```
+
+That path has to exist. A stdio backend is a process, and one told a directory that is not
+there exits at startup; the gateway reports what it said on the way out, but `make check`
+will not catch it, because checking a path is not the same as checking a credential. The
+shipped `servers.yaml` has this entry **disabled** for that reason -- put your own directory
+in and remove the `enabled: false` line.
 
 A server that needs a credential names it, and never inlines it:
 
