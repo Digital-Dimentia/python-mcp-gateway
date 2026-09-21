@@ -27,6 +27,7 @@
 
 import {
   connectionApply,
+  connectionDisconnect,
   connectionGet,
   connectionSave,
   inShell,
@@ -56,13 +57,28 @@ let draft = null;
 //: agree, which is the only honest way to say "there is nothing to apply".
 let stored = null;
 let notice = null;
+//: Where a `Connect` has got to. `null` when nothing is pending; `'armed'` once the button
+//: has been pressed and `'moving'` once the host has actually left the phase it was in.
+//: The two steps are why this is not a boolean: pressing Connect while already `listening`
+//: emits one more `listening` before the teardown begins, and a notice cleared on that one
+//: would vanish a frame after it appeared, before anything had happened. See `settle`.
+let pending = null;
+//: Settings saved while something was running, which the host has stored but is not using:
+//: it reads `connection` at the top of every start and that start already happened. The
+//: button has to keep offering `Connect` until it has, or a saved change would need a
+//: disconnect first -- see `verb`.
+let unapplied = false;
 
 /** The default a field falls back to when the host has told us nothing yet. */
 const BLANK = { mode: 'local', destination: '', localPort: 8765, remotePort: 8765 };
 
-/** One labelled control, with the sentence that says what it is for underneath. */
-function field(label, control, help) {
-  return el('label', { class: 'conn-field' }, [
+/** One labelled control, with the sentence that says what it is for underneath.
+ *
+ * `wide` puts it across both columns of `.conn-grid`. The destination takes it because it
+ * is the field the other two are *about*: a port means nothing until you know the machine.
+ */
+function field(label, control, help, wide) {
+  return el('label', { class: `conn-field${wide ? ' wide' : ''}` }, [
     el('span', { class: 'conn-label', text: label }),
     control,
     help ? el('span', { class: 'conn-help', text: help }) : null,
@@ -134,26 +150,82 @@ function remoteCard() {
   if (draft.mode !== 'remote') return null;
   return el('section', { class: 'conn-card' }, [
     el('h2', { text: 'The remote gateway' }),
-    field(
-      'SSH destination',
-      text('destination', draft.destination, 'build-box'),
-      'Exactly what you would type after `ssh`. Anything else — a login, a port, an '
-      + 'identity file, a jump host — goes in ~/.ssh/config under a Host block, and its '
-      + 'alias goes here.',
-    ),
-    field(
-      'Port over there',
-      port('remotePort', draft.remotePort),
-      'What the daemon binds on that machine. It should bind 127.0.0.1 and need no access '
-      + 'key: the tunnel is what gets you in.',
-    ),
-    field(
-      'Port on this Mac',
-      port('localPort', draft.localPort),
-      'The near end of the forward, and where your own clients attach. Keep it the same '
-      + 'number as the far end unless something here already has it.',
-    ),
+    //: Two columns, because the two ports are a pair -- the near end of a forward and its
+    //: far end -- and stacking them put the whole form past the bottom of a laptop screen.
+    //: Reading order is unchanged: the grid flows in source order, and the columns collapse
+    //: back to one when there is not room for them.
+    el('div', { class: 'conn-grid' }, [
+      field(
+        'SSH destination',
+        text('destination', draft.destination, 'build-box'),
+        'Exactly what you would type after `ssh`. Anything else — a login, a port, an '
+        + 'identity file, a jump host — goes in ~/.ssh/config under a Host block, and its '
+        + 'alias goes here.',
+        true,
+      ),
+      field(
+        'Port over there',
+        port('remotePort', draft.remotePort),
+        'What the daemon binds on that machine. It should bind 127.0.0.1 and need no access '
+        + 'key: the tunnel is what gets you in.',
+      ),
+      field(
+        'Port on this Mac',
+        port('localPort', draft.localPort),
+        'The near end of the forward, and where your own clients attach. Keep it the same '
+        + 'number as the far end unless something here already has it.',
+      ),
+    ]),
   ]);
+}
+
+//: The phases with nothing left to wait for. Everything else is on its way somewhere.
+const TERMINAL = ['listening', 'failed', 'idle'];
+
+/** Retire a `Connect` notice once the host has finished acting on it.
+ *
+ * Without this the line said "Reconnecting…" under a green dot for the rest of the
+ * session: the notice was set by the click and nothing but another click ever replaced
+ * it. It has to survive the whole transition, though, so it clears only after the host has
+ * been seen to leave its old phase and arrive at a new settled one.
+ */
+function settle(phase) {
+  if (!pending) return;
+  if (pending === 'armed') {
+    if (!TERMINAL.includes(phase)) pending = 'moving';
+    return;
+  }
+  if (TERMINAL.includes(phase)) {
+    pending = null;
+    notice = null;
+    //: Whatever was saved is what the host has just started from.
+    unapplied = false;
+  }
+}
+
+//: Phases in which nothing is up and nothing is on its way to being up. Deliberately *not*
+//: `TERMINAL`: that one means "has stopped moving", and `listening` is both settled and
+//: running. Conflating them is how the button offered to connect something already
+//: connected.
+const STOPPED = ['idle', 'failed', 'stopped'];
+
+/** Is the window driving something, or getting there? */
+function running(state) {
+  return !STOPPED.includes(state.shell?.phase || 'idle');
+}
+
+/** The one thing worth offering next: start, or stop.
+ *
+ * One button rather than two. `Connect` beside `Disconnect` made every visit a question
+ * about which of them applied, when only ever one of them does -- and the pair read as
+ * equals when the second is only reachable *through* the first.
+ *
+ * `Connect` wins over `Disconnect` while a save is unapplied, because then starting again
+ * is exactly what the saved settings are for, and requiring a stop first would make a
+ * changed port number a two-step operation for no reason.
+ */
+function verb(state) {
+  return running(state) && !unapplied ? 'disconnect' : 'connect';
 }
 
 /** What the host is doing right now, and — when it went wrong — what to do about it. */
@@ -176,10 +248,21 @@ function stateCard(state) {
     failed: 'failed',
   }[phase] || 'stopped';
 
+  //: Name the machine, always. "Connected." said nothing about *which* gateway, so
+  //: switching back to local looked exactly like still being tunnelled -- the forward had
+  //: in fact been torn down, and the only sign of it was a chip disappearing from the
+  //: header. The sentence changing under the dot is the indication that switching worked.
+  const where = status.mode === 'remote'
+    ? `${status.label || 'another machine'}, over SSH`
+    : 'this machine';
+  const settled = phase === 'listening'
+    ? `Connected to the gateway on ${where}.`
+    : `Not connected to the gateway on ${where}.`;
+
   const rows = [
     el('div', { class: 'conn-state' }, [
       el('span', { class: `dot dot-${dot}` }),
-      el('span', { text: shell.detail || (phase === 'listening' ? 'Connected.' : 'Not connected.') }),
+      el('span', { text: shell.detail || settled }),
     ]),
   ];
 
@@ -202,8 +285,18 @@ function stateCard(state) {
   return el('section', { class: 'conn-card' }, [el('h2', { text: 'Now' }), ...rows]);
 }
 
-/** Save, and apply. Two buttons, because they are two decisions. */
-function actions() {
+/** Save, and the one other thing worth doing.
+ *
+ * Two buttons. `Save` writes settings and starts nothing, which is a separate decision and
+ * stays separate. The second is `Connect` or `Disconnect` -- never both, because only one
+ * of them ever applies, and offering the inapplicable one is how a window invites somebody
+ * to press it and wonder why nothing happened.
+ *
+ * Stopping is offered in either mode rather than only remote: "this stops whatever the
+ * window is driving" is a rule somebody can hold, where a button that comes and goes with
+ * the mode radio is one they have to relearn. Nothing is lost by pressing it.
+ */
+function actions(state) {
   const changed = JSON.stringify(draft) !== JSON.stringify(stored);
 
   const save = el('button', {
@@ -211,9 +304,14 @@ function actions() {
   });
   save.addEventListener('click', async () => {
     try {
+      const live = running(latest);
       stored = await connectionSave(draft);
       draft = { ...stored };
-      notice = { kind: 'ok', text: 'Saved. Connect to start using it.' };
+      unapplied = live;
+      notice = {
+        kind: 'ok',
+        text: live ? 'Saved. Connect to start using it.' : 'Saved.',
+      };
     } catch (err) {
       //: The host's own words. Every refusal from `settings::validate` is a sentence
       //: written to be read by whoever typed the thing it is refusing.
@@ -222,16 +320,23 @@ function actions() {
     render();
   });
 
+  const stopping = verb(state) === 'disconnect';
   const apply = el('button', {
-    type: 'button', class: 'ghost', text: 'Connect',
-    title: 'Tear down what is running and start again from the saved settings',
+    type: 'button', class: 'secondary', text: stopping ? 'Disconnect' : 'Connect',
+    title: stopping
+      ? 'Stop what this window is driving, and leave it stopped'
+      : 'Tear down anything running and start again from the saved settings',
   });
   apply.addEventListener('click', async () => {
-    notice = { kind: 'ok', text: 'Reconnecting…' };
+    notice = { kind: 'ok', text: stopping ? 'Disconnecting…' : 'Reconnecting…' };
+    pending = 'armed';
     render();
     try {
-      await connectionApply();
+      await (stopping ? connectionDisconnect() : connectionApply());
     } catch (err) {
+      //: The host refused to even start. Nothing is coming on `gateway-state`, so the
+      //: notice is the whole answer and must not be cleared out from under it.
+      pending = null;
       notice = { kind: 'bad', text: String(err) };
       render();
     }
@@ -255,6 +360,7 @@ function render() {
     //: A browser has no host to run `ssh`, so there is nothing here to configure. The
     //: sentence is what someone sees for the one frame before `app.js` corrects a stored
     //: screen name -- see `index.html`.
+    root.classList.remove('conn-wide');
     root.replaceChildren(el('p', {
       class: 'conn-note',
       text: 'The Connection screen is part of the desktop app.',
@@ -272,12 +378,24 @@ function render() {
         start: active.selectionStart, end: active.selectionEnd }
     : null;
 
+  //: The measure is the layout's, not the page's: one column reads best on `About`'s
+  //: 44rem, and two columns at that width are two narrow ones. `#connection` *is*
+  //: `.conn-inner`, so the class goes on the root rather than on an ancestor this module
+  //: would otherwise have to reach out of itself to find.
+  const split = draft.mode === 'remote';
+  root.classList.toggle('conn-wide', split);
+
   root.replaceChildren(
     el('div', { class: 'conn-inner-body' }, [
-      modeCard(),
-      remoteCard(),
+      //: Choosing and configuring are one decision seen twice, so they sit side by side --
+      //: a third of the width for the choice, two thirds for what the choice needs. In
+      //: local mode there is no second column and the choice keeps the whole measure.
+      el('div', { class: `conn-columns${split ? ' split' : ''}` }, [
+        modeCard(),
+        remoteCard(),
+      ]),
       stateCard(latest),
-      actions(),
+      actions(latest),
     ]),
   );
 
@@ -307,6 +425,7 @@ export default {
   //: local one does, and cannot know it is being tunnelled.
   refresh(state) {
     latest = state;
+    settle(state.shell?.phase || 'idle');
     render();
   },
 

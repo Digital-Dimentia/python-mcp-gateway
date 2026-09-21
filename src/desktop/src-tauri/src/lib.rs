@@ -64,6 +64,14 @@ struct Inner {
     /// the settings. A `watch` rather than a flag because the loop has to be interruptible
     /// *while awaiting*: a child's stderr does not close because somebody pressed Apply.
     reconnect: tokio::sync::watch::Sender<u64>,
+    /// Whether the loop should stay stopped once it has stopped.
+    ///
+    /// Every other way this loop ends is a reason to start again -- a child that died, a
+    /// tunnel that dropped, settings that changed. `Disconnect` is the one that is not, and
+    /// without somewhere to record it the loop would tear the tunnel down and immediately
+    /// open another. Set by `conn_disconnect`, cleared by `conn_apply`, and read at the top
+    /// of every start, which is the same place `connection` is read.
+    parked: std::sync::atomic::AtomicBool,
     /// The bridge inside this bundle, for the line a client is given. See `Layout::bridge`.
     bridge: std::path::PathBuf,
 }
@@ -76,6 +84,7 @@ impl Inner {
             links: tokio::sync::Mutex::new(Links::default()),
             connection: Mutex::new(connection),
             reconnect: tokio::sync::watch::channel(0).0,
+            parked: std::sync::atomic::AtomicBool::new(false),
             bridge,
         }
     }
@@ -111,14 +120,34 @@ impl Inner {
     fn ask_for_a_restart(&self) {
         self.reconnect.send_modify(|generation| *generation += 1);
     }
+
+    /// Stop, and stay stopped. Both halves matter: without the flag the loop would tear the
+    /// tunnel down and open another, and without the signal it would not tear it down until
+    /// something else went wrong.
+    fn park(&self) {
+        self.parked.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.ask_for_a_restart();
+    }
+
+    /// Start, and keep starting. The exact opposite, in the same order.
+    fn resume(&self) {
+        self.parked
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.ask_for_a_restart();
+    }
+
+    fn is_parked(&self) -> bool {
+        self.parked.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 // --- the commands the window may call -----------------------------------------------------
 //
-// Three, and they are the webview's entire reach. There is no filesystem plugin, no shell
-// plugin and no HTTP client in this app: the page can open one of two sockets, write to it,
-// close it, and ask how the gateway is. Everything else it wants, it asks the gateway for
-// over `/admin` -- which is the same thing the browser build does, through the same methods.
+// They are the webview's entire reach. There is no filesystem plugin, no shell plugin and
+// no HTTP client in this app: the page can open one of two sockets, write to it, close it,
+// ask how the gateway is, and say which gateway it should be -- store the settings, start
+// from them, stop. Everything else it wants, it asks the gateway for over `/admin` --
+// which is the same thing the browser build does, through the same methods.
 
 /// Open `/mcp` or `/admin`. The id is minted by the caller; see `tauri-transport.js`.
 #[tauri::command]
@@ -224,7 +253,23 @@ fn gw_panel_url(_shell: State<'_, Shell>, path: String) -> Result<String, String
 /// like every other transition, and the page already knows how to render that.
 #[tauri::command]
 fn conn_apply(shell: State<'_, Shell>) -> Status {
-    shell.inner.ask_for_a_restart();
+    // Whatever else it does, Connect means "and stay connected".
+    shell.inner.resume();
+    shell.inner.status()
+}
+
+/// Stop what the window is driving, and leave it stopped.
+///
+/// The missing third verb. `conn_save` writes settings and starts nothing; `conn_apply`
+/// starts from them. Neither could *stop*, so a tunnel opened in this window could only be
+/// closed by quitting the app -- and saving a switch back to local mode left it open, which
+/// is what made "I went back to local" look like nothing had happened.
+///
+/// Like `conn_apply`, it returns as soon as the loop has been asked. The teardown itself
+/// arrives on `gateway-state` as `idle`, which is the same phase the window already renders.
+#[tauri::command]
+fn conn_disconnect(shell: State<'_, Shell>) -> Status {
+    shell.inner.park();
     shell.inner.status()
 }
 
@@ -264,6 +309,18 @@ async fn supervise<R: tauri::Runtime>(app: tauri::AppHandle<R>, inner: Arc<Inner
     let mut rx = inner.reconnect.subscribe();
 
     loop {
+        // Parked by `conn_disconnect`. Announced from here rather than from the command so
+        // there is one place that decides what `idle` means, and so the window hears it
+        // after the teardown has actually happened rather than when it was asked for.
+        if inner.is_parked() {
+            inner.set(Phase::Stopped);
+            let _ = app.emit(STATE_EVENT, inner.status());
+            if rx.changed().await.is_err() {
+                return;
+            }
+            continue;
+        }
+
         // Read at the top of every start rather than held: this is the line that makes
         // `conn_apply` mean something.
         let connection = inner.connection.lock().unwrap().clone();
@@ -753,6 +810,7 @@ pub fn run() {
             conn_settings,
             conn_save,
             conn_apply,
+            conn_disconnect,
             gw_panel_url
         ])
         // The one document this window loads that nobody here wrote. The handler fetches it
@@ -814,4 +872,47 @@ pub fn run() {
                 stop_children(&app.state::<Shell>().layout);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inner() -> Inner {
+        Inner::new(std::path::PathBuf::from("/bridge"), Connection::default())
+    }
+
+    /// What `Disconnect` has to mean, in the two halves it is made of.
+    ///
+    /// The flag alone would stop nothing: the loop is asleep on a child's stderr and does
+    /// not read it until something wakes it. The signal alone would stop it and start it
+    /// again half a second later, because every other way out of that loop is a reason to
+    /// retry. Only both together are a disconnect.
+    #[test]
+    fn disconnecting_both_parks_the_loop_and_wakes_it_to_notice() {
+        let inner = inner();
+        let before = *inner.reconnect.subscribe().borrow();
+        assert!(!inner.is_parked(), "a window opens connected");
+
+        inner.park();
+        assert!(inner.is_parked());
+        assert_ne!(
+            *inner.reconnect.subscribe().borrow(),
+            before,
+            "a parked flag nothing is awake to read stops nothing",
+        );
+    }
+
+    #[test]
+    fn connecting_clears_the_park_so_a_stopped_window_can_start_again() {
+        // Otherwise Disconnect is a one-way door and the app has to be restarted to undo
+        // it -- which is the thing this whole screen exists to avoid.
+        let inner = inner();
+        inner.park();
+        let parked_at = *inner.reconnect.subscribe().borrow();
+
+        inner.resume();
+        assert!(!inner.is_parked());
+        assert_ne!(*inner.reconnect.subscribe().borrow(), parked_at);
+    }
 }

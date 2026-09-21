@@ -9,6 +9,40 @@ nobody reads.
 
 ## Unreleased
 
+**The desktop app can now disconnect, and a disconnected window is not a sealed one.** There was no third verb: Save wrote settings and
+started nothing, Connect started from them, and nothing could *stop*. So a tunnel opened in
+that window could only be closed by quitting the app, and saving a switch back to local mode
+left it wide open — which is why going back to local looked from the screen like nothing had
+happened. **Disconnect** stops what the window is driving and leaves it stopped, in either
+mode, and Connect starts it again from the same saved settings — they are one button, since
+only ever one of them applies. The status line says which it is, by name, in both directions.
+
+A deliberate stop is also now distinguishable from a window that is merely still starting,
+which matters more than it sounds: painted as the latter, the overlay covered the header
+with no Retry and no way to the Connection screen, and the app could only be quit. Stopping
+now says *Disconnected*, offers Connect, offers the way to pick a different gateway — and
+does not appear at all over the Connection screen, which is where you just pressed the
+button.
+
+**Three things the Connection screen got wrong, found by using it.** The **Connect** button
+was styled as a `ghost` — the class the toolbar's Clear and Reread wear — which in dark mode
+is borderless muted text on a dark panel, and reads as a label rather than as something you
+can press. It is a real choice beside Save, so it now looks like one. The **"Reconnecting…"
+notice never went away**: it was written by the click and nothing ever retired it, so a
+window that had connected perfectly well sat under a green dot insisting it was still
+trying. And the status line said a bare **"Connected."** whichever machine it meant, so
+going back to local looked exactly like still being tunnelled — the forward really had been
+torn down, and the only sign of it was a chip vanishing from the header. The line now names
+the machine, every time.
+
+**The desktop app's Connection screen fits a laptop again when you pick remote.** Choosing
+remote adds a second card, and stacked under the first it ran the form past the bottom of
+the window — on the one size of screen this app is actually used on. The choice and what
+the choice needs now sit side by side, a third of the width against two thirds, and the
+remote form's own fields pair up: the destination spans, and the two ports share a row,
+because a forward's two ends are one decision. Local mode is untouched and keeps its single
+readable measure, and a window dragged narrow collapses back to one column.
+
 **The desktop app's "SSH could not authenticate" hint no longer promises something it
 cannot keep.** It said that if `ssh <destination>` works in Terminal it will work in the
 app — true on a Mac where launchd runs the agent, and false for anyone whose keys live in

@@ -35,6 +35,14 @@ use crate::settings::{Connection, Mode};
 pub enum Phase {
     /// Nothing is running and nothing is being attempted.
     Idle,
+    /// Nothing is running because somebody asked for nothing to be running.
+    ///
+    /// Distinct from `Idle` for one reason, and it is the window's: `Idle` is what the
+    /// window sees for the moment between opening and the first spawn, so the page paints a
+    /// splash over itself and waits. A deliberate stop lasts until somebody acts, and a
+    /// splash that never resolves is an app with no way back into it. Same coarse `state`,
+    /// because nothing else in the page needs to know the difference.
+    Stopped,
     /// The local child has been spawned and has not written its port file yet.
     StartingDaemon,
     /// `ssh` has been spawned and has not bound the near end yet.
@@ -66,7 +74,7 @@ impl Phase {
     /// The five-word vocabulary `app.js` ranks. See the module docs.
     pub fn state(&self) -> &'static str {
         match self {
-            Phase::Idle => "idle",
+            Phase::Idle | Phase::Stopped => "idle",
             Phase::StartingDaemon | Phase::OpeningTunnel | Phase::TunnelUp { .. } => "starting",
             // Not a failure: the tunnel is fine and the daemon over there is not running.
             Phase::FarSideSilent { .. } => "starting",
@@ -80,6 +88,7 @@ impl Phase {
     pub fn name(&self) -> &'static str {
         match self {
             Phase::Idle => "idle",
+            Phase::Stopped => "stopped",
             Phase::StartingDaemon => "starting-daemon",
             Phase::OpeningTunnel => "opening-tunnel",
             Phase::TunnelUp { .. } => "tunnel-up",
@@ -99,6 +108,9 @@ impl Phase {
         let where_ = connection.label().unwrap_or("this machine");
         Some(match self {
             Phase::Idle => return None,
+            //: Says what it is *and* what to do, because this is the one phase the window
+            //: cannot leave on its own -- see the variant's own note.
+            Phase::Stopped => format!("Disconnected from {where_}. Press Connect to start again.",),
             Phase::StartingDaemon => "Starting the gateway…".into(),
             Phase::OpeningTunnel => format!("Opening an SSH tunnel to {where_}…"),
             Phase::TunnelUp { .. } => {

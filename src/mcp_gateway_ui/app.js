@@ -164,12 +164,15 @@ function initialKey() {
 // So the modes are ranked, and `showGate` will not let a lower-ranked writer overwrite a
 // higher-ranked one. A socket closing is only ever evidence of `connecting` until the
 // retries run out; the shell's own supervisor is the only thing that can say `failed`.
-const GATE_RANK = { connecting: 0, blocked: 1, failed: 2 };
+//: `stopped` outranks everything: it is the only mode that is somebody's decision rather
+//: than a report, and a socket closing behind it must not redraw it as a splash.
+const GATE_RANK = { connecting: 0, blocked: 1, failed: 2, stopped: 3 };
 
 const GATE_TITLES = {
   connecting: 'Starting…',
   blocked: 'Access key required',
   failed: 'The gateway could not start',
+  stopped: 'Disconnected',
 };
 
 let gateMode = 'connecting';
@@ -205,13 +208,19 @@ function showGate(message, mode = 'blocked', title = GATE_TITLES[mode]) {
   const submit = $('gate-submit');
   submit.textContent = asking ? 'Connect' : 'Retry';
   // Nothing to retry while it is still coming up, and a button that does nothing is worse
-  // than no button.
+  // than no button. Stopped is the opposite case: it is the *only* thing that can end that
+  // mode from in here, so it says what it will do rather than "Retry".
+  if (mode === 'stopped') submit.textContent = 'Connect';
   submit.hidden = mode === 'connecting';
 
   //: The escape hatch. This panel covers the header, and the header is where the Connection
   //: screen is chosen -- so a mistyped destination would otherwise hide the only control
-  //: that could fix it. Shown for a failed remote connection and nothing else.
-  $('gate-settings').hidden = !(inShell && mode === 'failed' && state.connection?.mode === 'remote');
+  //: that could fix it. A deliberate stop needs it for the same reason and more sharply:
+  //: nothing is going to happen next, so without this the window is sealed until it is
+  //: quit, and choosing a *different* gateway to connect to is exactly what somebody who
+  //: just pressed Disconnect is likely to want.
+  $('gate-settings').hidden = !(inShell && (mode === 'stopped'
+    || (mode === 'failed' && state.connection?.mode === 'remote')));
 
   if (asking) $('gate-key').focus();
 }
@@ -229,6 +238,17 @@ $('gate-settings').addEventListener('click', () => {
 
 $('gate-form').addEventListener('submit', (event) => {
   event.preventDefault();
+
+  //: Stopped first, and whatever the mode: nothing is running to re-dial *to*, so the only
+  //: thing this button can mean is "start again". Without this a stopped local window fell
+  //: through to the access-key path below, which under the shell does nothing at all -- a
+  //: Connect button that did not connect.
+  if (inShell && gateMode === 'stopped') {
+    hideGate();
+    showGate('Reconnecting…', 'connecting');
+    connectionApply().catch(() => {});
+    return;
+  }
 
   //: In remote mode "Retry" has to mean *re-dial the tunnel*. Rebuilding the sockets alone
   //: would aim them at a local port with nothing behind it, forever, on a backoff nobody
@@ -1249,6 +1269,22 @@ if (inShell) {
         'failed',
         remote ? 'Could not reach the remote gateway' : GATE_TITLES.failed,
       );
+      return;
+    }
+
+    //: A stop somebody asked for is not a stage on the way to anything, so it does not get
+    //: the splash that the other `idle` -- the moment before the first spawn -- does. See
+    //: `Phase::Stopped`, which exists only so these two can be told apart here.
+    if (status.phase === 'stopped') {
+      //: Never over the Connection screen. That screen is where the stop was asked for and
+      //: where the next connection is chosen -- covering it with a panel whose only offer is
+      //: a way back to it is the app arguing with itself, and it is what pressing Disconnect
+      //: used to do. Anywhere else the window is unusable and the panel is the whole point.
+      if (activeScreen === 'connection') {
+        hideGate();
+        return;
+      }
+      showGate(status.detail || 'This window is not driving a gateway.', 'stopped');
       return;
     }
 

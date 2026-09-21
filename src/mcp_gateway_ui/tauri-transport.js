@@ -134,6 +134,12 @@ export async function connectionApply() {
   return window.__TAURI__.core.invoke('conn_apply');
 }
 
+/** Stop what is running, and leave it stopped until something asks for it again. */
+export async function connectionDisconnect() {
+  if (!inShell) return null;
+  return window.__TAURI__.core.invoke('conn_disconnect');
+}
+
 /**
  * The URL to frame a backend's HTML panel with, for the path `admin.panel.open` answered.
  *

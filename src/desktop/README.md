@@ -134,6 +134,44 @@ numbers, and is the first file in there this app owns rather than seeds.
 daemon accepts a client with neither `Origin` nor `Authorization`, and `session.rs` still
 says `Mode::Remote => None`.
 
+### Save, Connect, Disconnect
+
+Three buttons, because they are three decisions, and keeping them apart is what lets the
+window be honest about each one. **Save** writes `connection.json` and starts nothing — you
+can retype a destination while a tunnel is up without the tunnel noticing. **Connect** tears
+down whatever is running and starts again from what was saved; it is the only way to change
+mode while the app is open. **Disconnect** stops what is running and leaves it stopped.
+
+That third one was missing, and its absence was not neutral: a tunnel opened in this window
+could only be closed by quitting the app, and saving a switch back to local mode left it
+open — so "I went back to local" looked from the screen like nothing had happened at all.
+
+It needs both halves to work. `Inner::park` sets a flag *and* bumps the reconnect watch: the
+flag alone stops nothing, because the loop is asleep on a child's stderr and will not read
+it until something wakes it, and the signal alone would stop the tunnel and open another one
+a moment later, since every other way out of that loop is a reason to retry. The loop reads
+the flag at the top of every start, in the same place it reads the settings, and `Connect`
+clears it — otherwise Disconnect would be a one-way door out of the app's own point.
+
+Connect and Disconnect are **one button**, never both: only ever one of them does anything,
+and a pair where the second is reachable only through the first reads as two equals. The
+exception is a save that has not been applied — the window is connected, but not to what was
+just saved — where Connect wins, because needing a disconnect first to change a port number
+would be a step for nothing.
+
+Disconnect is offered in both modes rather than only remote. "This stops whatever the window
+is driving" is a rule somebody can hold; a button that appears and disappears with the mode
+radio is one they have to relearn.
+
+A stop is its own phase, `Phase::Stopped`, and it exists for the window rather than for the
+host — the coarse `state` it reports is still `idle`. The page has to tell it from the
+*other* idle, the moment between opening and the first spawn: that one is a splash you wait
+through, and this one lasts until somebody acts. Painted as the splash, a disconnect sealed
+the window shut — the gate covers the header, it shows no Retry while it believes something
+is coming, and the way to the Connection screen was offered only to a failed *remote* gate.
+The stopped gate offers both, and it never appears over the Connection screen itself, which
+is where the stop was asked for and where the next gateway is chosen.
+
 ### When it will not open
 
 `ssh`'s stderr is classified — never parsed for a value — into the kinds that want different

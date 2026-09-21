@@ -478,6 +478,19 @@ button.ghost {
 button.ghost:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); }
 button.ghost.danger:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); }
 
+/* The second of two real choices, beside a `.primary` that is the first. A `.ghost` is for
+ * the tertiary things a toolbar is made of -- Clear, Reread, Copy JSON -- where being quiet
+ * is the point. Borderless and `--muted` on a dark `--panel` reads as a label rather than
+ * as something you can press, which is exactly wrong for a button whose whole job is to be
+ * pressed. So it keeps a border and the panel's own background: visibly a control, and
+ * still visibly not the primary one. */
+button.secondary {
+  background: var(--panel-2);
+  border-color: var(--rule);
+  color: var(--ink);
+}
+button.secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -1375,6 +1388,40 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 0.8rem; color: var(--muted); }
   padding: 1rem 1rem 2rem;
 }
 .conn-inner-body { display: flex; flex-direction: column; gap: 1rem; }
+
+/* Remote mode has a second card, and stacking the two ran the form past the bottom of a
+ * laptop screen -- the one place this app is used. So the choice and what the choice needs
+ * sit side by side: a third for the first, two thirds for the second. The measure widens
+ * with it, because two columns inside 44rem are two narrow columns; `screen.js` puts
+ * `.conn-wide` on the root for exactly as long as there is a second column to hold.
+ *
+ * Local mode keeps the single readable measure it has always had. Nothing moves until
+ * there is something to move for. */
+.conn-inner.conn-wide { max-width: 68rem; }
+.conn-columns { display: grid; gap: 1rem; }
+.conn-columns.split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  align-items: start;
+}
+
+/* The two ports are a pair, so they share a row; the destination is what they are both
+ * about, so it spans. Source order is reading order either way -- a grid that reflowed the
+ * fields would put "port on this Mac" before the machine it is on. */
+.conn-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem 0.9rem;
+  align-items: start;
+}
+.conn-grid > .conn-field.wide { grid-column: 1 / -1; }
+
+/* Narrower than the columns are worth: one of them, at the measure a single column wants.
+ * A window this small is not a laptop screen, it is a window someone has dragged. */
+@media (max-width: 62rem) {
+  .conn-inner.conn-wide { max-width: 44rem; }
+  .conn-columns.split { grid-template-columns: minmax(0, 1fr); }
+  .conn-grid { grid-template-columns: minmax(0, 1fr); }
+}
 
 .conn-card {
   border: 1px solid var(--rule);
