@@ -398,6 +398,36 @@ What no automated test here reaches is **the window**. So this stays a manual ch
 6. `ps eww <pid> | tr ' ' '\n' | grep MCP_GATEWAY_WS_KEY` shows the key; `ps ww` does not, and
    grepping the app data directory for it finds nothing.
 
+### Remote mode
+
+Everything under the SSH handshake — argv, the fault classification, the three-way probe,
+the header decision — is covered by `cargo test`, and everything above the tunnel can be
+driven from a terminal with `ssh -N -L` and `curl`. What is left needs the window, and a
+second machine:
+
+7. With a gateway running on the far box, set Remote in the Connection screen and watch it
+   come up. Launch **from Finder**, for the reason step 1 gives: a tunnel that works under
+   `make tauri-dev` and not in the bundle is the agent-socket case below, not a bug in the
+   destination.
+8. Take the line the screen hands you, `claude mcp add` it, and call a tool through it.
+9. Edit a server from the window, and confirm the **far** `servers.yaml` changed and the
+   local one did not.
+10. Break each half in turn — `pkill ssh`, then stop the remote daemon — and confirm the
+    window names *which* of the two broke, and recovers on its own when it comes back. From
+    a terminal the two are already distinguishable: `curl` exits 7 when the tunnel is gone
+    and 56 when the tunnel is up and nothing is listening on the far end.
+
+**The agent socket is the thing most likely to bite**, and it is the same family as the
+`PATH` case. Compare `echo $SSH_AUTH_SOCK` in Terminal with `launchctl getenv SSH_AUTH_SOCK`.
+If they match — the usual case on macOS, where launchd runs the agent and passes it to GUI
+apps alike — a Finder launch reaches the same keys your shell does and there is nothing to
+do. If they differ, your keys are in an agent your shell starts (1Password, gpg-agent, a
+`keychain` line in an rc file) and the app will see the other one, with no keys in it. The
+`AuthRequired` hint says so, because "it works in Terminal" is exactly what you will have
+just proved.
+
+Windows remains entirely unexercised.
+
 ## Launching it
 
 Double-click it in Finder, or `open` it from a normal Terminal window.

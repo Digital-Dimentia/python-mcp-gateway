@@ -9,6 +9,13 @@ nobody reads.
 
 ## Unreleased
 
+**The desktop app's "SSH could not authenticate" hint no longer promises something it
+cannot keep.** It said that if `ssh <destination>` works in Terminal it will work in the
+app — true on a Mac where launchd runs the agent, and false for anyone whose keys live in
+an agent their shell starts, which is precisely the person who will have just proved it
+works in Terminal and been left with nowhere to go. It now says how to tell the two apart:
+compare `echo $SSH_AUTH_SOCK` with `launchctl getenv SSH_AUTH_SOCK`.
+
 **A backend that refuses to start now tells you what it said on the way out.** Every stdio
 backend that dies at startup used to fail with `MCP process closed stdout` — true of a
 directory that does not exist, a rejected token, a missing interpreter and a segfault

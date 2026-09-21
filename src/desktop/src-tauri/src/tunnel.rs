@@ -171,7 +171,11 @@ impl Fault {
             Fault::AuthRequired => {
                 "SSH is the only authentication here, and this app never asks you for a \
                  password or a passphrase. Run `ssh <destination>` once in Terminal: if it \
-                 works there — with your key loaded in the agent — it will work here."
+                 works there — with your key loaded in the agent — it will work here, \
+                 unless your agent is not the one macOS starts for you. Compare \
+                 `echo $SSH_AUTH_SOCK` in Terminal with `launchctl getenv SSH_AUTH_SOCK`: \
+                 if they differ, an app launched from Finder is talking to the second one, \
+                 which does not have your keys."
             }
             Fault::HostKey => {
                 "Run `ssh <destination>` once in Terminal and resolve it there. This app \
