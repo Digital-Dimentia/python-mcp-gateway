@@ -69,7 +69,13 @@ make test        # pytest over tests/ (the JS suite skips without node + jsdom)
 make build       # wheel + sdist
 ```
 
-`make lint docs-check test build`, in that order, is the CI gate. `make ui-deps` installs
+`make lint docs-check test build`, in that order, is the CI gate — but only for the daemon
+(`.github/workflows/ci.yml`). **Anything under `src/desktop/` or `src/mcp_gateway_ui/` is
+gated by a second workflow**, `desktop.yml`, which runs `make tauri-check` (cargo fmt,
+clippy `-D warnings`, and the Rust tests) on macOS, Linux *and* Windows. Run it locally
+before touching either tree; it needs `make tauri-python` once. A green `make test` says
+nothing about the desktop shell, and the platform-specific halves — the Windows Job Object,
+the Linux `PDEATHSIG` — can only fail on a runner. `make ui-deps` installs
 jsdom and turns the skipped JavaScript suite into a running one. `make check` validates
 `servers.yaml` and `gateway.env` without binding a port or spawning a backend, and
 `make run-dev` starts the daemon against the schema zoo, which needs no credentials.

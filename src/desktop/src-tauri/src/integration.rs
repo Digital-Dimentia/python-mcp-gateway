@@ -238,6 +238,16 @@ async fn stopping_the_app_stops_the_gateway() {
 /// `kill_on_drop`, which never runs, and seventeen orphaned daemons accumulated on one
 /// machine over eight days (python-mcp-gateway-g90.10). The gap was not in the killing, it
 /// was in the path to it -- so this test walks that path.
+///
+/// **Unix only, because the path itself is.** `appdata::stop_recorded` is a documented
+/// no-op on Windows: there are no process groups to signal and no `/proc` to identify a pid
+/// with, so a gateway there is a member of a Job Object with `KILL_ON_JOB_CLOSE` and the
+/// kernel reaps it when this process dies by any means. Nothing clears the pidfile because
+/// nothing needs to, and asserting that it was cleared is asserting the Unix mechanism on a
+/// platform that deliberately does not use it -- which is what failed every Windows leg of
+/// `Desktop shell` rather than finding anything. The Windows contract has its own test,
+/// `supervisor::tests::terminating_one_child_does_not_reach_another`.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn quitting_stops_the_gateway_and_only_then_forgets_it() {
     let Some((layout, seed)) = layout("quit") else {
