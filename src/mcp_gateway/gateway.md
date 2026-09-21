@@ -123,6 +123,21 @@ be able to refuse, rather than assuming any accepted request can be placed.
 A gateway with no clients attached declares nothing, which is correct: there is nobody to
 ask.
 
+## What a reload is allowed to be half of: nothing
+
+`reload` re-reads `servers.yaml` and `gateway.env`, and — since the TLS certificate is an
+input to a running daemon exactly as those two are — the certificate pair as well. All three
+are *proved* in one place and applied in another, with a single return between them: if any
+input is refused, none is applied. A reload that rotated a certificate and then rejected the
+catalogue would be a reload that did half of what it said, and an operator watching a
+renewal land has no way to find out which half.
+
+So `check_tls` runs inside the same `try` as `load_config` and `build_store`, and
+`reload_tls` runs down with the catalogue swap. See
+[`transport_ws.md`](transport_ws.md#rotating-one) for why the certificate is loaded twice —
+once into a context nobody is serving from — and why the live context is mutated rather than
+replaced.
+
 ## Shutdown
 
 `cli` awaits `shutdown_requested`, then calls `stop()` in a `finally`. A `finally` rather

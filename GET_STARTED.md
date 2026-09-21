@@ -668,6 +668,24 @@ The port then speaks `wss://` and `https://` only; the UI is at `https://<host>:
 catches the key that no longer matches its renewed certificate. Both paths can come from
 `MCP_GATEWAY_TLS_CERT` and `MCP_GATEWAY_TLS_KEY` instead, for a container or unit file.
 
+**Renewing it does not need a restart.** A reload — `SIGHUP`, or `gateway__reload_config`,
+or Reload in the UI — re-reads the certificate pair along with the two config files, so a
+certbot renewal reaches the socket without dropping a single attached client. Every new
+handshake gets the new certificate; sessions already open keep the one they started with
+until they end. Put the reload in your renewal hook:
+
+```
+# /etc/letsencrypt/renewal-hooks/deploy/mcp-gateway
+#!/bin/sh
+systemctl --user reload mcp-gateway     # or: kill -HUP $(pidof mcp-gateway)
+```
+
+If the new pair does not load — the classic being a key that no longer matches its
+certificate — **the reload is refused whole**: the old certificate keeps serving, the
+catalogue is not touched either, and the log says which pair it could not load. So a
+half-written renewal landing at the wrong moment costs you a line in the log rather than a
+socket that has stopped answering.
+
 A client verifies the certificate as it would any other. For a self-signed one or a private
 CA, give the bridge the bundle:
 

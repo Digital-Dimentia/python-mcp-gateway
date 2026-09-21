@@ -61,7 +61,7 @@ from mcp_gateway.secret_providers import build_store
 from mcp_gateway.secrets import SecretError, SecretStore
 from mcp_gateway.session import Session
 from mcp_gateway.supervisor import Supervisor
-from mcp_gateway.transport_ws import ClientLink, GatewayServer
+from mcp_gateway.transport_ws import ClientLink, GatewayServer, TlsError
 
 logger = logging.getLogger(__name__)
 
@@ -702,7 +702,14 @@ class Gateway:
                 # it to a thread costs nothing of the atomicity below -- there is still no
                 # moment where half a store has been applied.
                 store = await asyncio.to_thread(build_store, config, self.env_path)
-            except (ConfigError, SecretError) as refusal:
+                # The certificate is an input to this reload exactly as the two files are,
+                # so it is proved here, with them, and applied below with them. A pair that
+                # no longer loads leaves the old one serving and says why -- the alternative
+                # is a daemon whose socket stopped answering because a renewal was half
+                # written when the reload landed.
+                if self.server is not None:
+                    await asyncio.to_thread(self.server.check_tls)
+            except (ConfigError, SecretError, TlsError) as refusal:
                 logger.error("reload refused, nothing changed: %s", refusal)
                 return error_result(f"reload refused, nothing changed: {refusal}")
 
@@ -731,6 +738,12 @@ class Gateway:
                         self.log_stream.removeFilter(existing)
                 self.log_stream.addFilter(filt)
             self.catalogue.invalidate_all()
+            # After the refusal point, so this cannot leave a rotated certificate behind a
+            # reload that was rejected. Existing connections keep the certificate they
+            # handshook with; every new one gets this.
+            rotated = self.server.reload_tls() if self.server is not None else None
+            if rotated is not None:
+                logger.info("reload: re-read the TLS certificate at %s", rotated)
 
             # One notification per kind after the whole sweep, not one per backend. See
             # `notifications.md`: eight restarted backends must not cost a client eight
@@ -773,6 +786,8 @@ class Gateway:
         access_key: str | None = None,
         allow_unauthenticated: bool = False,
         tls: ssl.SSLContext | None = None,
+        tls_cert: Path | str | None = None,
+        tls_key: Path | str | None = None,
     ) -> None:
         """Bring backends up, **then** bind the socket.
 
@@ -792,6 +807,8 @@ class Gateway:
             access_key=access_key,
             allow_unauthenticated=allow_unauthenticated,
             tls=tls,
+            tls_cert=tls_cert,
+            tls_key=tls_key,
             panel_store=self.panels,
         )
         await self.server.start()

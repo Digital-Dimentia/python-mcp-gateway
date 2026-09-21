@@ -474,6 +474,10 @@ async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) ->
         access_key=access_key,
         allow_unauthenticated=unauthenticated_bind_allowed(),
         tls=tls,
+        # The paths as well as the context they built: a reload re-reads them, so a renewed
+        # certificate reaches the socket without a restart. See transport_ws.reload_cert_chain.
+        tls_cert=args.tls_cert,
+        tls_key=args.tls_key,
     )
     # After `start`, never before: with `--port 0` the port does not exist until the socket
     # is bound, and a file appearing with the wrong number in it is worse than no file. Its

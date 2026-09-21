@@ -121,7 +121,36 @@ container whose `0.0.0.0` only its own network can reach — so a refusal would 
 protect against something they are not doing. Everywhere else the key crosses the wire
 readable, and `warn_plaintext_off_loopback` is what says so, once, at startup.
 
-A certificate is read once. Rotating one is a restart, not a SIGHUP, for now.
+### Rotating one
+
+A certificate has ninety days; a daemon has a fleet of attached clients. Restarting to pick
+up an ACME renewal drops every one of them, which is a worse outage than the one the renewal
+was avoiding — so a reload re-reads the pair, exactly as it re-reads `servers.yaml`.
+
+`load_cert_chain` may be called again on a context that is already serving, and asyncio
+holds that one object and consults it per handshake. So `reload_cert_chain` mutates the
+live context rather than building a replacement: a new object would have to be handed to a
+new listening socket, and rebinding is the restart this exists to avoid. Sessions already
+established keep the certificate they were established with, which is right — renegotiating
+one would be a worse answer than leaving it alone until it ends.
+
+**The pair is proved into a throwaway context first**, and that is the part worth keeping.
+`load_cert_chain` is not one step: it reads the certificate, then the key, then checks that
+they match. A pair failing that last check on the *live* context would have replaced its
+certificate and not its key — a listening socket that can no longer complete a handshake
+with anyone, produced by a routine asked to keep it serving. Half a renewal on disk is the
+commonest way to get there, and it is a race nobody sees coming. Loading into a context
+nobody serves from turns it into a caught exception. What is left is the window between the
+two loads, in which the files would have to change *again*.
+
+The check and the apply are two methods (`GatewayServer.check_tls`, `.reload_tls`) because
+[`gateway.py`](gateway.md) refuses a reload before it applies any of it: the certificate is
+validated beside `servers.yaml` and `gateway.env`, and applied beside them. A reload that
+rotated a certificate and then rejected the catalogue would have done half of what it said.
+
+A context handed in without the paths behind it is simply not reloadable — `reload_tls`
+returns `None`, meaning *nothing to do*, which is also what plaintext returns. Failure is a
+`TlsError`; `None` never means one.
 
 ## Keepalive and size caps
 

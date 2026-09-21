@@ -211,6 +211,9 @@ def tls_context(cert: Path | str | None, key: Path | str | None = None) -> ssl.S
 
     Loaded once, here, rather than lazily per handshake, so a bad path or a key that does
     not match its certificate fails the start rather than the first client.
+
+    It is loaded *again* on reload -- see `reload_cert_chain` -- so a renewed certificate
+    does not need a restart.
     """
     if not cert:
         if key:
@@ -223,6 +226,33 @@ def tls_context(cert: Path | str | None, key: Path | str | None = None) -> ssl.S
         where = f"{cert} and {key}" if key else str(cert)
         raise TlsError(f"cannot serve TLS with {where}: {exc}") from exc
     return context
+
+
+def reload_cert_chain(context: ssl.SSLContext, cert: Path | str, key: Path | str | None) -> None:
+    """Re-read `cert` and `key` into a context that is already serving.
+
+    `load_cert_chain` may be called again on a live context, and asyncio holds that one
+    object and consults it per handshake -- so this is what lets a 90-day ACME renewal reach
+    the socket without a restart, and without dropping a single attached client. A TLS
+    session already established keeps the certificate it was established with, which is
+    correct: renegotiating one would be a worse answer than leaving it alone until it ends.
+
+    **The pair is proved into a throwaway context first.** `load_cert_chain` is not one
+    step: it reads the certificate, then the key, then checks that they match. A pair that
+    fails the last of those on the *live* context would have replaced its certificate and
+    not its key, which is a listening socket that can no longer complete a handshake --
+    every client refused, by a routine that was asked to keep them. Loading into a context
+    nobody is serving from makes that a caught exception instead. What remains is the window
+    between the two loads, in which the files would have to change again; the gain is that
+    the ordinary failures -- a half-written file, a mismatched pair, a permission -- all land
+    on the throwaway.
+    """
+    tls_context(cert, key)
+    try:
+        context.load_cert_chain(str(cert), str(key) if key else None)
+    except (OSError, ssl.SSLError) as exc:  # pragma: no cover - the throwaway just passed
+        where = f"{cert} and {key}" if key else str(cert)
+        raise TlsError(f"cannot serve TLS with {where}: {exc}") from exc
 
 
 def warn_plaintext_off_loopback(host: str | None, tls: bool) -> None:
@@ -576,6 +606,8 @@ class GatewayServer:
         access_key: str | None = None,
         allow_unauthenticated: bool = False,
         tls: ssl.SSLContext | None = None,
+        tls_cert: Path | str | None = None,
+        tls_key: Path | str | None = None,
         panel_store: panels.PanelStore | None = None,
     ) -> None:
         # Before anything else, and in the constructor rather than in `start()`: the point
@@ -587,6 +619,12 @@ class GatewayServer:
         self._port = port
         self._access_key = access_key
         self._tls = tls
+        #: The files `_tls` was built from, kept so a reload can read them again. `None`
+        #: when TLS is off, and also when a caller built the context itself -- a context
+        #: with no paths behind it is simply not reloadable, which `reload_tls` reports as
+        #: "nothing to do" rather than as a failure.
+        self._tls_cert = tls_cert
+        self._tls_key = tls_key
         #: The live panel URLs, owned by the `Gateway` above and read here by the hook that
         #: serves them. `None` when this class is bound on its own, which is what most of
         #: the transport tests do; `/panel` is then a path nobody claimed.
@@ -628,6 +666,36 @@ class GatewayServer:
     def tls(self) -> bool:
         """Whether this server speaks `wss://`/`https://` rather than `ws://`/`http://`."""
         return self._tls is not None
+
+    @property
+    def reloadable_tls(self) -> bool:
+        """Whether there is a certificate pair on disk that a reload could re-read."""
+        return self._tls is not None and self._tls_cert is not None
+
+    def check_tls(self) -> None:
+        """Prove the certificate pair still loads, changing nothing. Raises `TlsError`.
+
+        Separate from `reload_tls` so a reload can refuse *before* it has applied anything,
+        the way a bad `servers.yaml` is refused: `gateway.reload` validates every input it
+        is about to act on and only then acts. A certificate that had been swapped in while
+        the catalogue was rejected would be a reload that did half of what it said.
+        """
+        if not self.reloadable_tls:
+            return
+        assert self._tls_cert is not None
+        tls_context(self._tls_cert, self._tls_key)
+
+    def reload_tls(self) -> str | None:
+        """Re-read the pair into the live context. The certificate's path, or `None`.
+
+        `None` means there was nothing to do -- plaintext, or a context handed in without
+        the files behind it -- and not that anything failed; failure is a `TlsError`.
+        """
+        if not self.reloadable_tls:
+            return None
+        assert self._tls is not None and self._tls_cert is not None
+        reload_cert_chain(self._tls, self._tls_cert, self._tls_key)
+        return str(self._tls_cert)
 
     @property
     def links(self) -> frozenset[Any]:

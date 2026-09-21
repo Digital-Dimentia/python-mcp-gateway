@@ -221,3 +221,155 @@ def test_the_bridge_reads_its_ca_file_from_the_environment() -> None:
     args = argparse.Namespace(ca_file=None)
     assert bridge.resolve_ca_file(args, {bridge.CA_FILE_ENV: "/etc/ca.pem"}) == Path("/etc/ca.pem")
     assert bridge.resolve_ca_file(args, {}) is None
+
+
+# --- renewal -------------------------------------------------------------------------------
+#
+# A certificate has ninety days and a daemon has a fleet of attached clients. Restarting to
+# pick up an ACME renewal drops every one of them, which is a worse outage than the one the
+# renewal was avoiding -- so the reload that re-reads `servers.yaml` re-reads this too.
+
+
+def test_a_renewed_certificate_loads_into_the_context_already_serving(tmp_path, minted) -> None:
+    """Into *that* object, not a replacement: asyncio holds the one it was handed."""
+    context = ws.tls_context(*minted)
+    renewed = _mint(tmp_path, "renewed")
+    assert ws.reload_cert_chain(context, *renewed) is None  # mutates, returns nothing
+
+
+def test_a_mismatched_pair_is_refused_before_the_live_context_sees_it(minted, other) -> None:
+    """The half-written renewal, which is the whole reason for the throwaway load.
+
+    `load_cert_chain` reads the certificate, then the key, then checks they match. Straight
+    onto a serving context, this pair would swap the certificate and fail on the check --
+    leaving a socket that can no longer complete a handshake with anyone.
+    """
+    context = ws.tls_context(*minted)
+    with pytest.raises(ws.TlsError):
+        ws.reload_cert_chain(context, minted[0], other[1])
+
+
+def test_a_certificate_that_vanished_is_refused_and_names_the_path(tmp_path, minted) -> None:
+    context = ws.tls_context(*minted)
+    with pytest.raises(ws.TlsError) as caught:
+        ws.reload_cert_chain(context, tmp_path / "gone.pem", None)
+    assert "gone.pem" in str(caught.value)
+
+
+async def test_a_reload_serves_the_renewed_certificate_to_the_next_client(tmp_path, minted) -> None:
+    """End to end, which is the only way to see that the socket really changed."""
+    cert, key = minted[0], minted[1]
+    live = tmp_path / "live.pem"
+    live_key = tmp_path / "live-key.pem"
+    live.write_bytes(cert.read_bytes())
+    live_key.write_bytes(key.read_bytes())
+
+    harness = await daemon(
+        tmp_path / "run", tls=ws.tls_context(live, live_key), tls_cert=live, tls_key=live_key
+    )
+    try:
+        async with websockets.connect(
+            f"wss://127.0.0.1:{harness.port}/mcp", ssl=_trusting(cert)
+        ):
+            pass
+
+        # Renew in place, the way certbot does: same paths, new contents.
+        renewed_cert, renewed_key = _mint(tmp_path, "renewed")
+        live.write_bytes(renewed_cert.read_bytes())
+        live_key.write_bytes(renewed_key.read_bytes())
+
+        await harness.gateway.reload()
+
+        # The new certificate is served...
+        async with websockets.connect(
+            f"wss://127.0.0.1:{harness.port}/mcp", ssl=_trusting(renewed_cert)
+        ) as socket:
+            client = Client(socket)
+            assert (await client.initialize())["serverInfo"]["name"]
+            await client.close()
+        # ...and the old one is not, which is what "picked up" has to mean.
+        with pytest.raises(ssl.SSLCertVerificationError):
+            await websockets.connect(f"wss://127.0.0.1:{harness.port}/mcp", ssl=_trusting(cert))
+    finally:
+        await harness.close()
+
+
+async def test_a_pair_that_will_not_load_refuses_the_reload_and_keeps_serving(
+    tmp_path, minted, other
+) -> None:
+    """The failure that matters: half a renewal, landing while the daemon is up.
+
+    Nothing may change -- not the certificate, and not the catalogue either, because a
+    reload that applied one of its inputs and rejected another would be a reload that did
+    half of what it said.
+    """
+    live = tmp_path / "live.pem"
+    live_key = tmp_path / "live-key.pem"
+    live.write_bytes(minted[0].read_bytes())
+    live_key.write_bytes(minted[1].read_bytes())
+
+    harness = await daemon(
+        tmp_path / "run", tls=ws.tls_context(live, live_key), tls_cert=live, tls_key=live_key
+    )
+    try:
+        # A key from a different certificate: the mistake renewal actually makes.
+        live_key.write_bytes(other[1].read_bytes())
+
+        answer = await harness.gateway.reload()
+        text = answer["content"][0]["text"]
+        assert "reload refused, nothing changed" in text
+        assert str(live) in text, "the refusal names the pair it could not load"
+
+        # Still serving the certificate it started with.
+        async with websockets.connect(
+            f"wss://127.0.0.1:{harness.port}/mcp", ssl=_trusting(minted[0])
+        ) as socket:
+            client = Client(socket)
+            assert (await client.initialize())["serverInfo"]["name"]
+            await client.close()
+    finally:
+        await harness.close()
+
+
+async def test_a_reload_does_not_drop_the_clients_already_attached(tmp_path, minted) -> None:
+    """A TLS session keeps the certificate it was established with, and its socket."""
+    live = tmp_path / "live.pem"
+    live_key = tmp_path / "live-key.pem"
+    live.write_bytes(minted[0].read_bytes())
+    live_key.write_bytes(minted[1].read_bytes())
+
+    harness = await daemon(
+        tmp_path / "run", tls=ws.tls_context(live, live_key), tls_cert=live, tls_key=live_key
+    )
+    try:
+        async with websockets.connect(
+            f"wss://127.0.0.1:{harness.port}/mcp", ssl=_trusting(minted[0])
+        ) as socket:
+            client = Client(socket)
+            await client.initialize()
+
+            renewed_cert, renewed_key = _mint(tmp_path, "renewed")
+            live.write_bytes(renewed_cert.read_bytes())
+            live_key.write_bytes(renewed_key.read_bytes())
+            await harness.gateway.reload()
+
+            # The same connection, after the rotation, still answers.
+            assert "gateway__list_backends" in await client.tool_names()
+            await client.close()
+    finally:
+        await harness.close()
+
+
+def test_plaintext_has_nothing_to_reload(tmp_path) -> None:
+    """`None` is "nothing to do", not "it failed" -- and it must not raise."""
+    server = ws.GatewayServer(lambda *_: None, lambda *_: None, port=0)
+    server.check_tls()
+    assert server.reload_tls() is None
+    assert not server.reloadable_tls
+
+
+def test_a_context_built_elsewhere_is_not_reloadable(minted) -> None:
+    """Handed a context and no paths, there is nothing on disk to go back to."""
+    server = ws.GatewayServer(lambda *_: None, lambda *_: None, port=0, tls=ws.tls_context(*minted))
+    assert server.tls and not server.reloadable_tls
+    assert server.reload_tls() is None

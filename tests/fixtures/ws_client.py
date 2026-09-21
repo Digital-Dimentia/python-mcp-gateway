@@ -167,6 +167,8 @@ async def daemon(
     access_key: str | None = None,
     allow_unauthenticated: bool = False,
     tls: Any = None,
+    tls_cert: Any = None,
+    tls_key: Any = None,
 ) -> Harness:
     """Write both config files into `tmp_path` and start a daemon.
 
@@ -194,6 +196,12 @@ async def daemon(
         port=port,
     )
     await gateway.start(
-        access_key=access_key, allow_unauthenticated=allow_unauthenticated, tls=tls
+        access_key=access_key,
+        allow_unauthenticated=allow_unauthenticated,
+        tls=tls,
+        # The paths behind the context, when a test means to reload them. Without these a
+        # daemon serves TLS perfectly well and simply has nothing to re-read.
+        tls_cert=tls_cert,
+        tls_key=tls_key,
     )
     return Harness(gateway, access_key)

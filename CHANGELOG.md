@@ -9,6 +9,21 @@ nobody reads.
 
 ## Unreleased
 
+**Renewing a TLS certificate no longer needs a restart.** The pair was read once at startup,
+so picking up a 90-day ACME renewal meant restarting the daemon — which drops every attached
+client, a worse outage than the one the renewal was avoiding. A reload (`SIGHUP`,
+`gateway__reload_config`, or Reload in the UI) now re-reads the certificate along with
+`servers.yaml` and `gateway.env`: new handshakes get the new certificate, and sessions
+already open keep the one they started with until they end. Put a reload in your renewal
+hook and the rotation is invisible.
+
+A pair that will not load **refuses the whole reload** — the old certificate keeps serving,
+the catalogue is not touched either, and the log names the pair. The new one is proved into
+a throwaway context before the live one is touched, because `load_cert_chain` reads the
+certificate, then the key, then checks they match: doing that straight onto a serving socket
+would let half a renewal replace the certificate and not the key, leaving a daemon that
+could no longer complete a handshake with anyone.
+
 **A page for people writing MCP servers, rather than running this one.**
 [SERVER_AUTHORS.md](SERVER_AUTHORS.md) is the whole backend-facing contract in one place: it
 opens by saying that a conforming server needs no changes at all, then lists what the gateway
