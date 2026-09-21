@@ -62,7 +62,7 @@ struct Inner {
     connection: Mutex<Connection>,
     /// Bumped to ask the session loop to tear down what it is running and start again from
     /// the settings. A `watch` rather than a flag because the loop has to be interruptible
-    /// *while awaiting*: a child's stderr does not close because somebody pressed Apply.
+    /// *while awaiting*: a child's stderr does not close because somebody pressed Connect.
     reconnect: tokio::sync::watch::Sender<u64>,
     /// Whether the loop should stay stopped once it has stopped.
     ///
@@ -279,8 +279,8 @@ fn conn_disconnect(shell: State<'_, Shell>) -> Status {
 // `ssh` holding a port forward to a gateway somebody else is running. They are more alike
 // than they look. Both end in a port on `127.0.0.1` that speaks the gateway's protocol, both
 // die in ways that want a backoff, and both have to be interruptible by somebody pressing
-// Apply in the Connection screen. What differs is spelled out in the two functions below and
-// nowhere else.
+// Connect or Disconnect in the Connection screen. What differs is spelled out in the two
+// functions below and nowhere else.
 
 /// Why an inner loop returned.
 enum Outcome {
@@ -421,7 +421,7 @@ async fn run_local<R: tauri::Runtime>(
         };
 
         // Runs until the child's stderr closes, which is how this loop learns the child is
-        // going away -- or until somebody presses Apply, which is the other way out.
+        // going away -- or until somebody presses Connect or Disconnect, the other way out.
         let switched = {
             let recorder = inner.clone();
             let pump = async {
@@ -673,7 +673,7 @@ fn last_word(inner: &Arc<Inner>) -> Option<String> {
         .cloned()
 }
 
-/// Sleep, unless somebody presses Apply first. `true` means they did.
+/// Sleep, unless somebody presses Connect or Disconnect first. `true` means they did.
 async fn wait_or_switch(
     how_long: std::time::Duration,
     rx: &mut tokio::sync::watch::Receiver<u64>,

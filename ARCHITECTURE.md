@@ -39,6 +39,8 @@ flowchart TB
 |---|---|
 | [`cli.py`](src/mcp_gateway/cli.md) | argparse, logging, signals, path resolution. The only module that touches `sys.argv` |
 | [`transport_ws.py`](src/mcp_gateway/transport_ws.md) | the WS server: bind, path routing, access key, origin, keepalive |
+| [`transport_http.py`](src/mcp_gateway/transport_http.md) | MCP's Streamable HTTP, on the same port and socket — a client that speaks it needs no bridge |
+| [`portfile.py`](src/mcp_gateway/portfile.md) | publishes the bound port for a supervisor to read, so `--port 0` is knowable without parsing a log line |
 | [`session.py`](src/mcp_gateway/session.md) | one `/mcp` connection's state and method table |
 | [`admin_channel.py`](src/mcp_gateway/admin_channel.md) | one `/admin` connection: a plain JSON-RPC table for the UI |
 | [`webui.py`](src/mcp_gateway/webui.md) | the admin UI's static assets, on `/ui` |
@@ -51,6 +53,8 @@ flowchart TB
 | [`catalogue.py`](src/mcp_gateway/catalogue.md) | the merged, namespaced listing |
 | [`router.py`](src/mcp_gateway/router.md) | forwards one call, translates what comes back |
 | [`admin.py`](src/mcp_gateway/admin.md) | the `gateway__*` meta-tools, shared with `/admin` |
+| [`clipboard.py`](src/mcp_gateway/clipboard.md) | the session briefing: what the bench did, written to be handed to a model |
+| [`toon.py`](src/mcp_gateway/toon.md) | the JSON data model rendered for a model to read rather than a parser, which is what the briefing quotes |
 | [`notifications.py`](src/mcp_gateway/notifications.md) | backend→client relay, and its debounce |
 | [`config.py`](src/mcp_gateway/config.md) | `servers.yaml` → specs. No secrets |
 | [`config_writer.py`](src/mcp_gateway/config_writer.md) | the other direction: the only module that writes `servers.yaml` |
@@ -189,7 +193,8 @@ name `readOne` (one of my values buys a member) or `narrows` (one of my values b
 listing), which is how a cascade is published rather than inferred. Every rule is in
 [`webui.md`](src/mcp_gateway/webui.md); the version written for someone implementing a server
 against it is in
-[GET_STARTED.md](GET_STARTED.md#injectable-values-in-your-own-server).
+[GET_STARTED.md](GET_STARTED.md#injectable-values-in-your-own-server), and
+[SERVER_AUTHORS.md](SERVER_AUTHORS.md) is the whole backend-facing contract in one page.
 
 ## The desktop shell
 

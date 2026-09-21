@@ -79,11 +79,13 @@ make run-dev
 ```
 
 It prints an admin UI URL, with no key on it: `run-dev` defaults to `NO_KEY=1`, because
-there is nothing behind this socket worth locking. Open it, and you have one backend, `zoo`,
-publishing thirteen tools covering every JSON Schema construct a form can meet — including
-the four it is *meant* to decline — plus five prompts, eight resources and four URI
-templates. It touches no network and holds no credential, so nothing you click there can
-cost you anything.
+there is nothing behind this socket worth locking. Open it, and you have two backends. `zoo`
+publishes fourteen tools covering every JSON Schema construct a form can meet — including
+the four it is *meant* to decline — plus six prompts, eight resources and five URI
+templates. `panel` publishes the same small fleet three ways: with a declarative control
+surface, with an HTML one, and with no panel at all, which is what makes the difference
+between them legible. Neither touches the network or holds a credential, so nothing you
+click there can cost you anything.
 
 The zoo is also the reference implementation for the last section of this document: it is
 what a server looks like when it publishes its own vocabularies. See
@@ -446,7 +448,7 @@ wiring on either side.
 `make run-dev` publishes all of the above: the flat `zoo://animals` pair, the three-level
 continent cascade, `completion/complete` with `context.arguments`, and a prompt
 (`zoo-prompt-animal`) whose `id` argument the same picks fill — so six picks in `many` mode
-expand six briefs. [`examples/zoo_server.py`](examples/zoo_server.py) is 1,900 lines of
+expand six briefs. [`examples/zoo_server.py`](examples/zoo_server.py) is ~1,900 lines of
 fixture with the reasoning written beside each part; the UI's side of the contract is in
 [`webui.md`](src/mcp_gateway/webui.md).
 
@@ -743,6 +745,9 @@ anything that has it.
 
 ## Where to go next
 
+- [SERVER_AUTHORS.md](SERVER_AUTHORS.md) — the same contract as the section above, written
+  for somebody implementing a server rather than running a gateway. Hand this one to another
+  team.
 - [README.md](README.md) — the pitch, and the reference for flags and make targets
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the module map, startup order, and the two things the
   design turns on

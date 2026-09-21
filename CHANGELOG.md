@@ -9,6 +9,14 @@ nobody reads.
 
 ## Unreleased
 
+**A page for people writing MCP servers, rather than running this one.**
+[SERVER_AUTHORS.md](SERVER_AUTHORS.md) is the whole backend-facing contract in one place: it
+opens by saying that a conforming server needs no changes at all, then lists what the gateway
+will *use* if you publish it — the listing-and-template pair behind Injectable values, MCP
+Apps panels, completions, logging, subscriptions — and what it does to your server either
+way, from the `__` rename to walking your pagination. The long form stays in GET_STARTED.md,
+which is where somebody running a gateway will look; this is the page you hand another team.
+
 **The desktop app can now disconnect, and a disconnected window is not a sealed one.** There was no third verb: Save wrote settings and
 started nothing, Connect started from them, and nothing could *stop*. So a tunnel opened in
 that window could only be closed by quitting the app, and saving a switch back to local mode

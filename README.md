@@ -29,6 +29,11 @@ mcp-gateway daemon ◄─────────┴─────────�
 backend, attach a client, work the admin UI — and how to make your own MCP server publish
 the resources and templates that light up the UI's *Injectable values* column.
 
+**Writing an MCP server rather than running a gateway?**
+[SERVER_AUTHORS.md](SERVER_AUTHORS.md). The short answer is that a conforming server needs
+no changes at all; that page is the list of things this gateway will *use* if you publish
+them, and the things it does to your server either way.
+
 ## Desktop app
 
 `src/desktop/` builds **MCP-Gateway.app**: the daemon, its backends and the admin UI in one
@@ -182,7 +187,8 @@ what came back from invoking it, and — in **Injectable values** — the sets o
 backend publishes for its own parameters, each one a chip that fills the field it belongs in.
 That column activates for any server that pairs a listing resource with a URI template;
 [GET_STARTED.md](GET_STARTED.md#injectable-values-in-your-own-server) is how to make your own
-do it.
+do it, and [SERVER_AUTHORS.md](SERVER_AUTHORS.md) is the same thing written for somebody who
+has a server and no gateway.
 
 - **The forms are generated from each tool's own `inputSchema`** — typed inputs, enum
   dropdowns, required markers, bounds and array editors. A schema using `if`/`then`/`else`,
@@ -197,6 +203,10 @@ do it.
   beside it.
 - **Nothing in the UI can read or write a credential.** When a backend is missing one, the UI
   names the key — `SLACK_BOT_TOKEN`, say — and you add the line to `gateway.env` yourself.
+- **A backend can ship its own control surface.** MCP Apps (SEP-1865): a tool naming a
+  `ui://` resource gets that interface drawn in the results column instead of a JSON blob —
+  either a declarative one the gateway renders, or a document the server wrote, run in a
+  sandbox from a single-use URL that carries no credential and expires in seconds.
 - **Clipboard** turns the whole bench session — every call with its arguments and its answer,
   and every value offered and picked — into one document for an agent. The daemon renders it,
   and `gateway__clipboard` serves the same text on `/mcp`, so there is one renderer and
@@ -205,12 +215,14 @@ do it.
 To try it without configuring a real integration first:
 
 ```bash
-make run-dev        # starts examples/zoo_server.py, then open the URL it prints
+make run-dev        # starts the example servers, then open the URL it prints
 ```
 
-That is a local MCP server whose only purpose is to be rendered: thirteen tools covering
-every JSON Schema construct a form can meet, five prompts, eight resources and four URI
-templates. One of those prompts, `zoo-prompt-animal`, takes an `id` from the `zoo://animals`
+Those are two local MCP servers whose only purpose is to be rendered. The schema zoo is
+fourteen tools covering every JSON Schema construct a form can meet, six prompts, eight
+resources and five URI templates; beside it, `examples/panel_server.py` ships the same data
+three ways — a declarative panel, an HTML one, and no panel at all — which is the comparison
+worth having. One of those prompts, `zoo-prompt-animal`, takes an `id` from the `zoo://animals`
 listing and expands to a brief filled with that animal — which is what the UI's Variables
 column is for.
 
@@ -270,7 +282,8 @@ launchd owns restart and log rotation; the daemon does not daemonize itself.
 | | |
 |---|---|
 | `make venv` / `sync` | provision the repo-local venv (stamped: re-running is free) |
-| `make lint` / `docs-check` / `test` / `build` | the CI gate, in that order |
+| `make lint` / `docs-check` / `test` / `build` | the daemon's CI gate, in that order |
+| `make tauri-check` | the desktop shell's: fmt, clippy and the Rust tests. Its own workflow, on three platforms |
 | `make check` | validate `servers.yaml` + `gateway.env`, bind nothing |
 | `make run` | start the daemon |
 | `make run-dev` | start it against `servers.dev.yaml`: the schema zoo, for the UI |
@@ -282,8 +295,8 @@ Behind a TLS-intercepting proxy, pass `PIP_TRUSTED_HOST="pypi.org files.pythonho
 
 ## Architecture
 
-See [GET_STARTED.md](GET_STARTED.md) to use it, and [ARCHITECTURE.md](ARCHITECTURE.md) for
-the map. Every module has a sibling `.md` beside
+See [GET_STARTED.md](GET_STARTED.md) to use it, [SERVER_AUTHORS.md](SERVER_AUTHORS.md) to
+write a backend for it, and [ARCHITECTURE.md](ARCHITECTURE.md) for the map. Every module has a sibling `.md` beside
 it carrying the reasoning, and `make docs-check` fails if one goes missing.
 
 ## License

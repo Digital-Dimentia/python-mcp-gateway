@@ -7,8 +7,8 @@ verbatim apart from this header and `zoo-prompt-animal`, which was added here. P
 backend.
 
 With `MOCK_MCP_SCHEMA_ZOO=1` -- which `servers.dev.yaml` sets, because `env_mode: curated`
-means this child inherits nothing the file does not name -- it publishes thirteen tools,
-five prompts, eight resources and four URI templates. One per construct rather than one
+means this child inherits nothing the file does not name -- it publishes fourteen tools,
+six prompts, eight resources and five URI templates. One per construct rather than one
 kitchen sink, so a renderer that gets one wrong fails visibly on that one:
 
     zoo-types      every JSON type bare, plus an untyped and a union-typed property
