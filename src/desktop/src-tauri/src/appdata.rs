@@ -319,7 +319,10 @@ mod tests {
         write_pidfile(&pidfile, std::process::id()).expect("a record");
 
         assert_eq!(stop_recorded(&pidfile, Path::new("/bin/sleep")), None);
-        assert!(!pidfile.exists(), "a record naming a stranger is not worth keeping");
+        assert!(
+            !pidfile.exists(),
+            "a record naming a stranger is not worth keeping"
+        );
     }
 
     #[cfg(unix)]
@@ -340,7 +343,10 @@ mod tests {
     #[test]
     fn nothing_recorded_is_nothing_to_do() {
         let root = scratch("stop-empty");
-        assert_eq!(stop_recorded(&root.join("absent.pid"), Path::new("/bin/sleep")), None);
+        assert_eq!(
+            stop_recorded(&root.join("absent.pid"), Path::new("/bin/sleep")),
+            None
+        );
     }
 
     /// A stand-in for the bundle's `seed/` directory.

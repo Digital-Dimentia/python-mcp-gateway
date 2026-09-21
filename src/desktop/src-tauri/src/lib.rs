@@ -660,7 +660,11 @@ async fn serve_panel(port: Option<u16>, path: &str) -> tauri::http::Response<Vec
         .status(200)
         .header(
             "Content-Type",
-            if panel.content_type.is_empty() { "text/html; charset=utf-8" } else { &panel.content_type },
+            if panel.content_type.is_empty() {
+                "text/html; charset=utf-8"
+            } else {
+                &panel.content_type
+            },
         )
         // Verbatim, never composed here. See `panelframe`.
         .header("Content-Security-Policy", &panel.csp)
@@ -696,9 +700,10 @@ fn refusal(why: &str) -> tauri::http::Response<Vec<u8>> {
 fn watch_for_a_signal(handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
-        let (Ok(mut term), Ok(mut interrupt)) =
-            (signal(SignalKind::terminate()), signal(SignalKind::interrupt()))
-        else {
+        let (Ok(mut term), Ok(mut interrupt)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) else {
             // A handler this process cannot install is not a reason to refuse to start; it
             // is one more way to end up in the Force Quit case, which the pidfile covers.
             return;

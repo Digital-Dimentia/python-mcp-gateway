@@ -128,7 +128,10 @@ pub struct Panel {
 /// step towards this endpoint quietly depending on one.
 pub async fn fetch(port: u16, token: &str) -> io::Result<Panel> {
     if !is_token(token) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a panel token"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a panel token",
+        ));
     }
     let raw = tokio::time::timeout(FETCH_TIMEOUT, async {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).await?;
@@ -150,7 +153,10 @@ pub async fn fetch(port: u16, token: &str) -> io::Result<Panel> {
             }
             raw.extend_from_slice(&chunk[..read]);
             if raw.len() > MAX_BODY {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "panel is too large"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "panel is too large",
+                ));
             }
         }
         Ok::<Vec<u8>, io::Error>(raw)
@@ -194,7 +200,12 @@ fn parse(raw: &[u8]) -> io::Result<Panel> {
             _ => {}
         }
     }
-    Ok(Panel { status, body, csp, content_type })
+    Ok(Panel {
+        status,
+        body,
+        csp,
+        content_type,
+    })
 }
 
 #[cfg(test)]
@@ -239,7 +250,10 @@ mod tests {
     fn the_framable_url_names_this_process_rather_than_the_daemon() {
         let url = framable("tok123");
         assert!(url.contains("tok123"));
-        assert!(!url.contains("127.0.0.1"), "the window never names the daemon's address");
+        assert!(
+            !url.contains("127.0.0.1"),
+            "the window never names the daemon's address"
+        );
         assert!(url.starts_with(SCHEME) || url.starts_with("http://panel.localhost"));
     }
 
@@ -279,7 +293,9 @@ mod tests {
 
     /// A listener that answers one request with `response` and says what it was asked.
     async fn one_shot(response: &'static [u8]) -> (u16, tokio::task::JoinHandle<String>) {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("bound");
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bound");
         let port = listener.local_addr().expect("an address").port();
         let handle = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("one connection");
@@ -302,10 +318,16 @@ mod tests {
         let panel = fetch(port, "tok123").await.expect("a panel");
         let request = asked.await.expect("the listener");
 
-        assert!(request.starts_with("GET /panel/tok123 HTTP/1.1\r\n"), "{request:?}");
+        assert!(
+            request.starts_with("GET /panel/tok123 HTTP/1.1\r\n"),
+            "{request:?}"
+        );
         // The token in the path is the credential -- see `panels.md`. A key here would be a
         // second one, and the first step towards this endpoint depending on it.
-        assert!(!request.to_ascii_lowercase().contains("authorization"), "{request:?}");
+        assert!(
+            !request.to_ascii_lowercase().contains("authorization"),
+            "{request:?}"
+        );
         assert_eq!(panel.status, 200);
         assert_eq!(panel.csp, "sandbox allow-scripts; default-src 'none'");
         assert_eq!(panel.body, b"<p>panel</p>\n");
