@@ -515,18 +515,79 @@ def fetch_interpreter_builtin(out: Path) -> str:
         tarball = Path(scratch) / asset
         log(f"downloading {url}")
         digest = hashlib.sha256()
+        received = 0
         with urllib.request.urlopen(url, timeout=60) as response, tarball.open("wb") as sink:
+            served_from = response.geturl()
+            content_type = response.headers.get("Content-Type", "")
+            length = response.headers.get("Content-Length")
             while chunk := response.read(1 << 20):
                 digest.update(chunk)
                 sink.write(chunk)
+                received += len(chunk)
         if digest.hexdigest() != expected:
-            raise SystemExit(
-                f"bundle_python: {asset} has sha256 {digest.hexdigest()},\n"
-                f"  expected {expected}. Refusing to unpack it."
-            )
+            # Kept, so the thing that was refused can be looked at: `file` and `head` on it
+            # settle "proxy page or truncated download" in a second.
+            kept = Path(tempfile.gettempdir()) / f"bundle_python-rejected-{asset}"
+            shutil.copyfile(tarball, kept)
+            raise SystemExit(mismatch_message(
+                asset=asset,
+                expected=expected,
+                actual=digest.hexdigest(),
+                received=received,
+                length=int(length) if length and length.isdigit() else None,
+                content_type=content_type,
+                served_from=served_from,
+                head=tarball.read_bytes()[:2],
+                kept=kept,
+            ))
         log(f"sha256 ok: {asset}")
         adopt_interpreter(out, tarball)
     return asset
+
+
+def mismatch_message(
+    *,
+    asset: str,
+    expected: str,
+    actual: str,
+    received: int,
+    length: int | None,
+    content_type: str,
+    served_from: str,
+    head: bytes,
+    kept: Path,
+) -> str:
+    """Why a download failed its hash, in the order that is actually likely.
+
+    A wrong hash is almost never a tampered release. It is a download that stopped early, or
+    a proxy, captive portal or SSO wall that answered with a page of HTML -- and "sha256
+    mismatch" alone reads as a bad pin, which sends a person to the wrong fix. So the checks
+    that tell those apart come first, and the hash is the last thing said.
+    """
+    lines = [f"bundle_python: {asset} failed its sha256 check. Refusing to unpack it."]
+    if length is not None and received < length:
+        lines.append(
+            f"  The download stopped early: {received:,} of {length:,} bytes. "
+            "Retry, or fetch it by hand and pass --interpreter."
+        )
+    elif head != b"\x1f\x8b":
+        lines.append(
+            f"  What arrived is not a gzip archive ({received:,} bytes, "
+            f"Content-Type {content_type or 'unset'!r}). A proxy, captive portal or SSO page "
+            "answered instead of the release host."
+        )
+    else:
+        lines.append(
+            f"  A complete gzip file of {received:,} bytes arrived, but not the pinned one. "
+            "A mirror serving a different build, or a pin that is wrong for this platform."
+        )
+    lines += [
+        f"  served from: {served_from}",
+        f"  expected:    {expected}",
+        f"  got:         {actual}",
+        f"  kept at:     {kept}",
+    ]
+    return "\n".join(lines)
 
 
 def resolve_fetcher(requested: str) -> str:

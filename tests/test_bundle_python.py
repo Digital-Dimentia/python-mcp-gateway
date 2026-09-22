@@ -511,6 +511,43 @@ def test_a_download_with_the_wrong_hash_is_never_unpacked(tmp_path: Path, monkey
     assert not out.exists()
 
 
+def test_a_hash_mismatch_says_which_kind_of_bad_download_it_was(tmp_path: Path) -> None:
+    """"sha256 mismatch" alone sends a person to the pin. It is usually the network."""
+    common = dict(
+        asset="cpython.tar.gz", expected="a" * 64, actual="b" * 64,
+        served_from="https://example/x", kept=tmp_path / "kept",
+    )
+
+    cut_off = bundle_python.mismatch_message(
+        received=10, length=100, content_type="application/octet-stream",
+        head=b"\x1f\x8b", **common,
+    )
+    assert "stopped early: 10 of 100 bytes" in cut_off
+
+    portal = bundle_python.mismatch_message(
+        received=900, length=900, content_type="text/html", head=b"<!", **common,
+    )
+    assert "not a gzip archive" in portal and "text/html" in portal
+
+    other_build = bundle_python.mismatch_message(
+        received=900, length=None, content_type="", head=b"\x1f\x8b", **common,
+    )
+    assert "not the pinned one" in other_build
+
+    for message in (cut_off, portal, other_build):
+        assert "https://example/x" in message and str(tmp_path / "kept") in message
+
+
+def test_an_html_page_in_place_of_the_tarball_is_named_as_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The captive-portal case, end to end through a `file://` mirror."""
+    archive, _ = mirror_with(tmp_path, monkeypatch)
+    archive.write_text("<!doctype html><title>Sign in to the network</title>")
+    with pytest.raises(SystemExit, match="not a gzip archive"):
+        bundle_python.fetch_interpreter_builtin(tmp_path / "out")
+
+
 def test_auto_is_uv_when_there_is_one_and_builtin_when_not(monkeypatch) -> None:
     monkeypatch.setattr(bundle_python.shutil, "which", lambda name: "/usr/bin/uv")
     assert bundle_python.resolve_fetcher("auto") == "uv"
