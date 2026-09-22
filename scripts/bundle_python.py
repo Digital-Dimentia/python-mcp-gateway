@@ -107,7 +107,8 @@ DEFAULT_VERSION = "3.13"
 #: but the tarball someone carried in.
 PBS_RELEASE = "20260901"
 PBS_PYTHON = "3.13.15"
-PBS_DOWNLOAD = "https://github.com/astral-sh/python-build-standalone/releases/download"
+PBS_GITHUB_BASE =  os.getenv("GITHUB_PROXY_BASE", "https://github.com")
+PBS_DOWNLOAD = PBS_GITHUB_BASE / "astral-sh" / "python-build-standalone" / "releases" / "download"
 PBS_SHA256 = {
     "aarch64-apple-darwin": "d3904bd6a072246e07aa0bdadee9a14e80521e42a943c0848059feb16a2816dc",
     "x86_64-apple-darwin": "f712a9143c8a5d248438ec7921a0b48d548bca4f1337d33c690d28c2d0504137",
