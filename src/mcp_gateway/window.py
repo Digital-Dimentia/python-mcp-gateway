@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,34 @@ logger = logging.getLogger(__name__)
 #: The extra that carries the toolkit. Named in the refusal rather than described, so the
 #: line can be pasted.
 DESKTOP_EXTRA = "pip install 'python-mcp-gateway[desktop]'"
+
+#: What to do when pywebview is installed but has no engine to render into. Per platform,
+#: because the answer is completely different on each and a generic sentence would help
+#: nobody.
+#:
+#: pywebview declares its macOS and Windows bindings itself -- pyobjc under
+#: `sys_platform == "darwin"`, pythonnet under `"win32"` -- so `pip` alone is enough on
+#: both, and what can still be missing is a *system* component. On Linux it declares
+#: nothing: the bindings are its own `gtk` and `qt` extras, so a plain install succeeds and
+#: then has nothing to draw with. That asymmetry is the whole reason this dictionary exists.
+#: See `window.md`.
+NO_ENGINE_HELP = {
+    "linux": (
+        "pywebview needs a GUI backend, which it does not install on Linux. Either "
+        "`pip install 'pywebview[qt]'` (binary wheels, no system packages) or "
+        "`pip install 'pywebview[gtk]'` plus the distribution's gobject-introspection and "
+        "WebKit2GTK packages (on Debian/Ubuntu: libgirepository1.0-dev gir1.2-webkit2-4.1)."
+    ),
+    "win32": (
+        "pywebview needs the WebView2 runtime, which ships with Edge and is present on "
+        "Windows 11 and most Windows 10. Install the Evergreen Runtime from Microsoft if "
+        "this machine is missing it."
+    ),
+    "darwin": (
+        "pywebview needs PyObjC, which it installs itself on macOS -- so this usually means "
+        "a broken install: try `pip install --force-reinstall pywebview`."
+    ),
+}
 
 #: How long `serve_in_background` waits for the socket. Generous: the backends start before
 #: the bind, and a cold `npx` backend on a slow disk is the reason this is not five seconds.
@@ -265,6 +294,7 @@ def run() -> None:
         raise SystemExit(EXIT_REFUSED) from None
 
     logger.info("serving %s", session.url)
+    refused = False
     try:
         width, height = WINDOW_SIZE
         webview.create_window(
@@ -281,8 +311,19 @@ def run() -> None:
         # Ctrl+C in the terminal that launched the window. Swallowed for the reason the
         # daemon swallows it: it is a way of asking to stop, not a fault.
         pass
+    except webview.WebViewException as no_engine:
+        # pywebview finds its rendering engine lazily, so "installed but nothing to draw
+        # with" surfaces here rather than at import -- after the backends have started. The
+        # `finally` below still reaps them; what this adds is the sentence that says which
+        # package is missing, since pywebview's own message names every toolkit it supports
+        # rather than the one this platform wants.
+        logger.error("%s", no_engine)
+        logger.error("%s", NO_ENGINE_HELP.get(sys.platform, f"see {DESKTOP_EXTRA}"))
+        refused = True
     finally:
         session.stop()
+    if refused:
+        raise SystemExit(EXIT_REFUSED)
 
 
 if __name__ == "__main__":

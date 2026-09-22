@@ -20,6 +20,7 @@ What these pin, and what breaks when one fails:
 from __future__ import annotations
 
 import ast
+import importlib.metadata
 import json
 import sys
 import tomllib
@@ -210,6 +211,35 @@ def test_the_gui_toolkit_is_not_a_base_dependency() -> None:
     assert any(spec.startswith("pywebview") for spec in extras["desktop"])
     assert not any(spec.startswith("pywebview") for spec in pyproject["project"]["dependencies"])
     assert pyproject["project"]["scripts"]["mcp-gateway-desktop"] == "mcp_gateway.window:run"
+
+
+def test_every_platform_has_an_answer_for_a_missing_gui_backend() -> None:
+    """pywebview finds its engine at `start()`, not at import, so this is the only warning
+    a Linux user gets -- after the gateway has already come up.
+
+    Checked against pywebview's *declared* dependencies rather than against prose, because
+    the fact that matters is exactly the one in the metadata: it ships bindings for macOS
+    and Windows under `sys_platform` markers and ships none for Linux. If a future release
+    adds a Linux marker, this fails and the docs stop being wrong.
+    """
+    assert set(window.NO_ENGINE_HELP) == {"linux", "win32", "darwin"}
+    assert "pywebview[qt]" in window.NO_ENGINE_HELP["linux"]
+    assert "WebView2" in window.NO_ENGINE_HELP["win32"]
+
+    try:
+        distribution = importlib.metadata.distribution("pywebview")
+    except importlib.metadata.PackageNotFoundError:
+        # CI installs `[dev]`, not `[desktop]`. The assertions above still ran; only the
+        # half that cross-checks pywebview's metadata needs pywebview to be present.
+        pytest.skip("pywebview is not installed (the desktop extra)")
+    requires = distribution.requires or []
+    markers = [spec for spec in requires if "sys_platform" in spec]
+    assert any('"darwin"' in spec for spec in markers), "pyobjc is no longer automatic"
+    assert any('"win32"' in spec for spec in markers), "pythonnet is no longer automatic"
+    assert not any('"linux"' in spec for spec in markers), (
+        "pywebview now ships a Linux backend: NO_ENGINE_HELP and window.md both overstate "
+        "what the user has to install"
+    )
 
 
 def test_the_missing_toolkit_refusal_names_what_to_install() -> None:

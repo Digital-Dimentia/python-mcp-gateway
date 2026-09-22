@@ -17,7 +17,10 @@ onto a machine with no Python at all — but it is built with `cargo`, and in a 
 environment where Rust is unapproved software and crate downloads are blocked, that build
 cannot begin. This one is a wheel and an extra. It gives up the bundled interpreter, remote
 mode, and the supervisor that would restart a gateway that died; what it keeps is the
-window. The daemon needed no change to host it: a page served from `127.0.0.1` is
+window. On macOS and Windows the extra is the whole install; **on Linux pywebview ships no
+GUI backend of its own**, so one of `pywebview[qt]` or `pywebview[gtk]` has to go in beside
+it — `window.md` has the per-platform table, and the window says which one is missing
+rather than leaving you with pywebview's list of every toolkit it supports. The daemon needed no change to host it: a page served from `127.0.0.1` is
 same-origin with the sockets it dials, so the browser transport the UI has always shipped is
 the one the window uses, and panels frame with no custom URI scheme.
 

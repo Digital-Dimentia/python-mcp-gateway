@@ -19,6 +19,29 @@ This one answers "how does someone who is not allowed a compiler run this".
 Both drive the same daemon and serve the same UI bytes. Nothing in `src/desktop/` changed
 to make room for this, and nothing here is reachable from there.
 
+## What each platform needs
+
+`pip install 'python-mcp-gateway[desktop]'` is the whole story on macOS and Windows. It is
+**not** on Linux, and the asymmetry is pywebview's own dependency metadata rather than a
+choice made here:
+
+| | What pip installs | What must already be there |
+|---|---|---|
+| **macOS** | PyObjC — declared under `sys_platform == "darwin"` | Nothing. WKWebView is part of the OS. |
+| **Windows** | pythonnet — declared under `sys_platform == "win32"` | The **WebView2 runtime**, which ships with Edge and is present on Windows 11 and most Windows 10. Microsoft's Evergreen Runtime installer is the fix if it is not. |
+| **Linux** | *nothing* | A GUI backend, installed separately: either `pip install 'pywebview[qt]'` (PyQt6 + QtWebEngine, binary wheels, no system packages) or `pip install 'pywebview[gtk]'` **plus** the distribution's gobject-introspection and WebKit2GTK packages — on Debian/Ubuntu `libgirepository1.0-dev` and `gir1.2-webkit2-4.1`. |
+
+The Linux row is the one that bites, because nothing fails at install time. pywebview finds
+its rendering engine lazily, at `webview.start()`, so a plain install succeeds, the gateway
+starts, the backends start, and only then does it raise. `run` catches that
+(`WebViewException`) and prints `NO_ENGINE_HELP` for the platform it is on, because
+pywebview's own message lists every toolkit it supports rather than the one this machine
+wants. The backends are still reaped on the way out.
+
+**In a locked-down environment, prefer the Qt backend.** PyQt6 and PyQt6-WebEngine ship as
+binary wheels, so they need no compiler and no `apt`; the GTK route needs development
+headers that a managed machine often will not have and that pip cannot supply.
+
 ## Why the daemon runs in this process
 
 The Rust host spawns the daemon as a child, and roughly half of its code is about that

@@ -62,11 +62,14 @@ dev = [
 # inside a function so the module stays importable without this installed.
 #
 # pywebview binds the platform's own webview -- WKWebView through pyobjc on macOS,
-# WebKit2GTK on Linux, WebView2 on Windows -- and pulls the pyobjc frameworks itself under
-# its own `sys_platform` markers. Linux additionally needs PyGObject and the system
-# `gir1.2-webkit2` packages, which pip cannot install; that is a documented prerequisite,
-# not a pin. Pinned like the runtime deps rather than floated: it is the thing that decides
-# which webview engine renders the admin UI.
+# WebView2 through pythonnet on Windows, Qt or WebKit2GTK on Linux. It declares the first
+# two itself under `sys_platform` markers, so this extra is the whole install on macOS and
+# Windows. **It declares nothing for Linux**, where the backend is one of pywebview's own
+# `qt`/`gtk` extras and is not installed by this one; that is deliberate -- which of the two
+# is right depends on the machine, and choosing here would force a ~100 MB Qt stack onto
+# every Linux install. `window.py` turns the resulting lazy failure into a per-platform
+# instruction, and `window.md` has the table. Pinned like the runtime deps rather than
+# floated: it is the thing that decides which engine renders the admin UI.
 desktop = [
   "pywebview==6.2.1",
 ]
