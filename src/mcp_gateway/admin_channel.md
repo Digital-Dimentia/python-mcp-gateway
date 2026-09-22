@@ -48,6 +48,7 @@ Authentication is the same as `/mcp`: the same key, checked in the same handshak
 | `admin.backend.restart` | stop and respawn one backend |
 | `admin.clipboard.put` | publish a snapshot of the two right-hand columns |
 | `admin.panel.open` | mint a short-lived, single-use URL for one backend's HTML panel |
+| `admin.tools.hide` | replace which of one backend's tools `tools/list` leaves out |
 
 `admin.reload` and `admin.backend.restart` ship because they are the same code the meta-tools
 already expose to the model. Withholding them from the UI while the model can call them would
@@ -73,6 +74,18 @@ The gateway reads the resource itself rather than accepting HTML from the caller
 trip cheaper, and it would give up the two properties worth having: that the bytes at a panel
 URL are the backend's own answer, and that the policy was built from the `_meta.ui.csp`
 [`ui_apps.py`](ui_apps.md) sanitized rather than from whatever the caller said it was.
+
+`admin.tools.hide` is the one writer here that is **runtime only**. It takes a backend's
+name and the complete set of its own tool names to leave out of `tools/list` on `/mcp`, and
+nothing is written to `servers.yaml` — the selection is gone when the daemon restarts. That
+is why it is not a `changes` key on `admin.backend.update`: that method persists, and giving
+"persisted" and "until restart" separate doors is what keeps anybody from mistaking one for
+the other. It returns the set it now holds and whether that changed, and a change fires
+`notifications/tools/list_changed`. A hidden tool stays callable; this is context economy,
+not access control. See [`visibility.md`](visibility.md).
+
+It is here and not a meta-tool for the same reason the config writers are: a model that
+could hide tools could hide `gateway__backend_health` from the next session to use it.
 
 ## There is no `admin.secrets.set`, and there will not be
 

@@ -83,13 +83,23 @@ class Client:
     async def notify(self, method: str, params: dict | None = None) -> None:
         await self._send({"jsonrpc": "2.0", "method": method, "params": params or {}})
 
-    async def initialize(self, capabilities: dict | None = None, version: str | None = None) -> dict:
+    async def initialize(
+        self,
+        capabilities: dict | None = None,
+        version: str | None = None,
+        client_info: dict | None = None,
+    ) -> dict:
+        """`client_info` overrides the default, for the one thing that reads it.
+
+        `tools/list` is filtered against the hidden sets for everyone except the admin UI's
+        own bench session, which it recognises by `clientInfo.name`. See `visibility.md`.
+        """
         result = await self.call(
             "initialize",
             {
                 "protocolVersion": version or MCP_PROTOCOL_VERSION,
                 "capabilities": capabilities or {},
-                "clientInfo": {"name": "test-client", "version": "0"},
+                "clientInfo": client_info or {"name": "test-client", "version": "0"},
             },
         )
         await self.notify("notifications/initialized")
@@ -143,12 +153,13 @@ class Harness:
         key: str | None = ...,  # type: ignore[assignment]
         capabilities: dict | None = None,
         initialize: bool = True,
+        client_info: dict | None = None,
     ) -> Client:
         websocket = await websockets.connect(self.url(path, key))
         client = Client(websocket)
         self._clients.append(client)
         if initialize:
-            await client.initialize(capabilities)
+            await client.initialize(capabilities, client_info=client_info)
         return client
 
     async def close(self) -> None:

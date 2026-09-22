@@ -16,19 +16,25 @@ table wrong is how a daemon becomes noisy or stale — and neither symptom point
 
 ## The gateway announces its own catalogue changes too
 
-Not everything that changes a listing starts at a backend. Three things here do:
+Not everything that changes a listing starts at a backend. Four things here do:
 
 | Gateway does | Clients hear |
 |---|---|
 | a reload that adds, removes or restarts backends | one `list_changed` per kind, after the whole sweep |
 | `admin.backend.restart` / `gateway__restart_backend` | one `list_changed` per kind |
 | a backend's own `list_changed` | that kind, relayed |
+| `admin.tools.hide`, when it changes the set | `tools/list_changed` only |
 
 The restart row was missing until it was noticed from the outside: the catalogue was
 invalidated and nobody was told, so an operator who edited a backend and restarted it
 watched an open UI go on listing what that backend used to publish, with no way to know it
 was looking at the past. All three kinds, because a restarted backend may have changed any
 of them, and the debounce below means saying three things costs no more than saying one.
+
+The hide row is the first whose cause is an operator rather than a process. It says only
+`tools`, because prompts and resources did not move, and it invalidates nothing: the backend
+published exactly what it did before, and only what the gateway advertises from it changed.
+See [`visibility.md`](visibility.md).
 
 ## Why `list_changed` is debounced
 

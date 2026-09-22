@@ -238,6 +238,10 @@ export class McpSocket extends RpcSocket {
         // one to publish, so a type in it that nothing here draws would be a backend
         // shipping a panel to a host that shows a blank card.
         capabilities: { extensions: { [UI_EXTENSION_ID]: { mimeTypes: PANEL_MIME_TYPES } } },
+        // The name is load-bearing: it is `BENCH_CLIENT` in `src/mcp_gateway/visibility.py`,
+        // and it is what gets this session every tool rather than only the advertised ones.
+        // The header's tool picker is built from this session's `tools/list`, so a filtered
+        // one could never offer a hidden tool back. Change the two together.
         clientInfo: { name: 'mcp-gateway-ui', title: 'MCP Gateway UI', version: '0.1.0' },
       });
       this.serverInfo = result.serverInfo || null;

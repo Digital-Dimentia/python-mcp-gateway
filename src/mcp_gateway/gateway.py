@@ -62,6 +62,7 @@ from mcp_gateway.secrets import SecretError, SecretStore
 from mcp_gateway.session import Session
 from mcp_gateway.supervisor import Supervisor
 from mcp_gateway.transport_ws import ClientLink, GatewayServer, TlsError
+from mcp_gateway.visibility import ToolVisibility
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,12 @@ class Gateway:
         #: server cannot reach each other except through the object they share. See
         #: `panels.md`.
         self.panels = PanelStore()
+        #: Which of each backend's tools `tools/list` leaves out, for everyone but the
+        #: admin UI's own bench session. One per process for the same reason as the two
+        #: above -- the `/admin` connection that sets it and the `/mcp` connection that is
+        #: filtered by it cannot reach each other except through the object they share.
+        #: In memory only; nothing is written to `servers.yaml`. See `visibility.md`.
+        self.visibility = ToolVisibility()
         self._server_request_handler = self.backend_request
         self.notifier = Notifier(self._broadcast)
         #: Who is watching which resource. See `notifications.md`.
@@ -373,8 +380,8 @@ class Gateway:
 
     # --- MCP handlers -------------------------------------------------------------------
 
-    async def list_tools(self, _params: dict) -> dict[str, Any]:
-        """The gateway's own tools first, then every backend's.
+    async def list_tools(self, session: Session | None, _params: dict) -> dict[str, Any]:
+        """The gateway's own tools first, then every backend's, minus what is hidden.
 
         The meta-tools lead deliberately: a model scanning a long list should meet
         `gateway__list_backends` before it gives up on finding the tool it wanted.
@@ -382,12 +389,58 @@ class Gateway:
         No `nextCursor`. The gateway has already walked every backend's pagination to build
         this, so there is nothing left to page; inventing a cursor would mean holding
         per-client state for no gain.
+
+        **This is the one listing that depends on who is asking.** A backend's tools are
+        filtered against `visibility`, except for the admin UI's own bench session, which
+        gets all of them because it is where they are un-hidden. `session` is `None` for a
+        caller with no connection behind it, which publishes everything.
+
+        The filter is here rather than in `catalogue.tools()` because that method records
+        `skipped_tools` and feeds `counts()`, and a backend must not look to
+        `gateway__backend_health` like it publishes less than it does. See `visibility.md`.
+
+        **The meta-tools are never filtered.** They are the model's map of this gateway --
+        the reason they lead the list at all -- and five tools is not where context is won.
         """
         await self.supervisor.wait_ready()
-        return {
-            "tools": tool_definitions([b.name for b in self.supervisor.all])
-            + await self.catalogue.tools()
-        }
+        tools = await self.catalogue.tools()
+        if session is not None and not self.visibility.exempt(session):
+            tools = [t for t in tools if not self._advertised(t)]
+        return {"tools": tool_definitions([b.name for b in self.supervisor.all]) + tools}
+
+    def _advertised(self, tool: dict[str, Any]) -> bool:
+        """Whether this composed entry names a tool somebody has hidden."""
+        try:
+            server, local = naming.split(tool.get("name", ""))
+        except naming.NamingError:
+            # Not ours to judge. A name the catalogue composed always splits; anything else
+            # is published rather than silently dropped.
+            return False
+        return self.visibility.is_hidden(server, local)
+
+    async def set_hidden_tools(self, name: str, tools: Any) -> dict[str, Any]:
+        """Replace one backend's hidden set, and tell the clients if it moved.
+
+        Only `tools/list_changed`: prompts and resources are untouched by this, unlike
+        `_announce_backend_change`, which fires all three because a restart changes all
+        three.
+
+        **The catalogue is not invalidated.** What the backend publishes did not change --
+        only what we publish from it -- so a refetch would be a fan-out for nothing, and
+        could wake a sleeping backend to re-read bytes already in the cache.
+
+        A name the backend does not currently publish is accepted and stored. Refusing
+        would break the control exactly when the listing is stale, which is when somebody
+        is most likely to be pruning: a backend that is down publishes nothing.
+        """
+        if self.backend(name) is None:
+            raise errors.InvalidParams(f"no backend named {name!r}")
+        if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+            raise errors.InvalidParams("'tools' must be a list of tool names")
+        changed = self.visibility.set_hidden(name, tools)
+        if changed:
+            await self.notifier.list_changed(protocol.TOOLS_LIST_CHANGED)
+        return {"name": name, "hidden": sorted(self.visibility.hidden(name)), "changed": changed}
 
     async def call_tool(self, session: Session, params: dict) -> dict[str, Any]:
         name = params.get("name")
@@ -723,6 +776,10 @@ class Gateway:
             # one is a new process that has never heard of them. See `notifications.md`.
             for name in plan.removed:
                 self.subscriptions.drop_backend(name)
+                # And its hidden tools, for the same reason: there is nothing left for
+                # those names to name. A *changed* backend keeps its selection -- an edit
+                # or a restart is the same backend. See `visibility.md`.
+                self.visibility.drop_backend(name)
             self.config = config
             self.store = store
             # Re-install redaction with the new store: a rotated credential's *old* value

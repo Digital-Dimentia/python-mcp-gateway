@@ -19,6 +19,10 @@
 //                     frame's business: this column does not know what other columns exist,
 //                     and the vocabularies it would otherwise have had to clear are one of
 //                     them.
+//   hiddenTools(s)    the local names of `s`'s tools that `/mcp` is not advertising, so a
+//                     row can say so. This column goes on showing them, and calling them:
+//                     the header menu is where they are un-hidden, and a bench that dropped
+//                     them would be a bench you could not un-hide from. See `visibility.md`.
 //
 // `naming.js` is imported outright, like everywhere else: pure functions over one entry have
 // nothing to inject and nothing to reach back into.
@@ -138,6 +142,14 @@ function render() {
     // a panel" is answerable by looking rather than by opening each one.
     if (entry?._meta?.ui?.resourceUri) {
       button.append(el('span', { class: 'badge badge-panel', text: 'panel' }));
+    }
+    // Hidden from `/mcp`, not from here. Muted rather than struck through: a strikethrough
+    // already means *disabled server* on the header pill, and the two are not the same
+    // thing -- this tool is running, listed and callable, just not advertised.
+    if (port.state.kind === 'tools'
+        && port.hiddenTools(ownerOf('tools', entry)).includes(localName('tools', entry))) {
+      row.classList.add('primitive-hidden');
+      button.append(el('span', { class: 'badge badge-hidden', text: 'hidden' }));
     }
     tooltipOn(button, entry.description || entry.title || '');
     button.addEventListener('click', () => port.openItem(port.state.kind, entry));

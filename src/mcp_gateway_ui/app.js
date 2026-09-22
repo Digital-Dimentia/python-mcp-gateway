@@ -21,6 +21,7 @@ import {
 import { renderError, resultCard, pretty } from './render.js';
 import { installClipboard, clipboardChanged } from './clipboard.js';
 import { basename, formatDuration } from './format.js';
+import { ownerOf, localName } from './naming.js';
 //: The screens. Each is one default export; the registry under `The screens` is what binds
 //: one to the `<option>` that selects it.
 import basicsScreen from './screens/basics/screen.js';
@@ -516,6 +517,7 @@ function applyBranding(branding) {
 //: an open menu puts it back rather than snapping it shut.
 let openMenu = null;
 
+
 function renderBackends() {
   const nav = $('servers');
   nav.replaceChildren();
@@ -596,6 +598,11 @@ function serverEntry(backend, meta = false) {
   }
 
   if (!meta) {
+    const picker = toolPicker(backend);
+    if (picker) menu.append(picker);
+  }
+
+  if (!meta) {
     const actions = el('div', { class: 'server-actions' });
     actions.append(action('Restart', () => admin('admin.backend.restart', { name })));
     actions.append(action(backend.enabled ? 'Disable' : 'Enable', () => admin('admin.backend.update', {
@@ -637,6 +644,72 @@ function serverEntry(backend, meta = false) {
 
   wrap.append(menu);
   return wrap;
+}
+
+// ── Which tools this server advertises ─────────────────────────────────────────
+//
+// A checkbox per tool, in the server's own menu. **A tick means visible** -- the direction
+// every other checkbox on this page reads, and the one Select all is expected to go in.
+//
+// Unticking one stops it appearing in `tools/list` on `/mcp`, which is the whole point: a
+// model pays for every tool it is offered on every turn, and six backends can hand it two
+// hundred. It does not stop it being *called*, and the wording here never says it does.
+// See `src/mcp_gateway/visibility.md`.
+//
+// The names come from `state.listings.tools`, which is this page's own `/mcp` session --
+// and that session is exempt from the filter precisely so this list can show a tool that is
+// hidden. Without the exemption the menu could only ever offer what is already visible, and
+// there would be no way back. That coupling is the non-obvious thing in the feature.
+function toolPicker(backend) {
+  const name = backend.name;
+  const hidden = backend.hidden_tools || [];
+  const listed = (state.listings.tools || [])
+    .filter((entry) => ownerOf('tools', entry) === name)
+    .map((entry) => localName('tools', entry));
+
+  // A backend that is down lists nothing, and that is exactly when somebody wants to undo a
+  // hide. `hidden_tools` rides on `admin.backends`, so the names are here even when the
+  // listing is not -- which is the whole reason that field is on that payload.
+  const names = listed.length ? listed : [...hidden].sort();
+  if (!names.length) return null;
+  const section = el('section', { class: 'server-tools' });
+
+  const shown = names.filter((tool) => !hidden.includes(tool)).length;
+  const head = el('div', { class: 'server-tools-head' }, [
+    el('span', { class: 'server-tools-label', text: 'Advertised on /mcp' }),
+    el('span', { class: 'badge', text: `${shown} of ${names.length}` }),
+  ]);
+  // The whole set, every time -- see `visibility.md`. Two clicks cannot race into a half
+  // state, and Select all/none is one call rather than forty.
+  head.append(action('All', () => hide(name, [])));
+  head.append(action('None', () => hide(name, names)));
+  section.append(head);
+
+  const list = el('ul', { class: 'server-tool-list' });
+  //: The boxes themselves, in order, so the new hidden set is read off the DOM rather than
+  //: rebuilt from a selector spelled out of a tool name -- which would need escaping, and
+  //: is the kind of thing that works until a backend ships a tool with a dot in it.
+  const boxes = [];
+  for (const tool of names) {
+    const id = `tool-pick-${name}-${tool}`;
+    const box = el('input', { type: 'checkbox', id, checked: !hidden.includes(tool) });
+    box.addEventListener('change', () => {
+      hide(name, names.filter((_, i) => !boxes[i].checked));
+    });
+    boxes.push(box);
+    list.append(el('li', { class: 'field-tick' }, [box, el('label', { for: id, text: tool })]));
+  }
+  section.append(list);
+  return section;
+}
+
+/** Hide exactly this set of one server's tools. No result card -- the checkbox is the receipt. */
+async function hide(name, tools) {
+  // Deliberately not through `admin()`: that pushes a card into the Results column, and
+  // ticking twelve boxes would bury what the bench actually did under twelve receipts.
+  await state.admin.request('admin.tools.hide', { name, tools });
+  await refreshAdmin();
+  await primitives.refreshListings();
 }
 
 // Attached once, at load: the button's own handler stops its click before it gets here, so
@@ -1196,6 +1269,9 @@ showTheme(window.__theme.get());
 // and neither can reach back into this one at all.
 primitives.install({
   state,
+  //: Which of a server's tools are not advertised, so a row can say so. Read off
+  //: `admin.backends` rather than asked for separately -- see `visibility.md`.
+  hiddenTools: (server) => state.backends.find((b) => b.name === server)?.hidden_tools || [],
   openItem: detail.openItem,
   clearDetail: detail.clear,
   //: What stood on the old listings and has to be reconsidered. One callback rather than an
@@ -1330,6 +1406,7 @@ export {
   EDITOR_GROUPS,
   applyBranding,
   openEditor,
+  renderBackends,
 
   clipboardSnapshot,
 };

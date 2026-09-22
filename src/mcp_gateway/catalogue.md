@@ -30,6 +30,15 @@ is restarted — which is exactly what the notification is *for*. The cache is p
 rather than global, so one backend changing its tools does not force a refetch from the
 other eleven.
 
+## Hidden tools are not filtered here
+
+An operator can hide a backend's tools from `/mcp` ([`visibility.md`](visibility.md)), and
+this module is deliberately not where that happens. `tools()` records `skipped_tools` and
+`unresolved_ui_templates` as it walks, and `counts()` reads the raw cache — both of which
+`gateway__backend_health` reports. A filter here would make health say a backend publishes
+less than it does. This module is the backends' truth; what the gateway chooses to advertise
+from it is decided in `gateway.list_tools`, where the asker is known.
+
 ## A backend that fails to list is skipped, not fatal
 
 A listing is a fan-out, and something in a fan-out will eventually be broken. One backend

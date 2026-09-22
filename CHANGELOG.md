@@ -9,6 +9,20 @@ nobody reads.
 
 ## Unreleased
 
+**Choose which of a server's tools the model actually sees.** Six backends can hand a model
+two hundred tools, and one it will never call still costs context on every turn. The only
+lever was disabling a whole server, which stops the process too. Now each server's menu in
+the header carries a checkbox per tool, with All and None: untick one and it stops appearing
+in `tools/list` on the MCP port, and every attached client is told the list changed. Tick the
+server down to the tools the session in front of you is actually about.
+
+It is **not advertised**, not blocked — a hidden tool is still callable by a client that knows
+its name, because this is context economy and not a permission system. The admin UI's bench
+goes on listing every tool, with the hidden ones marked, because that is where you test them
+and where you un-hide them. And the choice is runtime only: nothing is written to
+`servers.yaml`, and a restarted daemon advertises everything again, since what a session is
+working on is not a property of the deployment.
+
 **Renewing a TLS certificate no longer needs a restart.** The pair was read once at startup,
 so picking up a 90-day ACME renewal meant restarting the daemon — which drops every attached
 client, a worse outage than the one the renewal was avoiding. A reload (`SIGHUP`,

@@ -38,7 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from mcp_gateway import clipboard, errors, naming
@@ -174,13 +174,24 @@ def is_admin_tool(public_name: str) -> bool:
     return server == ADMIN_PREFIX
 
 
-def describe_backend(backend: Backend) -> dict[str, Any]:
+def describe_backend(backend: Backend, *, hidden_tools: Iterable[str] = ()) -> dict[str, Any]:
     """One backend, as both surfaces report it.
 
     `env_keys` is the *names* of the variables from the server's `env` block, and
     `header_keys` the names of a `url` backend's headers. A
     `ServerSpec` holds templates rather than values, so there is no way for a value to
     reach this payload even by accident -- which is the point of that split.
+
+    `hidden_tools` is the one field here that is **runtime rather than spec**: the tools
+    this backend has that `tools/list` is not advertising. It rides along rather than
+    getting a read method of its own, so the admin UI learns it in the same refresh it
+    already makes -- and so there is one source of truth rather than two to keep in step.
+    It is passed in rather than read off `Backend` because `skipped_tools` beside it is the
+    *catalogue's observation* about this backend while this is the *operator's policy*
+    about it, and a process object holding both is how the two get confused across a
+    restart. Names only, so the no-credential rule is untouched; the key is deliberately
+    not `tools`, which would read like something `admin.backend.add` accepts.
+    See `visibility.md`.
     """
     spec = backend.spec
     return {
@@ -201,13 +212,18 @@ def describe_backend(backend: Backend) -> dict[str, Any]:
         "pid": backend.pid,
         "protocol_version": backend.protocol_version,
         "error": backend.error,
+        "hidden_tools": sorted(hidden_tools),
     }
 
 
 async def describe_health(
-    backend: Backend, *, ping: bool = True, counts: dict[str, Any] | None = None
+    backend: Backend,
+    *,
+    ping: bool = True,
+    counts: dict[str, Any] | None = None,
+    hidden_tools: Iterable[str] = (),
 ) -> dict[str, Any]:
-    payload = describe_backend(backend)
+    payload = describe_backend(backend, hidden_tools=hidden_tools)
     payload.update(counts or {})
     payload.update(
         {
@@ -270,7 +286,7 @@ class Admin:
     # --- the five tools -----------------------------------------------------------------
 
     async def _tool_list_backends(self, _arguments: dict) -> dict[str, Any]:
-        return text_result([describe_backend(b) for b in self.gateway.backends()])
+        return text_result([self._describe(b) for b in self.gateway.backends()])
 
     async def _tool_backend_health(self, arguments: dict) -> dict[str, Any]:
         name = arguments.get("name")
@@ -285,7 +301,15 @@ class Admin:
         return text_result(await self._health(backend))
 
     async def _health(self, backend: Backend) -> dict[str, Any]:
-        return await describe_health(backend, counts=self.gateway.catalogue.counts(backend.name))
+        return await describe_health(
+            backend,
+            counts=self.gateway.catalogue.counts(backend.name),
+            hidden_tools=self.gateway.visibility.hidden(backend.name),
+        )
+
+    def _describe(self, backend: Backend) -> dict[str, Any]:
+        """`describe_backend` with the one thing it cannot read off the `Backend` itself."""
+        return describe_backend(backend, hidden_tools=self.gateway.visibility.hidden(backend.name))
 
     async def _tool_restart_backend(self, arguments: dict) -> dict[str, Any]:
         name = arguments.get("name")
@@ -328,7 +352,7 @@ class Admin:
         }
 
     async def backends(self, _params: dict) -> dict[str, Any]:
-        return {"backends": [describe_backend(b) for b in self.gateway.backends()]}
+        return {"backends": [self._describe(b) for b in self.gateway.backends()]}
 
     async def health(self, params: dict) -> dict[str, Any]:
         name = params.get("name")

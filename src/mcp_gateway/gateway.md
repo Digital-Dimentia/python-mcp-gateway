@@ -13,6 +13,7 @@ with two clients attached and no subprocess of its own.
 | negotiated protocol version | the backend pool |
 | the client's declared capabilities | the credential store |
 | that client's in-flight requests | the parsed config |
+| its `clientInfo`, which `tools/list` reads | which tools are hidden ([`visibility.md`](visibility.md)) |
 
 A daemon with three clients attached runs **one** copy of each backend, and all three see
 the same live state. That is the difference between a gateway and a launcher: one `npx` cold

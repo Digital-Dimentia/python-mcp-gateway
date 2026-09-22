@@ -29,6 +29,19 @@ registers the connection against a URI, and `logging/setLevel` records the sever
 client wants — both are per-connection, and both are what a shared backend's notification is
 filtered against on the way back up. See [`notifications.md`](notifications.md).
 
+## `tools/list` is the one listing that is handed the session
+
+Every other listing is a property of the backend pool and answers the same whoever asks.
+`tools/list` leaves out the tools an operator has hidden, for everyone **except** the admin
+UI's own bench connection — and the only thing it reads off the session to decide is
+`client_info`, whose `name` the page sends as `mcp-gateway-ui`.
+
+Keying on a name any client can claim is honest here because nothing is being protected. A
+hidden tool is still callable by anyone who knows its name, so a client that lies about who
+it is buys a longer list and nothing else. The bench needs the exemption for a reason of its
+own: the header's checkbox list is built from this listing, and a filtered one could never
+offer a hidden tool back. See [`visibility.md`](visibility.md).
+
 ## What may be called before `initialize`
 
 `initialize` and `ping`, and nothing else.

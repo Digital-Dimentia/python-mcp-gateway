@@ -51,6 +51,7 @@ flowchart TB
 | [`mcp_stdio.py`](src/mcp_gateway/mcp_stdio.md) | the MCP client session, and its subprocess-stdio transport |
 | [`mcp_http.py`](src/mcp_gateway/mcp_http.md) | the same session over Streamable HTTP, for a backend named by `url` |
 | [`catalogue.py`](src/mcp_gateway/catalogue.md) | the merged, namespaced listing |
+| [`visibility.py`](src/mcp_gateway/visibility.md) | which of each backend's tools `tools/list` advertises: in memory, never a permission |
 | [`router.py`](src/mcp_gateway/router.md) | forwards one call, translates what comes back |
 | [`admin.py`](src/mcp_gateway/admin.md) | the `gateway__*` meta-tools, shared with `/admin` |
 | [`clipboard.py`](src/mcp_gateway/clipboard.md) | the session briefing: what the bench did, written to be handed to a model |

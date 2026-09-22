@@ -144,6 +144,7 @@ class AdminConnection:
             "admin.backend.remove": self._backend_remove,
             "admin.reload": self._reload,
             "admin.backend.restart": self._restart,
+            "admin.tools.hide": self._tools_hide,
             "admin.logs.tail": self._logs_tail,
             "admin.logs.stop": self._logs_stop,
             "admin.panel.open": self._panel_open,
@@ -258,6 +259,20 @@ class AdminConnection:
         changes = self._mapping(params, "changes", "admin.backend.update")
         warnings = self._write(config_writer.update_server, name, changes)
         return await self._apply(warnings, params)
+
+    async def _tools_hide(self, params: dict) -> dict[str, Any]:
+        """Replace which of one backend's tools `tools/list` leaves out.
+
+        Runtime only -- this is the one writing verb on this path that does **not** touch
+        `servers.yaml`, which is why it is not a `changes` key on `admin.backend.update`:
+        that method persists, and keeping them separate is what stops "persisted" and
+        "until the daemon restarts" sharing a door. See `visibility.md`.
+
+        `tools` is the complete hidden set in the backend's own spelling, replacing
+        whatever was there, so Select all and Select none are one call each.
+        """
+        name = self._name(params, "admin.tools.hide")
+        return await self.gateway.set_hidden_tools(name, params.get("tools", []))
 
     async def _backend_remove(self, params: dict) -> dict[str, Any]:
         name = self._name(params, "admin.backend.remove")

@@ -85,6 +85,21 @@ value.
 and also that the *store-side* key name (`ALPHA_TOKEN`) does not, since only the child-side
 name (`MY_TOKEN`) is the backend's business.
 
+## `hidden_tools` is runtime, not spec
+
+`describe_backend` reports every field from the backend's `ServerSpec`, plus one that is not:
+`hidden_tools`, the names `tools/list` is currently leaving out. It rides on
+`admin.backends` rather than behind a read method of its own, so the admin UI learns it in
+the refresh it already makes and there is one source of truth rather than two to keep in
+step — and so a backend that is down, and lists nothing, still tells the UI what to offer
+back.
+
+It is passed in rather than read off `Backend`, because `skipped_tools` beside it in the
+health payload is the catalogue's *observation* about a backend while this is an operator's
+*policy* about it, and a process object carrying both is how the two get confused across a
+restart. The key is not `tools`, which would read like something `admin.backend.add`
+accepts. Names only. See [`visibility.md`](visibility.md).
+
 ## Errors: which kind, and why
 
 - **An unknown backend name** → a tool-level failure (`isError: true`), so a model can read

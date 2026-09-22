@@ -605,6 +605,25 @@ a.button { text-decoration: none; display: inline-block; }
 
 .server-actions { display: flex; flex-wrap: wrap; gap: 0.15rem; border-top: 1px solid var(--rule-soft); padding-top: 0.4rem; }
 
+/* Which of this server's tools `/mcp` advertises. A tick means visible.
+ *
+ * Every tool, uncapped: the menu grows to hold the whole list, so what is hidden can be read
+ * at a glance rather than scrolled for. That assumes a server with a modest number of tools
+ * -- `placeMenu()` only handles the horizontal edge, so a very long list would run past the
+ * bottom of the window, and a `max-height` here is the fix when that day comes. */
+.server-tools { display: flex; flex-direction: column; gap: 0.3rem; border-top: 1px solid var(--rule-soft); padding-top: 0.4rem; }
+.server-tools-head { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+.server-tools-label { font-size: 0.72rem; color: var(--muted); margin-right: auto; }
+.server-tool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.server-tool-list > .field-tick > label { cursor: pointer; font-size: 0.78rem; overflow-wrap: anywhere; }
+
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
 .dot-running { background: var(--ok); }
 .dot-stopped { background: var(--muted); }
@@ -1499,6 +1518,12 @@ h4.md-h, h5.md-h, h6.md-h { font-size: 0.8rem; color: var(--muted); }
    See `panel_declarative.js`. */
 
 .badge-panel { background: var(--accent-soft); color: var(--accent); }
+
+/* Listed here, not advertised on `/mcp`. Muted rather than struck through -- a
+ * strikethrough already means *disabled server* on the header pill, and this tool is
+ * running, listed and callable. See `src/mcp_gateway/visibility.md`. */
+.badge-hidden { background: var(--panel-2); color: var(--muted); }
+.primitive-hidden .primitive-name { color: var(--muted); }
 
 .panel { display: flex; flex-direction: column; gap: 0.5rem; }
 .panel-title { margin: 0; font-size: 0.85rem; }

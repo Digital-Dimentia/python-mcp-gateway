@@ -149,6 +149,34 @@ async def test_a_restart_announces_the_catalogue_changed(tmp_path) -> None:
         await harness.close()
 
 
+async def test_hiding_a_tool_announces_only_the_tool_listing(tmp_path) -> None:
+    """A model client has to find out its tool list shrank, or it goes on offering tools the
+    operator just retired. Only `tools/list_changed`: prompts and resources did not move, and
+    this is the first entry here whose cause is an operator rather than a backend speaking up.
+
+    An identical set re-sent is silent -- the broadcast is guarded on whether it changed.
+    """
+    harness = await daemon(tmp_path, servers="servers:\n" + entry("a", MOCK_TOOLS="echo"))
+    try:
+        client = await harness.connect()
+        admin = await harness.connect("/admin", initialize=False)
+        await client.call("tools/list")
+
+        await admin.call("admin.tools.hide", {"name": "a", "tools": ["echo"]})
+        assert await wait_for(lambda: of_kind(client, "notifications/tools/list_changed"))
+        # Past the debounce, so anything else that was going to arrive has.
+        await asyncio.sleep(0.4)
+        assert of_kind(client, "notifications/prompts/list_changed") == []
+        assert of_kind(client, "notifications/resources/list_changed") == []
+
+        before = len(of_kind(client, "notifications/tools/list_changed"))
+        await admin.call("admin.tools.hide", {"name": "a", "tools": ["echo"]})
+        await asyncio.sleep(0.4)
+        assert len(of_kind(client, "notifications/tools/list_changed")) == before
+    finally:
+        await harness.close()
+
+
 async def test_a_backends_log_message_is_not_re_emitted(tmp_path) -> None:
     """`logging` is not advertised, and MCP forbids using a capability the peer did not
     declare. The content still reaches the daemon's own log."""

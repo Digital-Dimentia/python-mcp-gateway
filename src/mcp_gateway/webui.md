@@ -315,6 +315,32 @@ tall and stays one bar tall — which is also why the menu is `position: fixed` 
 `app.js`: an absolutely positioned menu inside that scroll container would be clipped to
 the bar's own height.
 
+**The menu also chooses which of the server's tools `/mcp` advertises.** One checkbox per
+tool, a count, and All / None. A tick means visible — the direction every other box on the
+page reads, and the one a select-all is expected to go in. Unticking a tool takes it out of
+`tools/list` for every attached model client, which then hears
+`notifications/tools/list_changed`; it does **not** stop the tool being called, and nothing on
+the page says otherwise. It lasts until the daemon restarts, and nothing is written to
+`servers.yaml`. See [`visibility.md`](visibility.md).
+
+The list is built from the page's own `tools/list`, and that is a coupling worth saying out
+loud: the daemon leaves the bench session unfiltered precisely so this list can offer a tool
+that is hidden. Without that there would be no way back. When nothing is listed — the backend
+is down — the names come from `hidden_tools` on `admin.backends` instead, so a hide can always
+be undone.
+
+Every tick sends the server's **whole** hidden set rather than one name, and none of them
+pushes a result card: ticking twelve boxes would otherwise bury what the bench actually did
+under twelve receipts, and the checkbox is the receipt. Each tick rebuilds the bar like any
+other refresh, and `openMenu` already survived that, so the menu stays down. The list shows
+every tool with no cap and no scrolling, so what is hidden reads at a glance. That assumes a
+server with a modest number of tools: `placeMenu()` only handles the horizontal edge, so a very
+long list runs past the bottom of the window, and a height cap on the list is the fix when that
+day comes.
+
+The `gateway` pill has no picker. Its meta-tools are the model's map of the gateway, and five
+tools is not where context is won.
+
 The `gateway` entry leading the row is synthetic. The gateway's own meta-tools have no
 backend behind them, and without it they are listed by `/mcp` and reachable from nowhere in
 the UI. It comes first because it is the one entry always present: anywhere else in the row
@@ -335,6 +361,14 @@ in it is byte-identical to what the model gets — same `tools/list`, same names
 `tools/call`, same `isError` semantics. See [`session.md`](session.md) for that method table
 and [`catalogue.md`](catalogue.md) for what it publishes. `admin.*` now answers only the
 header and the footer.
+
+**There is one stated exception, and it is about *which* entries, never *what* is in them.**
+When an operator hides tools from `/mcp`, the bench's own session still lists every one, and
+the Primitives column marks a hidden tool with a `hidden` badge and a muted name — muted, not
+struck through, since a strikethrough on the pill already means a disabled server. Each entry
+is still byte-identical to what a model would get, and a hidden tool still opens and calls.
+The tab count stays the count of everything the server has: the count answers "what does
+this server have", the badge answers "what does the model see".
 
 ## The Clipboard
 

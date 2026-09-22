@@ -175,7 +175,10 @@ class Session:
         return {}
 
     async def _tools_list(self, params: dict) -> dict[str, Any]:
-        return await self.gateway.list_tools(params)
+        # The one listing that is handed the session. What it is consulted for is
+        # `client_info`: the admin UI's own bench connection sees every tool, and everyone
+        # else sees what `visibility` advertises. See `visibility.md`.
+        return await self.gateway.list_tools(self, params)
 
     async def _tools_call(self, params: dict) -> dict[str, Any]:
         return await self.gateway.call_tool(self, params)
