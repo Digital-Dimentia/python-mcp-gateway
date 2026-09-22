@@ -8,6 +8,7 @@ which have no `isError` -- come back as protocol errors.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -83,6 +84,41 @@ async def test_a_silent_refusal_still_says_what_it_can(tmp_path) -> None:
         error = harness.gateway.backend("quiet").error
         assert "closed stdout" in error and "exited with status 1" in error
         assert "last stderr" not in error
+    finally:
+        await harness.close()
+
+
+def test_a_clip_keeps_both_ends_and_counts_what_it_took() -> None:
+    """The unit behind it: exact width, both ends intact, the elision stated."""
+    from mcp_gateway.mcp_stdio import clip_middle
+
+    assert clip_middle("short", width=10, head=6) == "short"
+    assert clip_middle("0123456789", width=10, head=6) == "0123456789"
+
+    clipped = clip_middle("A" * 400 + "B" * 300 + "C" * 200, width=600, head=380)
+    assert clipped.startswith("A" * 380) and clipped.endswith("B" * 20 + "C" * 200)
+    assert "[...300 more chars...]" in clipped
+    assert len(clipped) == 600 + len("[...300 more chars...]")
+
+
+async def test_a_long_refusal_keeps_both_ends_and_admits_the_elision(tmp_path) -> None:
+    """A refusal puts the name at the front and the reason at the back. Take from the middle.
+
+    `python3: can\'t open file \'<long path>\': [Errno 2] No such file or directory` clipped
+    from the right loses the reason and the last stretch of the path, and what a person then
+    reads is a path that looks truncated -- so the hunt starts on the catalogue, which is
+    fine, instead of on the file, which is missing.
+    """
+    long_path = "/srv/" + "deep/" * 120 + "server/main.py"
+    line = f"python3: can't open file '{long_path}': [Errno 2] No such file or directory"
+    args = json.dumps(["-c", f"echo {shlex.quote(line)} >&2; exit 1"])
+    servers = f"servers:\n  long:\n    command: /bin/sh\n    args: {args}\n"
+    harness = await daemon(tmp_path, servers=servers)
+    try:
+        error = harness.gateway.backend("long").error
+        assert "python3: can't open file" in error
+        assert "[Errno 2] No such file or directory" in error, "the reason was clipped away"
+        assert "more chars..." in error, "an elision has to say it happened"
     finally:
         await harness.close()
 

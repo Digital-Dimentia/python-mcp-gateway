@@ -142,6 +142,23 @@ class MCPClientCapabilities:
         return block
 
 
+def clip_middle(text: str, *, width: int, head: int) -> str:
+    """`text` at no more than `width`, taken out of the middle and saying how much went.
+
+    Used for anything a *backend* wrote that a person then reads -- a stderr line, an error
+    body. Both ends of such a line carry meaning and the middle usually does not: a refusal
+    names the program at the front and the reason at the back, with the path it could not
+    open between them. Clipping from the right keeps the least useful half and produces
+    something worse than a shorter message -- a path that appears to end where the clip fell,
+    which sends a person to look for the truncation in their own catalogue. So the middle
+    goes, and it announces itself.
+    """
+    if len(text) <= width:
+        return text
+    dropped = len(text) - width
+    return f"{text[:head]}[...{dropped} more chars...]{text[head - width:]}"
+
+
 class MCPProtocolError(RuntimeError):
     """Raised when the MCP service responds with an error.
 
@@ -899,8 +916,16 @@ class MCPStdioClient(MCPClient):
     _STOP_TERMINATE_TIMEOUT = 2.0
     # What a dead server's own last words are worth carrying: the final few stderr lines,
     # each clipped, so the failure a caller sees can name the thing the server named.
+    #
+    # The clip takes the middle, never the end, and says how much it took. A refusal puts
+    # what matters at *both* ends -- `python3: can't open file '<a long path>': [Errno 2]`
+    # is the name at the front, the path in the middle and the reason at the back -- and a
+    # plain `text[:200]` drops the reason and the last stretch of the path, which reads as a
+    # path that is itself truncated. Chasing a path that was never wrong is a long detour;
+    # the full line is in the debug log either way.
     _STDERR_TAIL_LINES = 3
-    _STDERR_TAIL_WIDTH = 200
+    _STDERR_TAIL_WIDTH = 600
+    _STDERR_TAIL_HEAD = 380
     # How long a process that has closed stdout gets to be reaped, and its stderr to
     # drain, before the failure goes out without them. Both are already over.
     _DEATH_NOTICE_TIMEOUT = 0.5
@@ -1130,4 +1155,6 @@ class MCPStdioClient(MCPClient):
         text = line.decode("utf-8", errors="replace").rstrip()
         if text:
             logger.debug("MCP server stderr: %s", text)
-            self._stderr_tail.append(text[: self._STDERR_TAIL_WIDTH])
+            self._stderr_tail.append(
+                clip_middle(text, width=self._STDERR_TAIL_WIDTH, head=self._STDERR_TAIL_HEAD)
+            )

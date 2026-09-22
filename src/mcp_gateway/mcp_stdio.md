@@ -105,6 +105,11 @@ Where the headings below say `MCPStdioClient`, everything outside the process se
 - `MCPStdioClient._death_notice()`: what a caller is told when the process it was
   waiting on is gone — exit status and the server's last stderr lines, not only that
   stdout closed. See "What a dead process is reported as".
+- `clip_middle()`: how a backend's own words are shortened before a person reads them —
+  out of the middle, with the count of what went. Both ends of a refusal carry meaning
+  (`python3: can't open file '<path>': [Errno 2] ...`), and a clip from the right keeps the
+  half that explains nothing while making the path look truncated. Shared with
+  [`mcp_http.py`](mcp_http.md), which carries an error body the same way.
 - `on_server_request` / `on_notification`: optional async hooks for inbound server traffic.
 
 ## Message Routing

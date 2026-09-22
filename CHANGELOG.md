@@ -9,6 +9,13 @@ nobody reads.
 
 ## Unreleased
 
+**A backend's last words are no longer cut off mid-path.** The three stderr lines carried
+into a failure were clipped at 200 characters from the right, silently — so a server
+refusing a long path lost both the end of the path and the `[Errno 2]` that explained it,
+and what was left read as a path the gateway had truncated. The clip is wider, takes from
+the middle, keeps both ends, and says how many characters it dropped. An HTTP backend's
+error body is carried the same way.
+
 **A long argument stays on one line in `servers.yaml`.** The writer used to fold anything
 past 100 columns onto continuation lines. Re-reading it was lossless, but the folded form is
 a trap for a person: an editor that re-wraps such a line moves the break inside a word, and

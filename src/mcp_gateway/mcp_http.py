@@ -17,7 +17,7 @@ from typing import Any, AsyncIterator, Mapping
 from urllib.parse import urlsplit
 
 from mcp_gateway import __version__, protocol
-from mcp_gateway.mcp_stdio import MCPClient, MCPProtocolError
+from mcp_gateway.mcp_stdio import MCPClient, MCPProtocolError, clip_middle
 
 logger = logging.getLogger("mcp_gateway.mcp_http")
 
@@ -47,6 +47,12 @@ RESERVED_HEADERS = frozenset(
         "last-event-id",
     }
 )
+
+
+#: How much of an error body is carried into a failure, and how much of that is taken from
+#: the front. See `clip_middle`.
+_BODY_CLIP_WIDTH = 600
+_BODY_CLIP_HEAD = 380
 
 
 class _HttpError(Exception):
@@ -457,7 +463,9 @@ class MCPHttpClient(MCPClient):
             if deliver and isinstance(message, dict) and "error" in message:
                 if message.get("id") in self._pending:
                     await self._handle_message(message)
-        return text[:200]
+        # The same clip the stdio client gives a stderr line, for the same reason: what a
+        # server puts in an error body ends with the part that explains it.
+        return clip_middle(text, width=_BODY_CLIP_WIDTH, head=_BODY_CLIP_HEAD)
 
     async def _deliver(self, data: str) -> None:
         try:
