@@ -81,13 +81,14 @@ Between them, exactly one `<section data-screen>` is displayed.
 There are two. **Basics** is the work surface — the three columns described below — and the
 screen any page opens on; its `<section>` keeps the class `columns`, because that class names
 the *layout* the stylesheet is written around and `data-screen` names the screen.
-**About** is a page *about* the gateway rather than a surface for driving it: the endpoint
-to point a client at, the two files it read, and a row per configured server — indicator,
-name, description, state, the command behind it, the secrets `gateway.env` does not have, and
-whatever the process said on the way down. Every one of those facts is already reachable from
-Basics, in the footer or behind a server's menu or a hover; what About adds is
-that they are all in one place and can be read in one pass, which is what you want in the
-minute *before* you start working. It asks the daemon nothing of its own — it is the
+**About** is a page *about* the gateway rather than a surface for driving it: the tour, the
+endpoint to point a client at, and the two files it read. Every one of those facts is already
+reachable from Basics, in the footer or behind a hover; what About adds is that they are all in
+one place and can be read in one pass, which is what you want in the minute *before* you start
+working. It used to carry a row per configured server as well, and dropped it: the header
+already shows every server on every screen — state on the dot, tool count on the badge, and
+description, command, error and missing secrets in its menu — so the rows were a second
+rendering of the same facts to keep in step with the first. It asks the daemon nothing of its own — it is the
 `admin.status` and `admin.backends` the bars have already fetched — and it is redrawn only
 while it is the screen on the glass.
 

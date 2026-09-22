@@ -9,6 +9,11 @@ nobody reads.
 
 ## Unreleased
 
+**About no longer repeats the header.** Its card of server rows showed what the header already
+shows on every screen — each server's state, and in its menu the description, command, error
+and missing secrets — so it was a second copy of the same facts. About is now the tour, the
+endpoint, the two files and, when a `secrets:` block is configured, where each secret came from.
+
 **Choose which of a server's tools the model actually sees.** Six backends can hand a model
 two hundred tools, and one it will never call still costs context on every turn. The only
 lever was disabling a whole server, which stops the process too. Now each server's menu in

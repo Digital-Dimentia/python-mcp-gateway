@@ -323,9 +323,9 @@ export default [
           ['Version', state.mcp?.serverInfo?.version || state.status?.version || '—'],
         ]),
         p(
-          'The cards below this deck carry the rest: the files that were read, and a row per '
-          + 'server saying whether it came up and why not. For the long form, see README.md, '
-          + 'GET_STARTED.md and ARCHITECTURE.md in the repository.',
+          'The card below this deck names the files that were read, and each server\'s pill in '
+          + 'the header says whether it came up, and its menu why not. For the long form, see '
+          + 'README.md, GET_STARTED.md and ARCHITECTURE.md in the repository.',
         ),
       ]);
     },

@@ -112,7 +112,8 @@ describe('the About screen', () => {
 
   it('renders with nothing connected', () => {
     ui.showScreen('about');
-    assert.match(about().textContent, /No servers configured/);
+    const headings = [...about().querySelectorAll('.about-card h2')].map((h) => h.textContent);
+    assert.deepEqual(headings, ['The tour', 'Gateway']);
   });
 
   it('shows the endpoints and the files the gateway read', () => {
@@ -134,45 +135,28 @@ describe('the About screen', () => {
     assert.match(text, /1m/);                        // the uptime, formatted
   });
 
-  it('names each server, its state, and why it is not running', () => {
-    ui.state.backends = [
-      {
-        name: 'zoo', enabled: true, status: 'running', description: 'the schema zoo',
-        command: 'python', args: ['examples/zoo_server.py'], error: null,
-      },
-      {
-        name: 'broken', enabled: true, status: 'failed', description: '',
-        command: 'nope', args: [], error: 'No such file or directory',
-      },
-      {
-        name: 'parked', enabled: false, status: 'stopped', description: '',
-        command: 'python', args: [], error: null,
-      },
-    ];
-    ui.state.missing = { broken: ['API_TOKEN'] };
+  it('puts each Gateway field in its column: connect, running, read', () => {
+    //: The status fixture from the endpoints test above, which has a bind address.
     ui.SCREEN_MODULES.about.refresh(ui.state);
+    const column = (n) => [...about().querySelectorAll(`.about-fields .about-col-${n} dt`)]
+      .map((dt) => dt.textContent);
+    assert.deepEqual(column(1), ['MCP', 'Admin']);
+    assert.deepEqual(column(2), ['Name', 'Version', 'Uptime']);
+    assert.deepEqual(column(3), ['Config', 'Env']);
+    //: And MCP is first in the written order too, which is what the one-column fold shows.
+    assert.equal(about().querySelector('.about-fields dt').textContent, 'MCP');
+  });
 
-    const rows = [...about().querySelectorAll('.about-server')];
-    //: In the catalogue's order, which is the order the header's server row is in.
-    assert.deepEqual(
-      rows.map((r) => r.querySelector('.about-name').firstChild.textContent),
-      ['zoo', 'broken', 'parked'],
-    );
-    //: The description hangs off the name rather than being a row of its own.
-    assert.equal(rows[0].querySelector('.about-desc').textContent, 'the schema zoo');
-    assert.equal(rows[1].querySelector('.about-desc'), null);
-
-    // The indicator is the header's, so a server reads the same in both places.
-    assert.ok(rows[0].querySelector('.dot.dot-running'));
-    assert.ok(rows[1].querySelector('.dot.dot-failed'));
-
-    // A disabled server says so rather than reporting the state of a process that was
-    // never started.
-    assert.equal(rows[2].querySelector('.about-state').textContent, 'disabled');
-
-    assert.match(rows[0].textContent, /python examples\/zoo_server\.py/);
-    assert.match(rows[1].textContent, /missing API_TOKEN/);
-    assert.match(rows[1].textContent, /No such file or directory/);
+  it('has no card per server: the header already has one per server', () => {
+    //: Three backends, one running -- the fixture the tour's last slide is quoted against below.
+    ui.state.backends = [
+      { name: 'zoo', enabled: true, status: 'running', description: 'the schema zoo' },
+      { name: 'broken', enabled: true, status: 'failed', error: 'No such file or directory' },
+      { name: 'parked', enabled: false, status: 'stopped' },
+    ];
+    ui.SCREEN_MODULES.about.refresh(ui.state);
+    const headings = [...about().querySelectorAll('.about-card h2')].map((h) => h.textContent);
+    assert.ok(!headings.some((h) => h.startsWith('Servers')), headings.join(', '));
   });
 });
 
