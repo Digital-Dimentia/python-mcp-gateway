@@ -200,7 +200,8 @@ A freezer (PyInstaller, Nuitka) would buy one file and cost the thing `webui.py`
 them in a checkout. It also keeps the app debuggable — `cli.py` in a shipped `.app` is still
 a file you can open when a user reports something.
 
-`scripts/bundle_python.py` builds it: a python-build-standalone interpreter via `uv`, the
+`scripts/bundle_python.py` builds it: a python-build-standalone interpreter via `uv` — or,
+on a machine without uv, downloaded by the script itself against a pinned hash — the
 wheel installed into it, the developer tooling and Tk stripped, everything pre-compiled, and
 then a set of checks that *fail the build* if the result cannot import the gateway, find the
 UI assets, or validate a config. Roughly 58 MB, which makes the `.app` about 96 MB.
@@ -261,10 +262,33 @@ download, is handled for you.
 Neither `make test` nor `make build` depends on any of this. The daemon is the product and it
 ships without the app; a checkout with no Rust toolchain runs the entire Python suite.
 
+## Building without uv
+
+uv is the default, not a requirement. When `uv` is not on `PATH`, `make tauri-python` fetches
+the interpreter itself — the `install_only_stripped` tarball of the release pinned as
+`PBS_RELEASE` / `PBS_PYTHON` in `scripts/bundle_python.py`, checked against a SHA-256 pinned
+beside it before anything is unpacked — and installs the wheel with that interpreter's own
+pip, which the strip step then removes. Nothing else changes: same layout, same
+verification, and `BUNDLE.json` records `"source": "builtin"`.
+
+```bash
+make tauri-python                                           # no uv: the built-in fetcher
+.venv/bin/python scripts/bundle_python.py --fetcher builtin # the same, with uv installed
+```
+
+The cost is the pin. uv floats to the newest patch of `DEFAULT_VERSION`; the built-in fetcher
+ships exactly `PBS_PYTHON` until someone bumps it, which means copying the six
+`install_only_stripped` lines out of the new release's `SHA256SUMS`. It takes the standard
+Python variables rather than uv's: `SSL_CERT_FILE` for an intercepting proxy, `HTTPS_PROXY`,
+and `PIP_INDEX_URL` / `PIP_TRUSTED_HOST` for the wheel's two dependencies.
+`UV_PYTHON_INSTALL_MIRROR` works for both fetchers, so the mirror recipe below needs no uv
+either.
+
 ## Building behind a firewall
 
 One step of this build talks to the internet for something other than a Python package:
-`make tauri-python` runs `uv python install`, which downloads a python-build-standalone
+`make tauri-python` runs `uv python install` (or, without uv, the built-in fetcher above),
+which downloads a python-build-standalone
 interpreter. Everything after it — the wheel, the strip, the byte-compile, the verification —
 is local. So when a corporate network breaks the desktop build, it breaks it there, and the
 fixes below are in the order worth trying.
@@ -302,9 +326,9 @@ curl -Lo ~/pbs-mirror/20260901/'cpython-3.13.15+20260901-aarch64-apple-darwin-in
 UV_PYTHON_INSTALL_MIRROR=file://$HOME/pbs-mirror make tauri-python
 ```
 
-**Last, skip uv entirely.** `--interpreter` takes an interpreter that is already on the disk —
-an unpacked tree, or the `.tar.gz` as downloaded — and adopts it instead of fetching one. It
-is for the machine where uv cannot be installed or cannot be made to reach anything:
+**Last, skip the download entirely.** `--interpreter` takes an interpreter that is already on
+the disk — an unpacked tree, or the `.tar.gz` as downloaded — and adopts it instead of fetching
+one. It is for the machine where nothing can be made to reach the release host:
 
 ```bash
 make build                                            # the wheel this installs
@@ -321,8 +345,9 @@ to where its Python came from.
 
 The interpreter is not the only fetch in `make tauri-python` — the wheel's two dependencies
 come from PyPI — but that one is an ordinary package install and an internal index handles it.
-Note that the step runs `uv pip install`, which reads `UV_DEFAULT_INDEX` (or `UV_INDEX_URL`)
-and **not** `PIP_INDEX_URL`; `PIP_TRUSTED_HOST` is the exception, which
+Note that with uv the step runs `uv pip install`, which reads `UV_DEFAULT_INDEX` (or
+`UV_INDEX_URL`) and **not** `PIP_INDEX_URL` — without uv it is plain pip, which reads
+`PIP_INDEX_URL` as usual; `PIP_TRUSTED_HOST` is the exception, which
 `scripts/bundle_python.py` translates into uv's `--allow-insecure-host` so there is one
 variable to set rather than two.
 

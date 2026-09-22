@@ -427,6 +427,124 @@ def test_the_bundled_version_is_one_the_project_supports() -> None:
     assert (int(major), int(minor)) < (3, 15)
 
 
+# --- building without uv -------------------------------------------------------------------
+#
+# The built-in fetcher is the path for a machine with no uv, so nothing that runs this suite
+# exercises it for real unless someone hides uv on purpose. What is pinned here is what would
+# otherwise fail on the first build that needed it: a triple spelled the way the release page
+# does not, a platform with no hash, a checksum that is compared but not enforced.
+
+BUILT_TRIPLES = (
+    ("Darwin", "arm64", "aarch64-apple-darwin"),
+    ("Darwin", "x86_64", "x86_64-apple-darwin"),
+    ("Linux", "aarch64", "aarch64-unknown-linux-gnu"),
+    ("Linux", "x86_64", "x86_64-unknown-linux-gnu"),
+    ("Windows", "ARM64", "aarch64-pc-windows-msvc"),
+    ("Windows", "AMD64", "x86_64-pc-windows-msvc"),
+)
+
+
+@pytest.mark.parametrize(("system", "machine", "triple"), BUILT_TRIPLES)
+def test_every_platform_has_a_release_triple_and_a_pinned_hash(
+    monkeypatch, system: str, machine: str, triple: str
+) -> None:
+    monkeypatch.setattr(bundle_python.platform, "system", lambda: system)
+    monkeypatch.setattr(bundle_python.platform, "machine", lambda: machine)
+    assert bundle_python.pbs_triple() == triple
+    digest = bundle_python.PBS_SHA256[triple]
+    assert len(digest) == 64 and int(digest, 16) >= 0
+
+
+def test_the_pin_is_the_version_uv_would_have_been_asked_for() -> None:
+    """Two fetchers, one interpreter: a bump to one that forgets the other is caught here."""
+    assert bundle_python.PBS_PYTHON.startswith(f"{bundle_python.DEFAULT_VERSION}.")
+    assert set(bundle_python.PBS_SHA256) == {triple for _, _, triple in BUILT_TRIPLES}
+
+
+def test_the_download_url_honours_uvs_mirror_variable(monkeypatch) -> None:
+    asset = bundle_python.pbs_asset("aarch64-apple-darwin")
+    assert asset == (
+        f"cpython-{bundle_python.PBS_PYTHON}+{bundle_python.PBS_RELEASE}"
+        "-aarch64-apple-darwin-install_only_stripped.tar.gz"
+    )
+
+    monkeypatch.delenv("UV_PYTHON_INSTALL_MIRROR", raising=False)
+    url = bundle_python.pbs_url(asset)
+    assert url.startswith(f"{bundle_python.PBS_DOWNLOAD}/{bundle_python.PBS_RELEASE}/")
+    assert "%2B" in url, "the `+` in the asset name has to survive as a URL"
+
+    monkeypatch.setenv("UV_PYTHON_INSTALL_MIRROR", "file:///srv/pbs/")
+    assert bundle_python.pbs_url(asset).startswith(f"file:///srv/pbs/{bundle_python.PBS_RELEASE}/")
+
+
+def mirror_with(tmp_path: Path, monkeypatch) -> tuple[Path, str]:
+    """A `file://` mirror holding a fake tarball for this machine. Returns it and its hash."""
+    import hashlib
+    import tarfile
+
+    fake_interpreter(tmp_path / "staging" / "python")
+    release = tmp_path / "mirror" / bundle_python.PBS_RELEASE
+    release.mkdir(parents=True)
+    archive = release / bundle_python.pbs_asset(bundle_python.pbs_triple())
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(tmp_path / "staging" / "python", arcname="python")
+    monkeypatch.setenv("UV_PYTHON_INSTALL_MIRROR", (tmp_path / "mirror").as_uri())
+    return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def test_the_builtin_fetcher_adopts_what_it_downloaded(tmp_path: Path, monkeypatch) -> None:
+    archive, digest = mirror_with(tmp_path, monkeypatch)
+    monkeypatch.setitem(bundle_python.PBS_SHA256, bundle_python.pbs_triple(), digest)
+
+    out = tmp_path / "out"
+    assert bundle_python.fetch_interpreter_builtin(out) == archive.name
+    assert bundle_python.interpreter_path(out).exists()
+
+
+def test_a_download_with_the_wrong_hash_is_never_unpacked(tmp_path: Path, monkeypatch) -> None:
+    mirror_with(tmp_path, monkeypatch)
+    monkeypatch.setitem(bundle_python.PBS_SHA256, bundle_python.pbs_triple(), "0" * 64)
+
+    out = tmp_path / "out"
+    with pytest.raises(SystemExit, match="Refusing to unpack"):
+        bundle_python.fetch_interpreter_builtin(out)
+    assert not out.exists()
+
+
+def test_auto_is_uv_when_there_is_one_and_builtin_when_not(monkeypatch) -> None:
+    monkeypatch.setattr(bundle_python.shutil, "which", lambda name: "/usr/bin/uv")
+    assert bundle_python.resolve_fetcher("auto") == "uv"
+    assert bundle_python.resolve_fetcher("builtin") == "builtin"
+
+    monkeypatch.setattr(bundle_python.shutil, "which", lambda name: None)
+    assert bundle_python.resolve_fetcher("auto") == "builtin"
+    assert bundle_python.resolve_fetcher("uv") == "uv"
+
+
+def test_without_uv_the_wheel_goes_in_through_the_interpreters_own_pip(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    calls: list[list[str]] = []
+
+    def fake_run(argv, check=True, **kwargs):
+        calls.append([str(a) for a in argv])
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(bundle_python.shutil, "which", lambda name: None)
+    monkeypatch.setattr(bundle_python, "run", fake_run)
+    root = fake_interpreter(tmp_path / "python")
+    wheel = tmp_path / "python_mcp_gateway-0.1.0-py3-none-any.whl"
+
+    bundle_python.install_gateway(root, wheel)
+    interpreter = str(bundle_python.interpreter_path(root))
+    assert calls[0] == [interpreter, "-m", "pip", "--version"]
+    assert calls[-1][:4] == [interpreter, "-m", "pip", "install"]
+    assert calls[-1][-1] == str(wheel)
+    assert not any(argv[0] == "uv" for argv in calls)
+
+
 # --- against a bundle that was actually built ------------------------------------------------
 #
 # The tests above reason about the patterns with `fnmatch`, which is not what the script

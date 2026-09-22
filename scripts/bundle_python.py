@@ -26,14 +26,21 @@ python-build-standalone, so using uv is not a second dependency on a second thin
 the same artifact with a downloader that already handles the platform triple, and one this
 project's contributors have installed anyway.
 
-`--interpreter` is the way past uv, and exists because that download is the one step here
-that a corporate firewall breaks -- everything after it is local. uv's own knobs come first:
+Without uv on PATH the script fetches the same artifact itself: `PBS_RELEASE`'s
+`install_only_stripped` tarball for this triple, checked against a hash pinned in this file,
+then adopted exactly as `--interpreter` adopts one -- and the wheel goes in through the
+interpreter's own pip instead of `uv pip`. uv stays the default wherever it is installed,
+because it floats to the newest patch release and the built-in fetcher cannot; what the
+second path costs is a pin to bump by hand. `--fetcher` forces either.
+
+`--interpreter` is the way past both downloads, and exists because the download is the one
+step here that a corporate firewall breaks -- everything after it is local. uv's own knobs come first:
 `UV_PYTHON_INSTALL_MIRROR` accepts a `file://` directory, so "download the tarball however
 you can, then build offline" needs no code at all. `--interpreter` is for underneath that,
 where uv cannot run; it adopts an unpacked tree or a `.tar.gz`, and then changes nothing --
 `verify` is still the gate. `src/desktop/README.md` has the recipes.
 
-Two edits are made to what uv hands over:
+Two edits are made to the interpreter, whichever way it arrived:
 
 * **`EXTERNALLY-MANAGED` is removed.** It exists to stop a person mutating uv's shared copy
   of an interpreter. This is not that copy: it is a private tree that is about to be sealed
@@ -76,6 +83,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -88,6 +97,25 @@ DEFAULT_OUT = REPO_ROOT / "src" / "desktop" / "src-tauri" / "resources" / "pytho
 #: statement about what the *library* supports; a bundle ships exactly one interpreter and
 #: the version it ships is a release decision. 3.13 is the middle of that range.
 DEFAULT_VERSION = "3.13"
+
+#: What the built-in fetcher downloads when uv is not there to ask. uv floats to the newest
+#: patch of `DEFAULT_VERSION`; this cannot, because without uv nothing here knows what the
+#: newest one is -- so it is pinned, and bumped by hand: pick a release, copy the six
+#: `install_only_stripped` lines out of its `SHA256SUMS`. The hashes live here rather than
+#: being fetched beside the tarball because a checksum from the same server as the file
+#: only catches a truncated download, and because a `file://` mirror should need nothing
+#: but the tarball someone carried in.
+PBS_RELEASE = "20260901"
+PBS_PYTHON = "3.13.15"
+PBS_DOWNLOAD = "https://github.com/astral-sh/python-build-standalone/releases/download"
+PBS_SHA256 = {
+    "aarch64-apple-darwin": "d3904bd6a072246e07aa0bdadee9a14e80521e42a943c0848059feb16a2816dc",
+    "x86_64-apple-darwin": "f712a9143c8a5d248438ec7921a0b48d548bca4f1337d33c690d28c2d0504137",
+    "aarch64-unknown-linux-gnu": "01ce0ce9189feaead3298abf10d4efe998c55a489b3d5d38ca4f83dda7e7977e",
+    "x86_64-unknown-linux-gnu": "8a689a077337bea6d1c4bc0b7df1d52fcaa28f5f67e50df8bf417c1e3f9d8874",
+    "aarch64-pc-windows-msvc": "8b31e1ddae9ebd339eae0549049546aa54484dbf92c81694b1e7510fee869413",
+    "x86_64-pc-windows-msvc": "63d263ab0162f34a241a56dc5b283c22d6e131f5516117e6a921350c69ba7d4f",
+}
 
 #: What the daemon needs to keep working, spelled out so a future strip cannot quietly
 #: remove one. `_ssl` is reached by any backend spec that fetches; `sqlite3`, `lzma` and
@@ -237,8 +265,8 @@ def uv_environment() -> dict[str, str]:
     return env
 
 
-def uv_python_tag(version: str) -> str:
-    """The python-build-standalone triple for this machine.
+def host_platform() -> tuple[str, str]:
+    """This machine as `(system, arch)`: `macos`/`linux`/`windows` and `aarch64`/`x86_64`.
 
     Host-only, deliberately. A cross-built bundle would need a cross-built Tauri binary to
     sit beside it, and Tauri is happiest building for the machine it is on -- so
@@ -261,8 +289,46 @@ def uv_python_tag(version: str) -> str:
     system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system())
     if system is None:
         raise SystemExit(f"bundle_python: unsupported platform {platform.system()!r}")
+    return system, arch
+
+
+def uv_python_tag(version: str) -> str:
+    """The name `uv python install` knows this machine's interpreter by."""
+    system, arch = host_platform()
     suffix = "none" if system != "linux" else "gnu"
     return f"cpython-{version}-{system}-{arch}-{suffix}"
+
+
+def pbs_triple() -> str:
+    """The target triple python-build-standalone names its release assets with.
+
+    The same machine as `uv_python_tag`, spelled the way the release page spells it --
+    which is Rust's triple, not uv's key.
+    """
+    system, arch = host_platform()
+    vendor_os = {
+        "macos": "apple-darwin",
+        "linux": "unknown-linux-gnu",
+        "windows": "pc-windows-msvc",
+    }[system]
+    return f"{arch}-{vendor_os}"
+
+
+def pbs_asset(triple: str) -> str:
+    """The `install_only_stripped` tarball for `triple` in the pinned release."""
+    return f"cpython-{PBS_PYTHON}+{PBS_RELEASE}-{triple}-install_only_stripped.tar.gz"
+
+
+def pbs_url(asset: str) -> str:
+    """Where `asset` is downloaded from, honouring the same mirror variable uv does.
+
+    `UV_PYTHON_INSTALL_MIRROR` replaces the `.../releases/download` prefix for uv, and it
+    replaces exactly the same prefix here, so the offline recipe in `src/desktop/README.md`
+    -- a `file://` directory laid out `<release>/<asset>` -- is one variable for both
+    fetchers rather than one each.
+    """
+    base = os.environ.get("UV_PYTHON_INSTALL_MIRROR") or PBS_DOWNLOAD
+    return f"{base.rstrip('/')}/{PBS_RELEASE}/{urllib.parse.quote(asset)}"
 
 
 def newest_wheel() -> Path:
@@ -428,6 +494,48 @@ def fetch_interpreter(out: Path, version: str) -> Path:
     return out
 
 
+def fetch_interpreter_builtin(out: Path) -> str:
+    """Download the pinned standalone CPython without uv, and adopt it at `out`.
+
+    For the machine that has no uv and should not need one to build the app: the stdlib's
+    `urllib` fetches the tarball, the pinned hash is checked before anything is unpacked, and
+    `adopt_interpreter` takes it from there exactly as it takes a tarball carried in by hand.
+    TLS goes through the default context, so an intercepting proxy is `SSL_CERT_FILE`, the
+    variable every Python program already reads -- there is deliberately no way to turn
+    verification off. Returns the asset name, which is what the manifest records as the tag.
+    """
+    triple = pbs_triple()
+    expected = PBS_SHA256.get(triple)
+    if expected is None:
+        raise SystemExit(f"bundle_python: no pinned python-build-standalone hash for {triple}")
+    asset = pbs_asset(triple)
+    url = pbs_url(asset)
+
+    with tempfile.TemporaryDirectory(prefix="bundle_python-") as scratch:
+        tarball = Path(scratch) / asset
+        log(f"downloading {url}")
+        digest = hashlib.sha256()
+        with urllib.request.urlopen(url, timeout=60) as response, tarball.open("wb") as sink:
+            while chunk := response.read(1 << 20):
+                digest.update(chunk)
+                sink.write(chunk)
+        if digest.hexdigest() != expected:
+            raise SystemExit(
+                f"bundle_python: {asset} has sha256 {digest.hexdigest()},\n"
+                f"  expected {expected}. Refusing to unpack it."
+            )
+        log(f"sha256 ok: {asset}")
+        adopt_interpreter(out, tarball)
+    return asset
+
+
+def resolve_fetcher(requested: str) -> str:
+    """`auto` is uv when uv is on PATH -- today's path, unchanged -- and `builtin` when not."""
+    if requested != "auto":
+        return requested
+    return "uv" if shutil.which("uv") is not None else "builtin"
+
+
 def unmanage(root: Path) -> None:
     """Drop the marker that stops anything installing here. See the module docstring."""
     # `rglob` rather than the stdlib path, because the marker sits in the stdlib directory
@@ -438,8 +546,17 @@ def unmanage(root: Path) -> None:
 
 
 def install_gateway(root: Path, wheel: Path) -> None:
-    """Install the wheel and its two pinned dependencies into the bundled interpreter."""
+    """Install the wheel and its two pinned dependencies into the bundled interpreter.
+
+    Through uv when there is one, and otherwise through the interpreter's own pip -- which
+    python-build-standalone ships, and which `strip` removes again straight afterwards, so
+    either way the app leaves here with no installer in it.
+    """
     interpreter = interpreter_path(root)
+    if shutil.which("uv") is None:
+        install_with_pip(interpreter, wheel)
+        return
+
     argv = ["uv", "pip", "install", "--python", str(interpreter), "--system", str(wheel)]
 
     # Mirrors the escape hatch the Makefile documents for pip: behind a TLS-intercepting
@@ -450,6 +567,22 @@ def install_gateway(root: Path, wheel: Path) -> None:
         argv.extend(["--allow-insecure-host", host])
 
     run(argv, env=uv_environment())
+
+
+def install_with_pip(interpreter: Path, wheel: Path) -> None:
+    """The uv-less install. pip reads `PIP_INDEX_URL` and `PIP_TRUSTED_HOST` itself.
+
+    An adopted tree that someone already stripped may have no pip; `ensurepip` puts one
+    back from the wheel the stdlib carries, offline, and is itself stripped afterwards.
+    """
+    probe = run([str(interpreter), "-m", "pip", "--version"], check=False, capture_output=True)
+    if probe.returncode != 0:
+        run([str(interpreter), "-m", "ensurepip", "--default-pip"])
+    run([
+        str(interpreter), "-m", "pip", "install",
+        "--disable-pip-version-check", "--no-warn-script-location", "--progress-bar", "off",
+        str(wheel),
+    ])
 
 
 def strip(root: Path) -> list[str]:
@@ -524,6 +657,7 @@ def write_manifest(
     version: str | None,
     removed: list[str],
     source: str,
+    tag: str | None,
 ) -> dict[str, object]:
     """Record what this bundle is, so a bug report can name it.
 
@@ -532,7 +666,8 @@ def write_manifest(
 
     `source` is the third question, and it arrived with `--interpreter`: an adopted tree is
     whatever someone downloaded, so "which uv tag did this ask for" has no answer and
-    `python_requested` and `tag` are null rather than repeating a default nobody used.
+    `python_requested` and `tag` are null rather than repeating a default nobody used. The
+    built-in fetcher records `builtin`, and its `tag` is the exact asset it downloaded.
     `python` is read out of the interpreter either way, and is the field to trust.
     """
     interpreter = interpreter_path(root)
@@ -544,7 +679,7 @@ def write_manifest(
     manifest = {
         "python": reported,
         "python_requested": version,
-        "tag": uv_python_tag(version) if version is not None else None,
+        "tag": tag,
         "source": source,
         "wheel": wheel.name,
         "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
@@ -568,7 +703,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--python-version",
         default=DEFAULT_VERSION,
-        help="CPython major.minor. Unused with --interpreter, which brings its own.",
+        help=(
+            "CPython major.minor. Unused with --interpreter, which brings its own, and "
+            "fixed at PBS_PYTHON's for the built-in fetcher."
+        ),
     )
     parser.add_argument("--wheel", type=Path, help="Wheel to install (default: newest in dist/).")
     parser.add_argument(
@@ -578,6 +716,15 @@ def main(argv: list[str] | None = None) -> int:
             "Adopt an already-fetched standalone CPython -- an unpacked tree or a .tar.gz -- "
             "instead of downloading one with uv. For builds behind a firewall; see "
             "src/desktop/README.md."
+        ),
+    )
+    parser.add_argument(
+        "--fetcher",
+        choices=("auto", "uv", "builtin"),
+        default="auto",
+        help=(
+            "How the interpreter is downloaded: uv, or the stdlib with a pinned release and "
+            "hash. `auto` (the default) is uv when it is on PATH. Ignored with --interpreter."
         ),
     )
     parser.add_argument(
@@ -607,9 +754,21 @@ def main(argv: list[str] | None = None) -> int:
         source = args.interpreter.resolve()
         adopt_interpreter(out, source)
         requested, recorded = None, str(source)
-    else:
+        tag = None
+    elif resolve_fetcher(args.fetcher) == "uv":
         fetch_interpreter(out, args.python_version)
         requested, recorded = args.python_version, "uv"
+        tag = uv_python_tag(requested)
+    else:
+        # The pin is one interpreter, so a different major.minor is a refusal, not a
+        # silent substitution of the one we happen to have a hash for.
+        if not PBS_PYTHON.startswith(f"{args.python_version}."):
+            raise SystemExit(
+                f"bundle_python: the built-in fetcher is pinned to {PBS_PYTHON}; "
+                f"--python-version {args.python_version} needs uv"
+            )
+        tag = fetch_interpreter_builtin(out)
+        requested, recorded = args.python_version, "builtin"
 
     unmanage(out)
     install_gateway(out, wheel)
@@ -617,7 +776,7 @@ def main(argv: list[str] | None = None) -> int:
     log(f"stripped {len(removed)} paths")
     compile_bytecode(out)
     verify(out, args.config)
-    manifest = write_manifest(out, wheel, requested, removed, recorded)
+    manifest = write_manifest(out, wheel, requested, removed, recorded, tag)
 
     log(f"Python {manifest['python']} + {wheel.name} -> {out} ({megabytes(out)} MB)")
     return 0

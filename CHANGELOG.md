@@ -9,6 +9,14 @@ nobody reads.
 
 ## Unreleased
 
+**The desktop app builds on a machine without uv.** `make tauri-python` used to need uv
+twice — to download the standalone interpreter and to install the wheel into it — so a
+machine without it could not build the app at all, `--interpreter` included. Without uv on
+`PATH` the script now downloads a pinned python-build-standalone release itself, refuses it
+unless its SHA-256 matches the one pinned in `scripts/bundle_python.py`, and installs the
+wheel with the interpreter's own pip. With uv installed nothing changes; `--fetcher builtin`
+forces the new path.
+
 **About no longer repeats the header.** Its card of server rows showed what the header already
 shows on every screen — each server's state, and in its menu the description, command, error
 and missing secrets — so it was a second copy of the same facts. About is now the tour, the
