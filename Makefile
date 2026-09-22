@@ -116,7 +116,7 @@ VENV_FLAGS := $(if $(strip $(OFFLINE)),--offline,)
 
 .PHONY: venv sync install lint docs-check test ui-deps check build wheel sdist container-image \
         print-release-platforms package run run-dev connect tauri-python tauri-stage tauri-dev \
-        tauri-bundle tauri-artifacts tauri-brand tauri-check clean clean-outputs clean-venv distclean
+        tauri-bundle tauri-artifacts tauri-brand tauri-icons tauri-check clean clean-outputs clean-venv distclean
 
 venv: $(VENV_STAMP)
 
@@ -326,6 +326,17 @@ BRAND_FLAG = $(if $(wildcard $(BRAND_CONF)),--config tauri.brand.json,)
 ##     make tauri-brand ARGS=--clear         # back to stock
 tauri-brand:
 	$(PYTHON_BIN) scripts/brand_desktop.py --config $(CONFIG) $(ARGS)
+
+## The stock icon set, rendered from `icons/app-icon.svg` -- the web favicon on a tile. Into
+## a scratch directory first because `cargo tauri icon` also writes Android, iOS and Windows
+## Store sets nobody ships; only the files `bundle.icon` lists, plus `icon.png`, are kept.
+## The output is committed, so this is run by hand after an edit to either SVG rather than
+## by every build.
+ICON_SCRATCH := $(TAURI_DIR)/target/icons
+tauri-icons:
+	rm -rf '$(ICON_SCRATCH)'
+	cd '$(TAURI_DIR)' && cargo tauri icon icons/app-icon.svg -o '$(ICON_SCRATCH)'
+	cd '$(ICON_SCRATCH)' && cp 32x32.png 128x128.png 128x128@2x.png icon.icns icon.ico icon.png '$(TAURI_DIR)/icons/'
 
 ## Run the app from source, with the UI symlinked rather than copied so an edit to
 ## `src/mcp_gateway_ui/app.js` is one Cmd+R away. Needs the bundled interpreter to exist;

@@ -176,6 +176,27 @@ def test_the_bundle_names_its_icons_and_one_is_a_square_png() -> None:
     assert any(w == h for w, h in pngs), f"no square PNG among {icons}"
 
 
+def test_the_app_icon_is_the_web_favicon() -> None:
+    """The Dock and the browser tab wear one mark, so the mark is held equal here.
+
+    `icons/app-icon.svg` carries `logo.svg`'s drawing on a tile, and the committed rasters
+    are rendered from it by `make tauri-icons`. Compared as the two `<g>` groups with the
+    whitespace folded away, which is the whole of the mark and none of the tile.
+    """
+    import re
+
+    def mark(path: Path) -> list[str]:
+        groups = re.findall(r"<g fill=.*?</g>", path.read_text(), re.S)
+        return [re.sub(r"\s+", " ", g) for g in groups]
+
+    favicon = mark(REPO_ROOT / "src" / "mcp_gateway_ui" / "logo.svg")
+    assert len(favicon) == 2, "logo.svg changed shape; update the comparison with it"
+    assert mark(TAURI / "icons" / "app-icon.svg") == favicon, (
+        "the app icon and the favicon have drifted -- copy the mark across, then "
+        "`make tauri-icons`"
+    )
+
+
 def test_the_bundle_name_needs_no_quoting() -> None:
     """`MCP-Gateway.app`, not `MCP Gateway.app`.
 

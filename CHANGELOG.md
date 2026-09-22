@@ -9,6 +9,11 @@ nobody reads.
 
 ## Unreleased
 
+**The desktop app wears the admin UI's mark.** The Dock, taskbar and Finder showed Tauri's
+placeholder icon while the browser tab showed the gateway's own, so the same product looked
+like two. The app icon is now the favicon on a rounded tile, rendered by `make tauri-icons`
+from one SVG that a test keeps in step with `logo.svg`.
+
 **The desktop app builds on a machine without uv.** `make tauri-python` used to need uv
 twice — to download the standalone interpreter and to install the wheel into it — so a
 machine without it could not build the app at all, `--interpreter` included. Without uv on

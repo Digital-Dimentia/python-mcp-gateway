@@ -579,12 +579,15 @@ ships iconless and the AppImage refuses to build. Two of the five entries are th
 build rather than for the eye: `icon.ico` is compiled into a **Windows Resource file by
 `tauri_build::build()`**, so a missing one is not an app with a blank icon, it is a crate
 that does not compile — on Windows only, where no developer here builds. `icon.icns` is the
-macOS half of the same list. Both are generated from `icon.png` with `cargo tauri icon`;
-regenerate them from that file rather than adding a differently-drawn one beside it.
+macOS half of the same list. All of them are rendered from `icons/app-icon.svg` by
+`make tauri-icons`: the admin UI's favicon, `src/mcp_gateway_ui/logo.svg`, drawn on the
+rounded tile macOS gives every Dock icon, so the app and the browser tab wear one mark.
+A test holds the two SVGs' drawing equal; change the mark in both, then re-run the target.
+`make tauri-brand` still overrides the set per deployment, beside it in `icons/brand/`.
 
 ## Not done yet
 
-The bundle is ad-hoc signed and un-notarised, and the icons are a generated placeholder.
+The bundle is ad-hoc signed and un-notarised.
 `dmg` is not a bundle target because `bundle_dmg.sh` drives Finder through AppleScript; it
 belongs with the signing work, which has to sign every Mach-O inside the bundled
 interpreter. The Windows installer is unsigned too, which means SmartScreen warns on it.
