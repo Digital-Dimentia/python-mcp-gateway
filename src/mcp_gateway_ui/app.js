@@ -566,7 +566,10 @@ function serverEntry(backend, meta = false) {
       + (meta ? ' server-meta' : ''),
   });
 
-  // Indicator and name, and that is the whole button.
+  // Indicator, name, and how many of its tools `/mcp` is advertising -- that is the whole
+  // button. The count is the one number worth reading sideways across the row, because it is
+  // what the model is paying for; the breakdown is on hover and the choosing is in the menu.
+  const count = toolCount(name, meta ? [] : (backend.hidden_tools || []));
   const button = el('button', {
     type: 'button',
     class: 'server-button',
@@ -574,6 +577,11 @@ function serverEntry(backend, meta = false) {
   }, [
     el('span', { class: `dot dot-${backend.status}` }),
     el('span', { class: 'server-name', text: name }),
+    count && el('span', {
+      class: `badge server-count${count.shown < count.total ? ' server-count-trimmed' : ''}`,
+      text: String(count.shown),
+      title: `${count.shown} of ${count.total} tools advertised on /mcp`,
+    }),
   ]);
   // Selecting a server and acting on one are two different intentions, so they are two
   // different buttons. This one only selects: choosing what the columns show should not
@@ -644,6 +652,22 @@ function serverEntry(backend, meta = false) {
 
   wrap.append(menu);
   return wrap;
+}
+
+/**
+ * How many of a server's tools `/mcp` advertises, out of how many it has. Null when nothing
+ * is listed for it -- a server that is down, or a page whose `/mcp` session is not up yet --
+ * because a `0` there would claim the server publishes nothing, which nobody has asked.
+ *
+ * Counted off the bench's own listing, which is unfiltered (see `visibility.md`), minus the
+ * hidden set: that is exactly what a model client's `tools/list` would hold for this server.
+ */
+function toolCount(name, hidden) {
+  const listed = (state.listings.tools || [])
+    .filter((entry) => ownerOf('tools', entry) === name)
+    .map((entry) => localName('tools', entry));
+  if (!listed.length) return null;
+  return { shown: listed.filter((tool) => !hidden.includes(tool)).length, total: listed.length };
 }
 
 // ── Which tools this server advertises ─────────────────────────────────────────
@@ -1279,6 +1303,10 @@ primitives.install({
   listingsChanged: () => {
     variables.vocabularies.clear();
     variables.refreshVariables();
+    // The header counts and the tool picker are both built from the listings, and `/admin`
+    // and `/mcp` answer in whichever order they like -- so the bar is redrawn when either
+    // does, not only after an admin refresh.
+    renderBackends();
   },
 });
 

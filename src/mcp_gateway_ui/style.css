@@ -545,6 +545,28 @@ a.button { text-decoration: none; display: inline-block; }
 }
 .server-button:hover { background: var(--panel-2); }
 .server-name { font-size: 0.82rem; font-weight: 600; }
+/* How many tools `/mcp` advertises for this server.
+ *
+ * Neither state may borrow the accent: a selected pill is drawn in it, and a green count on a
+ * green pill is a count that disappears on exactly the server you are looking at. So the
+ * plain count sits on `--rule` -- a step darker than the `--panel-2` a hovered pill turns,
+ * which is what the stock `.badge` background would have vanished into -- and a trimmed one
+ * is solid `--warn`, a different hue from the accent in both themes. Text is `--ink` and
+ * `--panel` respectively: 13:1 / 10.4:1 and 5.9:1 / 8.0:1, light / dark.
+ *
+ * **Compound on purpose.** The element is also a `.badge`, and `.badge` is defined further
+ * down with the same one-class specificity -- so a bare `.server-count` here lost to it on
+ * source order, and the amber never rendered at all. `.badge.server-count` outranks it
+ * wherever either rule sits in this file. */
+.badge.server-count {
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  background: var(--rule);
+  color: var(--ink);
+}
+.badge.server-count-trimmed { background: var(--warn); color: var(--panel); }
 
 .server-caret {
   display: flex;

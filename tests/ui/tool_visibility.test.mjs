@@ -138,6 +138,44 @@ describe('the tool picker in a server menu', () => {
     assert.equal(rows[0].querySelector('input').checked, false);
   });
 
+  const pillCount = (name) => [...document.querySelectorAll('#servers .server')]
+    .find((w) => w.querySelector('.server-name')?.textContent === name)
+    ?.querySelector('.server-count');
+
+  it('counts on the pill what /mcp advertises, and says out of how many on hover', () => {
+    const badge = pillCount('zoo');
+    assert.equal(badge.textContent, '2');
+    assert.equal(badge.title, '2 of 3 tools advertised on /mcp');
+    assert.ok(badge.classList.contains('server-count-trimmed'));
+  });
+
+  it('is not accented when nothing is hidden', () => {
+    hidden = [];
+    ui.state.backends = [backend()];
+    ui.renderBackends();
+    assert.equal(pillCount('zoo').textContent, '3');
+    assert.ok(!pillCount('zoo').classList.contains('server-count-trimmed'));
+  });
+
+  it('follows a tick without the menu having to be reopened', async () => {
+    const menu = openMenu();
+    [...menu.querySelectorAll('.server-tools input')][0].click();
+    await tick();
+    assert.equal(pillCount('zoo').textContent, '1');
+  });
+
+  it('shows no count, rather than 0, for a server nothing is listed for', () => {
+    ui.state.listings.tools = [];
+    ui.renderBackends();
+    assert.equal(pillCount('zoo'), null);
+  });
+
+  it('counts the meta-tools on the gateway pill', () => {
+    ui.state.listings.tools = [...ui.state.listings.tools, { name: 'gateway__list_backends' }];
+    ui.renderBackends();
+    assert.equal(document.querySelector('#servers .server-meta .server-count').textContent, '1');
+  });
+
   it('has no picker on the gateway pill: the meta-tools are not selectable', () => {
     const meta = document.querySelector('#servers .server-meta');
     assert.equal(meta.querySelector('.server-tools'), null);

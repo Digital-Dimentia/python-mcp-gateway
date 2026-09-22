@@ -338,6 +338,14 @@ server with a modest number of tools: `placeMenu()` only handles the horizontal 
 long list runs past the bottom of the window, and a height cap on the list is the fix when that
 day comes.
 
+Each pill also carries a number: how many of that server's tools `/mcp` is advertising,
+counted off the bench's unfiltered listing minus the hidden set — which is exactly what a
+model client's `tools/list` holds for it. It turns solid amber once anything is hidden —
+not the accent, which a selected pill is already drawn in — and its hover says `n of m`. It is left off, rather than shown as `0`, for a server nothing is listed
+for, because that would claim it publishes nothing. The `gateway` pill counts its meta-tools,
+which are never hidden. Since the count and the picker both come from the listings, the bar is
+redrawn whenever the listings are re-read, not only when `/admin` answers.
+
 The `gateway` pill has no picker. Its meta-tools are the model's map of the gateway, and five
 tools is not where context is won.
 

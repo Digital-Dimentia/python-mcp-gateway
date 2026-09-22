@@ -14,7 +14,9 @@ two hundred tools, and one it will never call still costs context on every turn.
 lever was disabling a whole server, which stops the process too. Now each server's menu in
 the header carries a checkbox per tool, with All and None: untick one and it stops appearing
 in `tools/list` on the MCP port, and every attached client is told the list changed. Tick the
-server down to the tools the session in front of you is actually about.
+server down to the tools the session in front of you is actually about. Each server's pill shows how
+many of its tools the model is being offered, amber once any are hidden, so you can see
+where the context is going without opening a menu.
 
 It is **not advertised**, not blocked — a hidden tool is still callable by a client that knows
 its name, because this is context economy and not a permission system. The admin UI's bench
