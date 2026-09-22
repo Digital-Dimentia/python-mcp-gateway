@@ -31,8 +31,10 @@ it is used, so a deployment cannot end up relying on it quietly.
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import os
+import shlex
 import time
 from collections import Counter
 from contextlib import contextmanager
@@ -373,7 +375,7 @@ class Backend:
             )
         except (OSError, MCPProtocolError) as exc:
             await self._stop_client(client)
-            return self._fail(str(exc))
+            return self._fail(f"{exc}{self._argv_note(exc)}")
 
         self.client = client
         self.status = BackendStatus.RUNNING
@@ -473,6 +475,26 @@ class Backend:
             waiting,
         )
         return True
+
+    def _argv_note(self, exc: BaseException) -> str:
+        """The argv behind a spawn that never happened, quoted so whitespace is visible.
+
+        `[Errno 2] No such file or directory: 'python'` names the executable and stops, which
+        is the wrong half of the answer when what is wrong is an *argument*: a path carrying
+        a stray space fails as a file nobody typed, and the error as written makes that look
+        like a missing interpreter. `shlex.join` puts quotes around exactly the arguments
+        that contain whitespace, so the broken one is the one wearing them.
+
+        Only for a spawn failure -- `ENOENT` and its neighbours from `create_subprocess_exec`
+        -- because every other `OSError` here comes from a process that did start, where the
+        command line is noise. Nothing secret is added: `${VAR}` is refused in `command` and
+        `args`, so argv is already the literal text of the catalogue.
+        """
+        if self.spec.url is not None or not isinstance(exc, OSError):
+            return ""
+        if exc.errno not in (errno.ENOENT, errno.ENOTDIR, errno.EACCES, errno.EPERM):
+            return ""
+        return f" (tried: {shlex.join([self.spec.command, *self.spec.args])})"
 
     def _fail(self, reason: str) -> bool:
         self.status = BackendStatus.FAILED

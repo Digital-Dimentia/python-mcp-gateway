@@ -304,3 +304,21 @@ async def test_a_disabled_server_is_not_reported_as_missing_a_secret(tmp_path) -
         assert (await client.call("admin.secrets.missing"))["servers"] == {}
     finally:
         await harness.close()
+
+
+def test_a_long_argument_stays_on_one_line(tmp_path: Path) -> None:
+    """A folded argument is a path with a break in it, one editor re-wrap from a space.
+
+    The join is lossless while the break sits on a space, so this is not about what the
+    reader gets back today -- it is about what a person sees and edits. An arg that must be
+    reassembled by eye is one that gets reassembled wrongly, and the backend then dies
+    naming a file nobody typed.
+    """
+    path = tmp_path / "servers.yaml"
+    path.write_text("servers: {}\n")
+    arg = "--directory=/Users/dave/Library/Application Support/some vendor/mcp servers/backend/v2"
+
+    config_writer.add_server(path, "demo", {"command": "python", "args": [arg], "enabled": False})
+
+    assert f"- {arg}" in path.read_text(), "the argument was folded across lines"
+    assert config.load(path).servers["demo"].args == (arg,)

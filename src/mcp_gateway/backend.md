@@ -77,6 +77,14 @@ decision in [`config.md`](config.md). A `Backend` object exists for **every** ca
 entry, including disabled and failed ones, precisely so `gateway__list_backends` can say
 *why* a backend is not serving; an object that only existed while healthy could not.
 
+A spawn that never happened says what it tried. `[Errno 2] No such file or directory:
+'python3'` names the executable and stops, which is the wrong half of the answer when the
+broken thing is an argument — a path with a stray space in it fails exactly that way, and
+the message reads as a missing interpreter. So `ENOENT` and its neighbours carry the argv,
+through `shlex.join`, which quotes precisely the arguments containing whitespace: the one
+that is wrong is the one wearing quotes. Nothing secret joins it, because `${VAR}` is
+refused in `command` and `args` — argv is the catalogue's own literal text.
+
 ## A failed start puts a floor under the next one
 
 `consecutive_failures` was counted long before anything read it, which left nothing between

@@ -24,6 +24,15 @@ Note the asymmetry: the reader uses `typ="safe"` and the writer `typ="rt"`. The 
 no use for comments and should have the smaller, stricter loader; the writer needs nothing
 else.
 
+The emitter's width is set past anything a catalogue will hold, which turns line folding
+off. At a finite width a long plain scalar is *folded* over continuation lines, and that is
+lossless — the break only ever lands on a space, and YAML joins it back as one. The cost is
+not to the reader but to the person: an argument like
+`--directory=/srv/Application Support/mcp servers/backend` arriving as two indented lines
+reads as two arguments, and an editor that re-wraps it moves the break into the middle of a
+word, where the join puts a space *inside* a path. What that produces is a backend that will
+not spawn, naming a file nobody typed. One argument, one line.
+
 ### 2. Validate before writing
 
 The candidate tree is serialised, handed to `config.parse`, and written only if that

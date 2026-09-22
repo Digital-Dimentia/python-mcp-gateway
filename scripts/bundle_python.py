@@ -107,8 +107,15 @@ DEFAULT_VERSION = "3.13"
 #: but the tarball someone carried in.
 PBS_RELEASE = "20260901"
 PBS_PYTHON = "3.13.15"
-PBS_GITHUB_BASE =  os.getenv("GITHUB_PROXY_BASE", "https://github.com")
-PBS_DOWNLOAD = PBS_GITHUB_BASE / "astral-sh" / "python-build-standalone" / "releases" / "download"
+#: `GITHUB_PROXY_BASE` swaps the host for a proxy or an internal mirror of GitHub that keeps
+#: GitHub's own paths. `UV_PYTHON_INSTALL_MIRROR` is the other end of the same idea and wins
+#: over this one: it replaces the whole `.../releases/download` prefix, which is what a
+#: Artifactory-style mirror or a `file://` directory needs. Either way the pinned SHA-256 is
+#: still the gate, so a proxy that serves something else is refused rather than trusted.
+PBS_GITHUB_BASE = os.environ.get("GITHUB_PROXY_BASE") or "https://github.com"
+PBS_DOWNLOAD = (
+    f"{PBS_GITHUB_BASE.rstrip('/')}/astral-sh/python-build-standalone/releases/download"
+)
 PBS_SHA256 = {
     "aarch64-apple-darwin": "d3904bd6a072246e07aa0bdadee9a14e80521e42a943c0848059feb16a2816dc",
     "x86_64-apple-darwin": "f712a9143c8a5d248438ec7921a0b48d548bca4f1337d33c690d28c2d0504137",

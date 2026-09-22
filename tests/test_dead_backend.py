@@ -87,6 +87,28 @@ async def test_a_silent_refusal_still_says_what_it_can(tmp_path) -> None:
         await harness.close()
 
 
+async def test_a_command_line_that_will_not_spawn_shows_its_whitespace(tmp_path) -> None:
+    """`No such file or directory: \'python3\'` blames the interpreter for a broken argument.
+
+    A path carrying a stray space -- from a hand-folded catalogue line, or a paste that
+    wrapped -- is the case this exists for. `shlex.join` quotes only the arguments holding
+    whitespace, so the error points at the one that is wrong instead of at the command.
+    """
+    servers = (
+        "servers:\n"
+        "  spaced:\n"
+        "    command: /usr/bin/does-not-exist\n"
+        "    args: [\"/srv/not-a-full-wor d/main.py\"]\n"
+    )
+    harness = await daemon(tmp_path, servers=servers)
+    try:
+        error = harness.gateway.backend("spaced").error
+        assert "/usr/bin/does-not-exist" in error
+        assert "'/srv/not-a-full-wor d/main.py'" in error, error
+    finally:
+        await harness.close()
+
+
 async def test_calling_a_down_backends_tool_returns_readable_content(tmp_path) -> None:
     """The decision that matters.
 

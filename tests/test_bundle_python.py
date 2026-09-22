@@ -461,6 +461,15 @@ def test_the_pin_is_the_version_uv_would_have_been_asked_for() -> None:
     assert set(bundle_python.PBS_SHA256) == {triple for _, _, triple in BUILT_TRIPLES}
 
 
+def test_a_github_proxy_replaces_the_host_and_keeps_the_path() -> None:
+    """`GITHUB_PROXY_BASE` is read at import, so this asserts the shape it produces."""
+    assert bundle_python.PBS_DOWNLOAD.startswith(bundle_python.PBS_GITHUB_BASE.rstrip("/"))
+    assert bundle_python.PBS_DOWNLOAD.endswith(
+        "/astral-sh/python-build-standalone/releases/download"
+    )
+    assert "//astral-sh" not in bundle_python.PBS_DOWNLOAD, "a trailing slash doubled up"
+
+
 def test_the_download_url_honours_uvs_mirror_variable(monkeypatch) -> None:
     asset = bundle_python.pbs_asset("aarch64-apple-darwin")
     assert asset == (

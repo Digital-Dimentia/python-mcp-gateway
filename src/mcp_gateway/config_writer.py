@@ -75,7 +75,14 @@ def _yaml() -> YAML:
     yaml.preserve_quotes = True
     # Deep enough for `servers: -> name: -> env: -> KEY:` without reflowing what is there.
     yaml.indent(mapping=2, sequence=4, offset=2)
-    yaml.width = 100
+    # One argument is one line, however long. At a finite width the emitter *folds* a long
+    # plain scalar across continuation lines -- losslessly, since it only ever breaks at a
+    # space and YAML joins the line back with one. What it is not is safe to edit by hand or
+    # to paste anywhere: a `--directory=/Users/.../mcp servers/backend` broken over two lines
+    # reads as two things, and re-wrapping it in an editor moves the break into the middle of
+    # a word, where the join silently puts a space *inside* a path. That failure surfaces as
+    # a backend that will not spawn, naming a file nobody typed. So: no folding.
+    yaml.width = 1 << 30
     return yaml
 
 

@@ -9,6 +9,17 @@ nobody reads.
 
 ## Unreleased
 
+**A long argument stays on one line in `servers.yaml`.** The writer used to fold anything
+past 100 columns onto continuation lines. Re-reading it was lossless, but the folded form is
+a trap for a person: an editor that re-wraps such a line moves the break inside a word, and
+the argument comes back with a space in the middle of a path — a backend that will not
+spawn, naming a file nobody typed. Folding is now off.
+
+**A backend that cannot be spawned says what it tried.** `No such file or directory` named
+only the executable, so a broken *argument* read as a missing interpreter. The failure now
+carries the whole command line, quoted so that an argument containing whitespace is visibly
+the one at fault.
+
 **The desktop app wears the admin UI's mark.** The Dock, taskbar and Finder showed Tauri's
 placeholder icon while the browser tab showed the gateway's own, so the same product looked
 like two. The app icon is now the favicon on a rounded tile, rendered by `make tauri-icons`
