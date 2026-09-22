@@ -34,6 +34,9 @@ REQUIRED_TARGETS = frozenset(
         "package",
         "run",
         "connect",
+        # The pywebview desktop host. Same reasoning as the `tauri-*` block below, minus
+        # the toolchain: `src/mcp_gateway/window.md` names it as the way to open the window.
+        "run-window",
         # The desktop shell. Not in CI's `make venv lint docs-check test build` line and
         # deliberately not a prerequisite of any of it -- the daemon ships without the app
         # -- but README.md and src/desktop/README.md both name these, so losing one silently is

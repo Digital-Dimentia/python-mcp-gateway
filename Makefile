@@ -115,7 +115,7 @@ OFFLINE ?=
 VENV_FLAGS := $(if $(strip $(OFFLINE)),--offline,)
 
 .PHONY: venv sync install lint docs-check test ui-deps check build wheel sdist container-image \
-        print-release-platforms package run run-dev connect tauri-python tauri-stage tauri-dev \
+        print-release-platforms package run run-dev run-window connect tauri-python tauri-stage tauri-dev \
         tauri-bundle tauri-artifacts tauri-brand tauri-icons tauri-check clean clean-outputs clean-venv distclean
 
 venv: $(VENV_STAMP)
@@ -252,6 +252,15 @@ run:
 ## them ends up printing a URL that quietly does not work.
 run-dev:
 	@$(MAKE) run CONFIG=servers.dev.yaml NO_KEY=$(DEV_NO_KEY)
+
+## Open the admin UI in a desktop window, with the gateway running inside the same
+## process. The pure-Python half of the desktop story -- the Tauri shell in src/desktop/
+## is the other, and needs cargo, which not every machine is allowed to have.
+##
+## Needs the toolkit: `.venv/bin/pip install -e '.[desktop]'`. It is an extra rather than a
+## dependency, so `make venv` alone will not have it and this target will say so in one line.
+run-window: venv
+	$(PYTHON_BIN) -m mcp_gateway.window --config $(CONFIG) $(DEBUG_FLAG)
 
 ## Run the stdio<->WS bridge in the foreground, for reproducing a client's handshake by
 ## hand. **Nothing is written to stdout**: that is the protocol wire here, and one stray

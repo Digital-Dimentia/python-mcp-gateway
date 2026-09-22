@@ -9,6 +9,18 @@ nobody reads.
 
 ## Unreleased
 
+**A desktop window for machines that are not allowed a compiler.**
+`pip install 'python-mcp-gateway[desktop]'` and then `mcp-gateway-desktop` opens the admin
+UI in a real window, with the gateway running inside the same process. The Tauri shell is
+still the better product where it can be built — it bundles its own CPython and installs
+onto a machine with no Python at all — but it is built with `cargo`, and in a managed
+environment where Rust is unapproved software and crate downloads are blocked, that build
+cannot begin. This one is a wheel and an extra. It gives up the bundled interpreter, remote
+mode, and the supervisor that would restart a gateway that died; what it keeps is the
+window. The daemon needed no change to host it: a page served from `127.0.0.1` is
+same-origin with the sockets it dials, so the browser transport the UI has always shipped is
+the one the window uses, and panels frame with no custom URI scheme.
+
 **A backend's last words are no longer cut off mid-path.** The three stderr lines carried
 into a failure were clipped at 200 characters from the right, silently — so a server
 refusing a long path lost both the end of the path and the `[Errno 2]` that explained it,

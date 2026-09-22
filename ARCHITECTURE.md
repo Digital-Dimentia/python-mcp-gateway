@@ -258,6 +258,34 @@ branch is now load-bearing. The port started out as a scrape of the daemon's `li
 ws://…` line, which worked but made a log line a wire format;
 [`portfile.md`](src/mcp_gateway/portfile.md) is what replaced it. See [`src/desktop/README.md`](src/desktop/README.md).
 
+## The other desktop host
+
+`cargo` is a hard floor for all of the above, and there are managed environments where Rust
+is unapproved software and crate downloads are blocked at the proxy. So there is a second
+window, `src/mcp_gateway/window.py`, that is a Python wheel and an extra:
+
+```mermaid
+flowchart TB
+    window3["the window: the same UI assets, pywebview"]
+    gateway3["Gateway, on a thread in this same process"]
+    backends3["npx backends"]
+
+    window3 -->|"ws /mcp and /admin, same origin"| gateway3
+    gateway3 -->|stdio| backends3
+```
+
+It is much smaller, and the reason is instructive: most of the Rust host is the cost of the
+window and the daemon being two processes. One process needs no supervisor, no orphan
+control, no port file and no socket proxy — a page served from `127.0.0.1:<port>` is
+same-origin with the sockets it dials, so the browser transport the UI already ships is the
+transport it uses. **The daemon needed no change for this one either**; the only Python that
+moved was `cli._serve`'s first half, into a shared `build_gateway`.
+
+What it gives up is a bundled interpreter, remote mode, and a supervisor: a fatal error in
+the gateway takes the window with it. The two hosts are not ranked — Tauri answers "someone
+without Python", this answers "someone without a compiler". See
+[`src/mcp_gateway/window.md`](src/mcp_gateway/window.md).
+
 ## Notes
 
 Every module has a sibling `.md` next to it, and `make docs-check` fails if one is missing or

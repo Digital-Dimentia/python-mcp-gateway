@@ -56,10 +56,27 @@ dev = [
   "pytest-asyncio>=1.0.0",
   "ruff==0.6.9",
 ]
+# The desktop window (`mcp-gateway-desktop`, src/mcp_gateway/window.py). An extra and not a
+# runtime dependency: the daemon runs headless in a container and on a server with no
+# display, and neither should acquire a GUI toolkit to do it. `window.py` imports `webview`
+# inside a function so the module stays importable without this installed.
+#
+# pywebview binds the platform's own webview -- WKWebView through pyobjc on macOS,
+# WebKit2GTK on Linux, WebView2 on Windows -- and pulls the pyobjc frameworks itself under
+# its own `sys_platform` markers. Linux additionally needs PyGObject and the system
+# `gir1.2-webkit2` packages, which pip cannot install; that is a documented prerequisite,
+# not a pin. Pinned like the runtime deps rather than floated: it is the thing that decides
+# which webview engine renders the admin UI.
+desktop = [
+  "pywebview==6.2.1",
+]
 
 [project.scripts]
 mcp-gateway = "mcp_gateway.cli:run"
 mcp-gateway-connect = "mcp_gateway.bridge:run"
+# The desktop window. See the `desktop` extra above; without it this script prints one line
+# saying what to install.
+mcp-gateway-desktop = "mcp_gateway.window:run"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

@@ -22,6 +22,7 @@ is the map. This is the path through them.
 | | |
 |---|---|
 | **The desktop app** | Everything in one window: no terminal, no URL, no access key to paste. Download a bundle, or build one — [`src/desktop/README.md`](src/desktop/README.md). Start here if you only want to *use* the gateway. |
+| **The desktop window, from pip** | `pip install 'python-mcp-gateway[desktop]'` then `mcp-gateway-desktop`. The same window, built with no compiler — for a machine that is not allowed a Rust toolchain. It needs a Python and a `servers.yaml`, which the bundled app does not. See [`src/mcp_gateway/window.md`](src/mcp_gateway/window.md). |
 | **The daemon, from a terminal** | `make run`, a browser for the UI, and a client attached over WebSocket or HTTP. This is what the rest of this document walks through, and it is also what the desktop app runs inside itself. |
 
 Either way the daemon, the configuration files and the UI are the same, and both mint an

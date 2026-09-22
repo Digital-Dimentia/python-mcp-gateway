@@ -1,5 +1,11 @@
 # The desktop shell
 
+> **No Rust on the machine you are building on?** `cargo` is a hard floor for
+> everything in this file. There is a second desktop host that is pure Python —
+> `pip install 'python-mcp-gateway[desktop]'`, then `mcp-gateway-desktop` — which gives
+> up the bundled interpreter and remote mode and keeps the window. See
+> [`../mcp_gateway/window.md`](../mcp_gateway/window.md).
+
 A Tauri app that is the gateway and its admin UI in one window: a Rust host that mints the
 access key, supervises a bundled-CPython gateway as a child process, and opens that
 gateway's two WebSockets itself.

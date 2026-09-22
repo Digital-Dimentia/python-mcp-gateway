@@ -442,16 +442,28 @@ def _handle(loop: asyncio.AbstractEventLoop, sig: int, action: Callable[[], None
         logger.debug("no handler for signal %s: not the main thread", sig)
 
 
-async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) -> None:
-    """Load, start backends, bind, and serve until told to stop."""
+def build_gateway(
+    config_path: Path, env_path: Path, *, host: str, port: int
+) -> tuple[Gateway, str | None]:
+    """Load, build the store, redact, and construct an unstarted `Gateway`.
+
+    Everything a host must do *before* `gateway.start()`, in one place because one of
+    these steps is not optional and is invisible when it is missing: `install_redaction`
+    has to run before anything can log a request line, or the access key leaks into a
+    `--debug` log through `websockets`' own logger. There are two entrypoints that stand a
+    gateway up -- this file's daemon and `window.py`'s desktop host -- and by the docstring
+    at the top of `configure_logging`, a decision that is correct in one and corrupting in
+    the other is not a decision worth having twice.
+
+    Returns the gateway and the resolved access key, which the caller needs back: `start`
+    takes it, and the desktop host puts it in the URL it opens.
+    """
     config = load_config(config_path)
     store = build_store(config, env_path)
     # The access key goes in even when it came from the environment rather than the store:
     # `websockets` logs the request line, query string and all, at DEBUG.
     access_key = resolve_access_key(store)
     install_redaction(store, extra=[access_key] if access_key else [])
-    # Before the backends start, so a bad certificate costs nothing to find out about.
-    tls = tls_context(args.tls_cert, args.tls_key)
 
     # Before the bind, so the name in the log is the name on the window when someone
     # correlates the two.
@@ -465,9 +477,19 @@ async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) ->
         store,
         config_path=config_path,
         env_path=env_path,
-        host=args.host,
-        port=args.port,
+        host=host,
+        port=port,
     )
+    return gateway, access_key
+
+
+async def _serve(args: argparse.Namespace, config_path: Path, env_path: Path) -> None:
+    """Load, start backends, bind, and serve until told to stop."""
+    gateway, access_key = build_gateway(config_path, env_path, host=args.host, port=args.port)
+    # Before the backends start, so a bad certificate costs nothing to find out about, and
+    # after the config load so that a file that is wrong in both ways still reports the
+    # config first -- that is the order a reader fixes them in.
+    tls = tls_context(args.tls_cert, args.tls_key)
     _install_signal_handlers(gateway)
 
     await gateway.start(
