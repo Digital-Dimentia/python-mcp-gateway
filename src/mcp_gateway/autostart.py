@@ -203,10 +203,6 @@ class Daemon:
             return False
         return True
 
-    def exited(self) -> int | None:
-        """The child's status if it is gone, else `None`. Never blocks."""
-        return None if self._process is None else self._process.poll()
-
     def stop(self) -> None:
         """Terminate the daemon we started, if it is still running. Never raises.
 

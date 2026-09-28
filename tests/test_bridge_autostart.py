@@ -35,6 +35,15 @@ servers:
 """
 
 
+#: The same, but the backend dawdles over `initialize` -- and the daemon starts its backends
+#: before it binds, so this is a daemon that is *slow to accept connections*. That is the
+#: difference between a bridge that waits properly and one that happens to get away with a
+#: single retry on an unloaded machine.
+SLOW_SERVERS = SERVERS.replace(
+    'MOCK_NAME: "docs"', 'MOCK_NAME: "docs"\n      MOCK_SLOW_START_MS: "2500"'
+)
+
+
 def _free_port() -> int:
     """A port nothing is listening on. Racy in principle; the OS does not hand it out twice."""
     with socket.socket() as sock:
@@ -250,6 +259,61 @@ async def test_an_ide_with_no_daemon_running_gets_a_working_gateway(tmp_path) ->
         handle.close()
 
     assert await _gone(port, timeout=15), "the daemon outlived the bridge that started it"
+
+
+async def test_no_reconnect_still_waits_for_the_daemon_it_started(tmp_path) -> None:
+    """`--no-reconnect` is suspended until the daemon we started answers.
+
+    One retry would not do. A cold start loads the config, spawns every backend and only then
+    binds, so the daemon is seconds away rather than milliseconds -- and a bridge that gave up
+    at the first backoff would make `--autostart` a coin toss on a loaded machine.
+
+    `SLOW_SERVERS` is what makes this a test rather than a coincidence: with a backend that is
+    quick to initialise, a single retry after a 0.25s backoff finds the daemon already bound,
+    and the old one-retry behaviour passes. 2.5s of `MOCK_SLOW_START_MS` is well past every
+    backoff this bridge will do, so only a bridge that genuinely waits gets an answer.
+    """
+    config = tmp_path / "servers.yaml"
+    config.write_text(SLOW_SERVERS, encoding="utf-8")
+    port = _free_port()
+
+    proc, log, handle = await _bridge(
+        tmp_path, port, "--autostart", "--config", str(config), "--no-reconnect"
+    )
+    try:
+        reply = await _handshake(proc)
+        assert reply["result"]["serverInfo"]["name"] == "mcp-gateway"
+        tools = await _request(proc, 2, "tools/list")
+        assert any(t["name"].startswith("docs__") for t in tools["result"]["tools"])
+    finally:
+        proc.stdin.close()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(proc.wait(), 15)
+        if proc.returncode is None:  # pragma: no cover
+            proc.kill()
+            await proc.wait()
+        handle.close()
+
+    assert await _gone(port, timeout=15), "the daemon outlived the bridge that started it"
+
+
+async def test_no_reconnect_without_autostart_gives_up_at_once_as_it_always_did(tmp_path) -> None:
+    """The waiting is scoped to a daemon *we* started; otherwise the flag is untouched.
+
+    With nothing listening and nothing to start, `--no-reconnect` exits on the first refused
+    connection rather than waiting out `_AUTOSTART_READY_SECONDS`. Pinned next to the test
+    above because the two together are the whole of the change: one waits, one does not.
+    """
+    port = _free_port()
+    proc, log, handle = await _bridge(tmp_path, port, "--no-reconnect")
+    try:
+        await asyncio.wait_for(proc.wait(), 10)
+    finally:
+        if proc.returncode is None:  # pragma: no cover - a bridge that ignored the flag
+            proc.kill()
+            await proc.wait()
+        handle.close()
+    assert "not reconnecting" in log.read_text(encoding="utf-8")
 
 
 async def test_a_daemon_that_is_already_running_is_left_alone(tmp_path) -> None:

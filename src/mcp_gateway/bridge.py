@@ -73,6 +73,16 @@ _BACKOFF_INITIAL = 0.25
 _BACKOFF_MAX = 5.0
 _BACKOFF_FACTOR = 2.0
 
+#: How long a daemon **this bridge started** gets to bind before the bridge stops waiting for
+#: it, even under `--no-reconnect`.
+#:
+#: Generous on purpose: a cold start loads a config, spawns every backend and only then binds
+#: the socket, so the window is seconds rather than milliseconds on a machine under load. The
+#: failure this guards against -- giving up on a daemon that was about to answer -- turns
+#: `--autostart` into a coin toss, which is worse than waiting too long for one that is broken.
+#: A broken one is not silent meanwhile: it inherits stderr and says why immediately.
+_AUTOSTART_READY_SECONDS = 30.0
+
 #: How long a message read from stdin waits for a connection before being failed.
 #:
 #: A client writes `initialize` the instant it spawns us, which is routinely before the
@@ -372,13 +382,32 @@ class Bridge:
 
     # --- the loop -----------------------------------------------------------------------
 
+    def _waiting_for_our_daemon(self, deadline: float | None) -> bool:
+        """Whether a daemon this bridge started is still worth waiting for.
+
+        The one thing that overrides `--no-reconnect`: see `_AUTOSTART_READY_SECONDS`.
+
+        Deliberately a deadline and not "has the child exited yet". The child exiting is what
+        losing the bind race looks like, and the winner does not accept connections until it
+        has spawned every backend -- so there is a window in which our child is gone, the
+        daemon that beat it is not listening yet, and giving up would be wrong. Waiting out the
+        clock cannot make that mistake.
+        """
+        if deadline is None:
+            return False
+        return asyncio.get_running_loop().time() < deadline
+
     async def _connect_loop(self) -> None:
         backoff = _BACKOFF_INITIAL
+        #: Set when we start a daemon, cleared once something answers. While it is set, the
+        #: bridge waits for that daemon whatever `--no-reconnect` says.
+        ready_by: float | None = None
         while True:
             try:
                 async with websockets.connect(self.url, **connect_kwargs(self.key, self.tls)) as websocket:
                     logger.info("connected to %s", self.url)
                     backoff = _BACKOFF_INITIAL
+                    ready_by = None
                     self._websocket = websocket
                     self._connected.set()
                     await self._socket_to_stdout(websocket)
@@ -393,8 +422,9 @@ class Bridge:
             # After the first failed attempt, not before it: if a daemon is already serving,
             # `--autostart` must be a no-op. `start` is idempotent, so this is only ever one
             # daemon however many times the loop comes round.
-            started = self.autostart.start() if self.autostart is not None else False
-            if not self.reconnect and not started:
+            if self.autostart is not None and self.autostart.start():
+                ready_by = asyncio.get_running_loop().time() + _AUTOSTART_READY_SECONDS
+            if not self.reconnect and not self._waiting_for_our_daemon(ready_by):
                 logger.info("not reconnecting (--no-reconnect): %s", reason)
                 return
             logger.info("disconnected (%s); retrying in %.2fs", reason, backoff)

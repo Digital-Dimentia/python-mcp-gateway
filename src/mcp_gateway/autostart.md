@@ -89,7 +89,21 @@ whether there is a key at all.
 
 ## `--no-reconnect`
 
-An odd pair with `--autostart`, and it behaves the obvious way rather than being refused: the
-spawn counts as a reason to go round the loop once more, so the daemon gets exactly one
-attempt to come up. `--no-reconnect` is documented as being for scripts and tests, which is
-also the only place the combination makes sense.
+The two are compatible, and starting a daemon suspends `--no-reconnect` until that daemon
+answers or a deadline passes (`_AUTOSTART_READY_SECONDS` in [`bridge.py`](bridge.md)). One
+retry would not do: a cold start loads the config, spawns every backend and only *then* binds
+the socket, so on a loaded machine the daemon is seconds away rather than milliseconds, and
+giving up early turns `--autostart` into a coin toss.
+
+Once something answers, the flag means what it says again — a later disconnection ends the
+bridge.
+
+**It waits on a clock rather than on the child, which looks like the weaker test and is not.**
+The obvious refinement is to stop as soon as the child process exits, since that is what losing
+the bind race looks like. But the daemon that *won* does not accept connections until it has
+spawned every backend, so there is a window where our child is already gone, the winner is not
+listening yet, and the connect attempt still fails — and a bridge that gave up there would
+fail precisely when two editors opened at once, which is the case this design is supposed to
+handle for free. The clock cannot make that mistake. The cost is that a daemon which is broken
+rather than merely slow is waited out; it is not silent while that happens, because it inherits
+stderr and says why immediately.
