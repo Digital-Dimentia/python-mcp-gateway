@@ -81,6 +81,26 @@ describe('the variables column', () => {
       selectServer(ui, ZOO, { resources: ['zoo://ticks'], templates: [] });
       assert.deepEqual(ui.vocabularyPairs(), []);
     });
+
+    // A multi-segment path variable, in both spellings a server might reach for.
+    // `naming.encode_resource_uri` used to percent-encode everything inside the braces but
+    // the braces, so the column was handed `{repo%2A}` or `{%2Brepo}` and paired a variable
+    // by that name -- one no pick could ever bind. The fixture mirrors the daemon's encoding,
+    // so each case asserts both halves: that the expression reaches the page whole, and that
+    // the resolver reads the variable back out of it.
+    for (const expression of ['{repo*}', '{+repo}', '{repo:8}']) {
+      it(`names the variable of a ${expression} template as the daemon spells it`, () => {
+        selectServer(ui, ZOO, {
+          resources: ['git://repositories'],
+          templates: [`git://repositories/${expression}`],
+        });
+        assert.ok(
+          ui.state.listings.templates[0].uriTemplate.endsWith(expression),
+          'the gateway spelling keeps the expression whole',
+        );
+        assert.deepEqual(ui.vocabularyPairs().map((pair) => pair.variable), ['repo']);
+      });
+    }
   });
 
   describe('the groups on screen', () => {

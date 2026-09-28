@@ -237,15 +237,20 @@ export const resource = (server, local) => ({
 /**
  * One `resources/templates/list` entry.
  *
- * The braces survive the encoding, which is not incidental: `naming.encode_resource_uri`
- * passes `safe='{}'` precisely so a client can still expand what it is given, and the
- * template form reads `templateVariables` off this gateway spelling rather than off the
- * backend's. A fixture that escaped them would name no variables at all.
+ * The RFC 6570 expressions survive the encoding whole, which is not incidental:
+ * `naming.encode_resource_uri` percent-encodes only *outside* `{...}` precisely so a client
+ * can still expand what it is given, and the template form reads `templateVariables` off
+ * this gateway spelling rather than off the backend's. A fixture that escaped the braces
+ * would name no variables at all, and one that escaped only their contents -- which is what
+ * `encodeURIComponent` alone does to `,` `+` `:` `?` `#` -- would name the wrong ones.
  */
-export const template = (server, local) => ({
-  uriTemplate: `mcpgw://${server}/${encodeURIComponent(local).replace(/%7B/g, '{').replace(/%7D/g, '}')}`,
-  name: `${server}__${local}`,
-});
+export const template = (server, local) => {
+  const encoded = String(local)
+    .split(/(\{[^{}]*\})/)
+    .map((part, i) => (i % 2 ? part : encodeURIComponent(part)))
+    .join('');
+  return { uriTemplate: `mcpgw://${server}/${encoded}`, name: `${server}__${local}` };
+};
 
 /**
  * Put a server's listings into `state` and select it.

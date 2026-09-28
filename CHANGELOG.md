@@ -24,6 +24,17 @@ rather than leaving you with pywebview's list of every toolkit it supports. The 
 same-origin with the sockets it dials, so the browser transport the UI has always shipped is
 the one the window uses, and panels frame with no custom URI scheme.
 
+**A resource template with a wildcard path variable now expands through the gateway.** A
+backend publishing `git://repositories/{repo*}` had it forwarded as `{repo%2A}`: the braces
+were spared by the percent-encoding but nothing inside them was, so every RFC 6570 operator
+and modifier was mangled and only the bare `{path}` form ever worked. The URI still decoded,
+which is why this looked like nothing from the gateway's side — the damage was entirely to
+the client, handed a template naming a variable that does not exist and unable to expand a
+multi-segment path. Templates that worked against a backend directly failed through the
+gateway. Encoding now stops at the edge of each `{...}` expression and resumes after it, so
+all six operators and both modifiers arrive byte-identical; the `{?q}` and `{#f}` forms work
+too, because a `?` after the authority is now read as the backend's rather than refused.
+
 **A backend's last words are no longer cut off mid-path.** The three stderr lines carried
 into a failure were clipped at 200 characters from the right, silently — so a server
 refusing a long path lost both the end of the path and the `[Errno 2]` that explained it,

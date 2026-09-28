@@ -273,8 +273,8 @@ class Catalogue:
                 if not isinstance(uri, str) or not uri:
                     continue
                 entry = dict(template)
-                # `encode_resource_uri` leaves RFC 6570 braces unescaped, so the expression
-                # survives and the client can still expand it.
+                # `encode_resource_uri` passes a whole RFC 6570 expression through verbatim,
+                # modifiers and operators included, so the client can still expand it.
                 entry["uriTemplate"] = naming.encode_resource_uri(backend.name, uri)
                 cleaned = ui_apps.sanitize_resource_meta(template.get("_meta"))
                 if cleaned is not None:

@@ -87,14 +87,77 @@ def test_two_backends_publishing_the_same_uri_get_distinct_addresses() -> None:
     assert naming.decode_resource_uri(two)[0] == "code"
 
 
-def test_uri_templates_keep_their_rfc6570_expressions() -> None:
-    """`safe="{}"` is what lets a client still expand a forwarded `uriTemplate`."""
-    encoded = naming.encode_resource_uri("fs", "file:///{path}")
-    assert "{path}" in encoded
-    assert naming.decode_resource_uri(encoded) == ("fs", "file:///{path}")
+def test_a_wildcard_path_variable_survives() -> None:
+    """The regression: a backend publishing `git://repositories/{repo*}`.
+
+    `quote(uri, safe="{}")` spared the braces but not the explode modifier, so the client was
+    handed `{repo%2A}` -- a variable that does not exist. The URI still decoded, so nothing
+    looked wrong from this side; what broke was the client's expansion of a multi-segment
+    path, and only against the gateway, never against the backend directly.
+    """
+    encoded = naming.encode_resource_uri("git", "git://repositories/{repo*}")
+    assert "{repo*}" in encoded
+    assert "%2A" not in encoded
+    assert naming.decode_resource_uri(encoded) == ("git", "git://repositories/{repo*}")
 
 
-@pytest.mark.parametrize("bad", ["file:///x", "mcpgw://", "mcpgw:///x", "not a uri"])
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "{path}",  # the one form the old `safe="{}"` happened to get right
+        "{repo*}",  # explode modifier
+        "{var:3}",  # prefix modifier
+        "{owner,repo}",  # more than one variable
+        "{+path}",  # reserved expansion -- the usual spelling for a multi-segment path
+        "{#frag}",
+        "{/a,b}",
+        "{;k}",
+        "{?q,limit}",
+        "{&y}",
+        "{.v}",
+    ],
+)
+def test_uri_templates_keep_their_rfc6570_expressions(expression: str) -> None:
+    """A `uriTemplate` is expanded client-side, so the expression must arrive byte-identical.
+
+    Every operator and modifier, not just the braces: the client reads the variable name out
+    of what we send it, and a percent-encoded modifier names nothing it can bind.
+    """
+    uri = f"file:///{expression}/rest"
+    encoded = naming.encode_resource_uri("fs", uri)
+    assert expression in encoded
+    assert naming.decode_resource_uri(encoded) == ("fs", uri)
+
+
+def test_only_the_expressions_are_spared() -> None:
+    """The counterpart: outside `{...}` nothing is safe, so a template stays one segment.
+
+    A literal `?` or `#` in a *concrete* URI must still be encoded, or `resources/read` would
+    address a different resource than the backend named. A stray brace is not an expression
+    and is encoded like anything else.
+    """
+    encoded = naming.encode_resource_uri("fs", "ui://panel?mode=wide#top")
+    assert "?" not in encoded.removeprefix("mcpgw://fs/")
+    assert "#" not in encoded
+    assert naming.decode_resource_uri(encoded) == ("fs", "ui://panel?mode=wide#top")
+
+    stray = naming.encode_resource_uri("fs", "weird://{unclosed/x")
+    assert "{" not in stray
+    assert naming.decode_resource_uri(stray) == ("fs", "weird://{unclosed/x")
+
+
+def test_decode_keeps_what_a_client_made_of_a_query_operator() -> None:
+    """`{?q}` is published verbatim, so an expanded read arrives carrying a real `?`.
+
+    The gateway's own resource URIs have no query of their own, so everything after the
+    authority is the backend's. Reading `urlsplit(...).path` would truncate it here.
+    """
+    assert naming.decode_resource_uri("mcpgw://fs/x%3A%2F%2Fs?q=hi") == ("fs", "x://s?q=hi")
+
+
+@pytest.mark.parametrize(
+    "bad", ["file:///x", "mcpgw://", "mcpgw:///x", "mcpgw://srv", "mcpgw:x", "not a uri"]
+)
 def test_decode_refuses_uris_that_are_not_ours(bad: str) -> None:
     with pytest.raises(naming.NamingError):
         naming.decode_resource_uri(bad)

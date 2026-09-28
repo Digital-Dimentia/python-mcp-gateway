@@ -50,11 +50,30 @@ directories both offering `file:///README.md` — and then which one answers a
 unambiguous by construction. The cost is a URI the client cannot interpret on its own,
 which is nominal: clients treat resource URIs as opaque handles.
 
-`quote(uri, safe="{}")` leaves braces unescaped so that RFC 6570 expressions in a
-`uriTemplate` survive — `file:///{path}` stays expandable by the client. A concrete URI
-containing a literal `{` becomes indistinguishable from a template expression; that is
-**declared unsupported** rather than worked around, because the only fix would be a second
-escaping layer inside the percent-encoding and nobody publishes such a URI.
+**Everything outside `{...}` is percent-encoded; everything inside is passed through
+verbatim.** A `uriTemplate` is expanded client-side, so the expression has to reach the
+client byte-identical to what the backend published. This was once `quote(uri, safe="{}")`,
+which spared the braces and nothing else — and Python's always-safe set is alphanumerics
+plus `_.-~`, so every operator and modifier *inside* the braces was percent-encoded.
+`git://repositories/{repo*}` went out as `{repo%2A}`: it still decoded, so nothing looked
+broken from here, but the client was handed a template naming a variable that does not
+exist and could not expand the path. Only the bare `{simple}` form ever worked. Splitting on
+expressions instead means all six operators (`+ # / ; ? &`) and both modifiers (`*` and
+`:n`) survive, so a wildcard or multi-segment path parameter works through the gateway
+exactly as it does against the backend directly.
+
+A concrete URI containing a literal `{` is indistinguishable from a template expression;
+that is **declared unsupported** rather than worked around, because the only fix would be a
+second escaping layer inside the percent-encoding and nobody publishes such a URI. A *stray*
+brace is not a casualty — the pattern requires a pair, so `weird://{unclosed` encodes its
+brace like any other character.
+
+Decoding splits the authority off by hand rather than reading `urlsplit`'s `path`. A gateway
+resource URI has no query or fragment of its own, so a literal `?` or `#` after the
+authority is always part of the backend's URI — the `{?q}` and `{#f}` forms are published
+verbatim like any other expression, and a client that expands one sends back a real `?`.
+Trusting `urlsplit` would silently truncate the resource at that character. The scheme check
+is what establishes the URI is ours; `?` and `#` carry no such signal.
 
 `compose_display_name` uses `server/name`, not the `__` form: that string is read by a
 person in a picker and never split by code, and a slash is what a person reads as "from".

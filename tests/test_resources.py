@@ -20,7 +20,7 @@ servers:
     env:
       MOCK_NAME: "docs"
       MOCK_RESOURCES: "file:///README.md,file:///guide.md"
-      MOCK_TEMPLATES: "file:///docs/{{path}}"
+      MOCK_TEMPLATES: "file:///docs/{{path}},git://repositories/{{repo*}}"
   code:
     command: {PY}
     args: ["{FIXTURE}"]
@@ -64,14 +64,21 @@ async def test_two_backends_publishing_the_same_uri_get_distinct_addresses(tmp_p
 
 
 async def test_a_template_keeps_its_rfc6570_expression(tmp_path) -> None:
-    """`safe="{}"` is what lets the client still expand a forwarded uriTemplate."""
+    """Encoding only outside `{...}` is what lets the client still expand a forwarded template.
+
+    `{repo*}` is the case that regressed: the explode modifier was percent-encoded into
+    `{repo%2A}`, which round-tripped fine and named a variable no client could bind, so a
+    multi-segment path template failed through the gateway and worked against the backend.
+    """
     harness = await daemon(tmp_path, servers=SERVERS)
     try:
         client = await harness.connect()
         templates = (await client.call("resources/templates/list"))["resourceTemplates"]
         expressions = [t["uriTemplate"] for t in templates]
         assert any("{path}" in expression for expression in expressions)
+        assert any("{repo*}" in expression for expression in expressions)
         assert all(expression.startswith("mcpgw://") for expression in expressions)
+        assert not any("%2A" in expression for expression in expressions)
     finally:
         await harness.close()
 

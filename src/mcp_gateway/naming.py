@@ -46,6 +46,10 @@ _SERVER_NAME_MAX = 32
 #: tool, calls it, and gets a protocol error it cannot act on.
 _PUBLIC_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
+#: One RFC 6570 expression, braces included. `[^{}]*` rather than `.*?` because 6570 braces
+#: never nest, so an unmatched `{` should not be able to swallow the expression after it.
+_TEMPLATE_EXPR_RE = re.compile(r"\{[^{}]*\}")
+
 
 class NamingError(ValueError):
     """A name that cannot be composed, split, or trusted.
@@ -121,12 +125,26 @@ def encode_resource_uri(server: str, uri: str) -> str:
     at the cost of a URI the client cannot interpret on its own. Clients treat resource
     URIs as opaque handles, so that cost is nominal.
 
-    `safe="{}"` leaves RFC 6570 expressions unescaped, so a `uriTemplate` such as
-    `file:///{path}` survives intact and a client can still expand it. The one casualty is
-    a *concrete* URI containing a literal brace, which becomes indistinguishable from a
-    template expression; that is documented as unsupported rather than worked around.
+    **Everything outside `{...}` is percent-encoded; everything inside is passed through
+    verbatim.** A `uriTemplate` is expanded *client-side*, so the expression the client
+    receives has to be byte-identical to the one the backend published -- and that means the
+    modifiers and operators too, not just the braces. `quote(uri, safe="{}")` spared the
+    braces alone, which silently turned `git://repositories/{repo*}` into `{repo%2A}`: still
+    decodable, but naming a variable that does not exist, so no client could expand it. All
+    six operators (`+ # / ; ? &`) and both modifiers (`*`, `:n`) survive this way.
+
+    The one casualty is a *concrete* URI containing a literal brace, which is
+    indistinguishable from a template expression; that is documented as unsupported rather
+    than worked around. A stray unmatched brace is not spared -- the regex requires a pair.
     """
-    return f"{RESOURCE_SCHEME}://{server}/{quote(uri, safe='{}')}"
+    out: list[str] = []
+    pos = 0
+    for match in _TEMPLATE_EXPR_RE.finditer(uri):
+        out.append(quote(uri[pos : match.start()], safe=""))
+        out.append(match.group(0))
+        pos = match.end()
+    out.append(quote(uri[pos:], safe=""))
+    return f"{RESOURCE_SCHEME}://{server}/{''.join(out)}"
 
 
 def decode_resource_uri(public_uri: str) -> tuple[str, str]:
@@ -137,18 +155,19 @@ def decode_resource_uri(public_uri: str) -> tuple[str, str]:
             f"{public_uri!r} is not a gateway resource URI (expected scheme "
             f"{RESOURCE_SCHEME!r}, got {parts.scheme!r})"
         )
-    server = parts.netloc
+    # Split the authority off by hand rather than trusting `urlsplit`'s path/query/fragment
+    # carve-up. A gateway resource URI carries no query or fragment of its own, so a literal
+    # `?` or `#` after the authority is always the backend's: either the `{?q}`/`{#f}` form of
+    # a template we published verbatim, or what a client made of it by expanding one. Reading
+    # `parts.path` would drop everything from that character on. `urlsplit` is kept only for
+    # the scheme check above, which is what tells us the URI is ours at all.
+    rest = public_uri[len(parts.scheme) + len("://") :]
+    server, found, encoded = rest.partition("/")
     if not server:
         raise NamingError(f"{public_uri!r} names no backend")
-    # urlsplit puts everything after the authority in `path`, leading slash included, and
-    # a `?` or `#` inside the encoded original would have been percent-encoded by
-    # `encode_resource_uri`, so query and fragment are always empty here. Reassemble from
-    # `path` alone rather than trusting that; if they are not empty the URI was not ours.
-    if parts.query or parts.fragment:
-        raise NamingError(f"{public_uri!r} is not a gateway resource URI (unexpected ?/#)")
-    if not parts.path.startswith("/"):
+    if not found:
         raise NamingError(f"{public_uri!r} carries no resource")
-    return server, unquote(parts.path[1:])
+    return server, unquote(encoded)
 
 
 def compose_display_name(server: str, name: str) -> str:
