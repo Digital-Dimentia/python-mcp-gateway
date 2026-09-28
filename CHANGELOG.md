@@ -24,6 +24,18 @@ rather than leaving you with pywebview's list of every toolkit it supports. The 
 same-origin with the sockets it dials, so the browser transport the UI has always shipped is
 the one the window uses, and panels frame with no custom URI scheme.
 
+**`make run-window` opens a window instead of naming a pip command.** It took `venv` as a
+prerequisite rather than bootstrapping the way `run` and `connect` do, and make resolves a
+prerequisite against its *own* cwd — so `make -f /path/to/Makefile run-window` from anywhere
+but the checkout died on `No rule to make target 'pyproject.toml'` before a recipe line ran.
+A stamp-gated prerequisite also never notices a virtual environment that exists but has no
+project installed in it. Both are the reason `ENSURE_VENV` exists, and this target now uses
+it. The pywebview toolkit also goes in on first use rather than being a one-line refusal to
+retype: it is still an extra, `make venv` still does not install it, but a target whose whole
+job is to open a window is a poor place to stop and ask. `OFFLINE=1` skips that install and
+restores the refusal. On Linux the extra remains only half the answer — pywebview ships no
+GUI backend there, and which one to install is a choice the window still names per platform.
+
 **A resource template with a wildcard path variable now expands through the gateway.** A
 backend publishing `git://repositories/{repo*}` had it forwarded as `{repo%2A}`: the braces
 were spared by the percent-encoding but nothing inside them was, so every RFC 6570 operator

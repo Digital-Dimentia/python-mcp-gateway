@@ -257,10 +257,35 @@ run-dev:
 ## process. The pure-Python half of the desktop story -- the Tauri shell in src/desktop/
 ## is the other, and needs cargo, which not every machine is allowed to have.
 ##
-## Needs the toolkit: `.venv/bin/pip install -e '.[desktop]'`. It is an extra rather than a
-## dependency, so `make venv` alone will not have it and this target will say so in one line.
-run-window: venv
-	$(PYTHON_BIN) -m mcp_gateway.window --config $(CONFIG) $(DEBUG_FLAG)
+## Self-sufficient, the way `run` is, and for the same two reasons. `$(ENSURE_VENV)` rather
+## than a `venv` prerequisite: make resolves a prerequisite against its own cwd, so
+## `make -f /path/to/Makefile run-window` from elsewhere died on `No rule to make target
+## 'pyproject.toml'` before a single recipe line ran. And the toolkit goes in on first use:
+## pywebview is an *extra* rather than a dependency, so `make venv` does not have it, and
+## answering a request to open a window with a pip command to retype is a worse answer than
+## installing it. `.[dev,desktop]` rather than `.[desktop]` alone, so the environment the
+## rest of the Makefile expects is still there afterwards.
+##
+## OFFLINE=1 skips that install and leaves `window.py` to refuse in one line, which is both
+## the old behaviour and the only thing a machine with no network can do.
+##
+## On Linux `.[desktop]` is still not the whole story: pywebview ships no GUI backend there,
+## and which one to install is a choice `window.py` names per platform rather than one this
+## target can make on someone's behalf.
+##
+## Each line needs its own `cd`, because make runs every recipe line in a fresh shell.
+run-window:
+	@$(ENSURE_VENV)
+	@cd '$(MAKEFILE_DIR)' || exit 1; \
+	if ! $(PYTHON_BIN) -c 'import webview' >/dev/null 2>&1; then \
+		if [ -n "$(strip $(OFFLINE))" ]; then \
+			printf 'pywebview is not installed and OFFLINE is set; leaving it alone.\n' >&2; \
+		else \
+			printf 'Installing the desktop extra (pywebview)...\n' >&2; \
+			$(PYTHON_BIN) -m pip install -e '.[dev,desktop]' || exit 1; \
+		fi; \
+	fi; \
+	exec $(PYTHON_BIN) -m mcp_gateway.window --config $(CONFIG) $(DEBUG_FLAG)
 
 ## Run the stdio<->WS bridge in the foreground, for reproducing a client's handshake by
 ## hand. **Nothing is written to stdout**: that is the protocol wire here, and one stray

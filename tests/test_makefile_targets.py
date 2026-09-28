@@ -93,15 +93,19 @@ def test_clean_does_not_remove_the_virtual_environment() -> None:
 
 
 def test_launch_targets_do_not_take_venv_as_a_prerequisite() -> None:
-    """`run` and `connect` use ENSURE_VENV instead.
+    """`run`, `run-window` and `connect` use ENSURE_VENV instead.
 
     make resolves a prerequisite against its own cwd, so `make -f /abs/path/Makefile run`
     from elsewhere would die on `No rule to make target 'pyproject.toml'` before a recipe
-    line ran -- and no chdir inside the recipe can help. Both targets are launched by
+    line ran -- and no chdir inside the recipe can help. These targets are launched by
     other programs, which choose their own cwd.
+
+    `run-window` is here because it was written with the prerequisite and had exactly that
+    failure: a `venv` prerequisite also never notices a venv that exists but has no project
+    installed in it, because the stamp rule is gated on `pyproject.toml` being newer.
     """
     text = _makefile_text()
-    for target in ("run", "connect"):
+    for target in ("run", "run-window", "connect"):
         line = re.search(rf"^{target}:(.*)$", text, re.MULTILINE)
         assert line is not None, f"no rule for {target}"
         assert line.group(1).strip() == "", f"{target} must not declare prerequisites"

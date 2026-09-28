@@ -42,6 +42,11 @@ wants. The backends are still reaped on the way out.
 binary wheels, so they need no compiler and no `apt`; the GTK route needs development
 headers that a managed machine often will not have and that pip cannot supply.
 
+From a checkout, `make run-window` installs the extra itself on first use, so the table above
+is what a *user* needs and not a step to do by hand — with the Linux row still outstanding,
+since which backend to install is the one part of it nobody else can choose. `OFFLINE=1`
+skips the install and leaves the refusal in its place.
+
 ## Why the daemon runs in this process
 
 The Rust host spawns the daemon as a child, and roughly half of its code is about that
