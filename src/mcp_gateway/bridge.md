@@ -92,5 +92,8 @@ For an IDE that takes a `command` and `args` rather than a shell line — which 
 ones that only speak stdio — see [Any other stdio-only
 IDE](../../GET_STARTED.md#any-other-stdio-only-ide). The operational part that is not obvious
 from this file: such a client spawns its servers with a minimal environment, so the config
-needs the absolute path into `.venv/bin/`, and the daemon has to be running already, because
-nothing here starts one.
+needs the absolute path into `.venv/bin/`.
+
+A daemon has to be listening, because this module starts nothing. `--autostart` is the one
+exception, and it lives in [`autostart.py`](autostart.md) rather than here precisely so that
+"the bridge manages no lifecycle" stays true of this file.

@@ -290,11 +290,50 @@ Three things decide whether this works on the first try:
   itself something you would rather not put a secret in. A bridge spawned from an arbitrary
   directory will not guess at `./gateway.env`. `?key=…` in the URL works too, but it is in
   argv, so prefer it only for a loopback daemon you are about to restart anyway.
-- **The daemon has to already be running.** The bridge dials it; it does not start it. If
-  nothing is listening, the bridge retries with backoff and the IDE shows a server that never
-  answers, with the reason only on stderr — which some IDEs do not surface. Keep it alive
-  with [Running in the background](#running-in-the-background) rather than a terminal you
-  will close. (`--autostart` is filed as `python-mcp-gateway-giq` and does not exist yet.)
+- **Either keep a daemon running, or let the bridge start one.** By default the bridge only
+  dials: if nothing is listening it retries with backoff, and the IDE shows a server that
+  never answers with the reason only on stderr. Keep one alive with [Running in the
+  background](#running-in-the-background), or add `--autostart` and let the bridge do it —
+  below.
+
+#### Letting the bridge start the daemon
+
+`--autostart` makes the IDE's one process enough on its own:
+
+```json
+{
+  "mcpServers": {
+    "gateway": {
+      "command": "/absolute/path/to/checkout/.venv/bin/mcp-gateway-connect",
+      "args": [
+        "--url", "ws://127.0.0.1:8765/mcp",
+        "--autostart",
+        "--config", "/absolute/path/to/servers.yaml"
+      ]
+    }
+  }
+}
+```
+
+The bridge tries to connect first and only starts a daemon if nothing answers, so an existing
+one — `make run`, a launchd job, your other editor — is used as it stands rather than
+duplicated. **The daemon it starts is stopped when the IDE closes**, so nothing is left
+running that you did not start deliberately. `MCP_GATEWAY_AUTOSTART=1` does the same for a
+client whose config takes an environment but not an argument list.
+
+Two IDEs opening at once is fine and needs no coordination: both try to start a daemon, only
+one can bind the port, and the loser attaches to the winner. If the one that started it closes
+first, the other sees a dropped socket and reconnects — starting a replacement itself if it
+also has `--autostart`.
+
+`--config` is required, and is the only thing `--autostart` adds that you have to decide. The
+daemon's own default is `./servers.yaml`, and an IDE spawns the bridge from whatever directory
+it happens to be in, so inheriting that would start a daemon against a config nobody chose.
+
+It will refuse — and say why on stderr — for a URL that names a daemon it could not be:
+anything that is not loopback, anything `wss://` (serving TLS needs a certificate it cannot
+choose for you), and a URL with no port. In each case start the daemon yourself. See
+[`autostart.md`](src/mcp_gateway/autostart.md) for the reasoning.
 
 Everything else is already handled and is why this is worth more than a hand-rolled shim:
 `sys.stdout` is redirected to stderr for the life of the process, so a stray `print` from any

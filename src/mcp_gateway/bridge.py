@@ -49,7 +49,10 @@ from typing import Any
 import websockets
 
 from mcp_gateway import __version__, errors, jsonrpc
-from mcp_gateway.cli import configure_logging, default_config_path, default_env_path
+from mcp_gateway.autostart import AUTOSTART_ENV, Daemon
+from mcp_gateway.autostart import requested as autostart_requested
+from mcp_gateway.autostart import target as autostart_target
+from mcp_gateway.cli import CONFIG_ENV, configure_logging, default_config_path, default_env_path
 from mcp_gateway.transport_ws import ACCESS_KEY_ENV, ACCESS_KEY_SECRET_NAME, MAX_MESSAGE_BYTES
 
 logger = logging.getLogger(__name__)
@@ -118,6 +121,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Exit when the daemon goes away instead of retrying. For scripts and tests.",
     )
+    parser.add_argument(
+        "--autostart",
+        action="store_true",
+        help=(
+            f"Start a daemon if nothing is listening, and stop it on the way out (default: "
+            f"${AUTOSTART_ENV}). Needs --config. Loopback ws:// only."
+        ),
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            f"servers.yaml for a daemon started by --autostart (default: "
+            f"${CONFIG_ENV}). Unused otherwise: a bridge does not read the config."
+        ),
+    )
     parser.add_argument("--debug", action="store_true", help="Log at DEBUG, to stderr.")
     return parser
 
@@ -174,6 +194,37 @@ def resolve_key(args: argparse.Namespace, environ: dict[str, str] | None = None)
         return None
 
 
+def resolve_autostart(
+    args: argparse.Namespace,
+    url: str,
+    key: str | None,
+    environ: dict[str, str] | None = None,
+) -> Daemon | None:
+    """The daemon `--autostart` would start, or `None` with the reason logged.
+
+    All the refusals live in `autostart.py`; this is only the wiring, plus the one question
+    that belongs to the bridge's own argument parsing -- where the config comes from. There
+    is no fallback to the daemon's `./servers.yaml`: a bridge runs in whatever directory its
+    client chose, so that default names a file nobody picked. See `autostart.md`.
+    """
+    source = os.environ if environ is None else environ
+    if not autostart_requested(args.autostart, source):
+        return None
+    where = autostart_target(url)
+    if where is None:
+        return None
+    config = args.config or source.get(CONFIG_ENV)
+    if not config:
+        logger.warning(
+            "autostart: no config to start a daemon with; pass --config /path/to/servers.yaml "
+            "or set $%s",
+            CONFIG_ENV,
+        )
+        return None
+    host, port = where
+    return Daemon(host, port, Path(config), key)
+
+
 def connect_kwargs(key: str | None, tls: ssl.SSLContext | None = None) -> dict[str, Any]:
     """`Authorization: Bearer` rather than `?key=`.
 
@@ -197,11 +248,16 @@ class Bridge:
         *,
         reconnect: bool = True,
         tls: ssl.SSLContext | None = None,
+        autostart: Daemon | None = None,
     ) -> None:
         self.url = url
         self.key = key
         self.tls = tls
         self.reconnect = reconnect
+        #: A daemon to start if nothing is listening, or `None`. The bridge's one piece of
+        #: lifecycle, and the reason it is a collaborator rather than a method: see
+        #: `autostart.md` for why the exception is kept visible.
+        self.autostart = autostart
         self._websocket: Any = None
         #: Ids that were **actually sent** to the daemon and not yet answered. If the socket
         #: dies, each gets an error rather than silence -- a client waiting forever is worse
@@ -334,7 +390,11 @@ class Bridge:
                 self._connected.clear()
 
             self.fail_in_flight(reason)
-            if not self.reconnect:
+            # After the first failed attempt, not before it: if a daemon is already serving,
+            # `--autostart` must be a no-op. `start` is idempotent, so this is only ever one
+            # daemon however many times the loop comes round.
+            started = self.autostart.start() if self.autostart is not None else False
+            if not self.reconnect and not started:
                 logger.info("not reconnecting (--no-reconnect): %s", reason)
                 return
             logger.info("disconnected (%s); retrying in %.2fs", reason, backoff)
@@ -399,7 +459,8 @@ def run() -> None:
     except (OSError, ssl.SSLError) as exc:
         logger.error("cannot use CA bundle %s: %s", resolve_ca_file(args), exc)
         raise SystemExit(2) from None
-    bridge = Bridge(url, key, reconnect=not args.no_reconnect, tls=tls)
+    autostart = resolve_autostart(args, url, key)
+    bridge = Bridge(url, key, reconnect=not args.no_reconnect, tls=tls, autostart=autostart)
     # After the Bridge captured the real stdout, and before anything else can print.
     _reserve_stdout()
 
@@ -407,6 +468,12 @@ def run() -> None:
         asyncio.run(bridge.run())
     except KeyboardInterrupt:
         pass
+    finally:
+        # Every exit path, including the KeyboardInterrupt above and any exception on the way
+        # out: a daemon this process started is this process's to stop. `stop` is a no-op when
+        # there is nothing to stop, so there is no branch here.
+        if autostart is not None:
+            autostart.stop()
 
 
 if __name__ == "__main__":  # `python -m mcp_gateway.bridge`, which `make connect` uses

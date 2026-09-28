@@ -24,6 +24,20 @@ rather than leaving you with pywebview's list of every toolkit it supports. The 
 same-origin with the sockets it dials, so the browser transport the UI has always shipped is
 the one the window uses, and panels frame with no custom URI scheme.
 
+**`mcp-gateway-connect --autostart` starts the daemon, so a stdio-only IDE needs one line of
+config and nothing else.** Plenty of editors and agent tools will only launch an MCP server as
+a subprocess, and they give you nowhere to say "and also run the daemon" — so the gateway had
+to be alive by some other arrangement, and when it was not, the bridge retried forever while
+the IDE showed a server that never answered and the explanation sat on a stderr many IDEs do
+not show. With `--autostart` the bridge tries to connect first and starts a daemon only if
+nothing answers, so an existing one is used as it stands; the daemon it starts is stopped when
+the IDE closes, so nothing is left running that nobody started deliberately. Two editors
+opening at once need no coordination, because only one can bind the port and the loser attaches
+to the winner. It needs `--config`, since the daemon's `./servers.yaml` default would resolve
+against whatever directory the IDE happened to be in, and it refuses a URL that names a daemon
+it could not be — not loopback, `wss://`, or no port at all — saying which on the way past.
+[Any other stdio-only IDE](GET_STARTED.md#any-other-stdio-only-ide) has the config to paste.
+
 **`make run-window` opens a window instead of naming a pip command.** It took `venv` as a
 prerequisite rather than bootstrapping the way `run` and `connect` do, and make resolves a
 prerequisite against its *own* cwd — so `make -f /path/to/Makefile run-window` from anywhere

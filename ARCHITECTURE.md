@@ -45,6 +45,7 @@ flowchart TB
 | [`admin_channel.py`](src/mcp_gateway/admin_channel.md) | one `/admin` connection: a plain JSON-RPC table for the UI |
 | [`webui.py`](src/mcp_gateway/webui.md) | the admin UI's static assets, on `/ui` |
 | [`bridge.py`](src/mcp_gateway/bridge.md) | `mcp-gateway-connect` — stdin↔WS pump |
+| [`autostart.py`](src/mcp_gateway/autostart.md) | `--autostart`: the daemon a bridge starts, and stops |
 | [`gateway.py`](src/mcp_gateway/gateway.md) | the composition root; everything shared |
 | [`supervisor.py`](src/mcp_gateway/supervisor.md) | the shared backend pool, and reload |
 | [`backend.py`](src/mcp_gateway/backend.md) | one backend's lifetime, and its curated environment |
