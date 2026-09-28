@@ -252,6 +252,60 @@ Once attached, everything is namespaced by backend — `github__create_issue`,
 itself: `gateway__list_backends`, `gateway__backend_health`, `gateway__restart_backend`,
 `gateway__reload_config` and `gateway__clipboard`.
 
+### Any other stdio-only IDE
+
+Plenty of editors and agent tools will only launch an MCP server as a subprocess over stdio —
+no WebSocket, no Streamable HTTP, no URL field at all. `mcp-gateway-connect` is the whole
+answer, and nothing needs writing: it is a pump, not a proxy with opinions. It reads a line,
+checks it is JSON, and sends it as a frame; it never inspects `method`. So **tools, prompts,
+resources and resource templates all forward by construction**, along with anything a future
+revision of MCP adds — see [`bridge.md`](src/mcp_gateway/bridge.md) for why that is the
+correctness argument rather than a shortcut.
+
+Most such tools take a command and an argument list, in some spelling of:
+
+```json
+{
+  "mcpServers": {
+    "gateway": {
+      "command": "/absolute/path/to/checkout/.venv/bin/mcp-gateway-connect",
+      "args": ["--url", "ws://127.0.0.1:8765/mcp"],
+      "env": { "MCP_GATEWAY_WS_KEY": "…" }
+    }
+  }
+}
+```
+
+Three things decide whether this works on the first try:
+
+- **Give the absolute path to the executable.** An IDE spawns its servers with a minimal
+  environment, so a bare `mcp-gateway-connect` resolves only if the venv happens to be on
+  that `PATH` — and it usually is not. The full path into `.venv/bin/` needs no activation
+  and no `PATH` at all. If you installed the wheel rather than working from a checkout, use
+  the path that `which mcp-gateway-connect` prints from an activated shell.
+- **Put the access key in the environment, not in `args`.** Argv is world-readable through
+  `ps`, so a key on the command line is published to every other user of the machine at the
+  moment it is meant to protect it. `MCP_GATEWAY_WS_KEY` is the documented channel;
+  `--env /path/to/gateway.env` is the other, and is better when the IDE's config file is
+  itself something you would rather not put a secret in. A bridge spawned from an arbitrary
+  directory will not guess at `./gateway.env`. `?key=…` in the URL works too, but it is in
+  argv, so prefer it only for a loopback daemon you are about to restart anyway.
+- **The daemon has to already be running.** The bridge dials it; it does not start it. If
+  nothing is listening, the bridge retries with backoff and the IDE shows a server that never
+  answers, with the reason only on stderr — which some IDEs do not surface. Keep it alive
+  with [Running in the background](#running-in-the-background) rather than a terminal you
+  will close. (`--autostart` is filed as `python-mcp-gateway-giq` and does not exist yet.)
+
+Everything else is already handled and is why this is worth more than a hand-rolled shim:
+`sys.stdout` is redirected to stderr for the life of the process, so a stray `print` from any
+library lands somewhere harmless instead of desynchronising the client; a dropped connection
+reconnects with backoff, so restarting the daemon does not make the IDE mark the server dead;
+and a request that was in flight when the socket died is answered with an error naming the
+reason, rather than leaving the client waiting forever.
+
+To see what the IDE will see, run the same command by hand — `make connect` does it against
+the default URL, with diagnostics on stderr and the protocol on stdout.
+
 ## Working in the admin UI
 
 `http://127.0.0.1:8765/ui`, on the same port as the sockets. The configured servers are

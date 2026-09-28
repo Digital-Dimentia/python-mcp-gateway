@@ -87,3 +87,10 @@ daemon serving TLS with a private certificate:
 ```bash
 claude mcp add gateway -- mcp-gateway-connect --url wss://gateway.lan:8765/mcp --ca-file /path/to/ca.pem
 ```
+
+For an IDE that takes a `command` and `args` rather than a shell line — which is most of the
+ones that only speak stdio — see [Any other stdio-only
+IDE](../../GET_STARTED.md#any-other-stdio-only-ide). The operational part that is not obvious
+from this file: such a client spawns its servers with a minimal environment, so the config
+needs the absolute path into `.venv/bin/`, and the daemon has to be running already, because
+nothing here starts one.
